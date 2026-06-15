@@ -65,3 +65,15 @@ export const STAIR_TYPES = [
 export function getStairType(id) {
   return STAIR_TYPES.find((s) => s.id === id) || STAIR_TYPES[0];
 }
+
+// ---- 建具（窓・ドア）--------------------------------------------------------
+// sillMM=腰高, heightMM=開口高, widthMM=既定幅 (すべて mm)
+export const OPENING_TYPES = [
+  { id: 'window',  name: '窓',         sillMM: 800, heightMM: 1100, widthMM: 1650 },
+  { id: 'sliding', name: '掃き出し窓', sillMM: 0,   heightMM: 2000, widthMM: 1650 },
+  { id: 'door',    name: 'ドア',       sillMM: 0,   heightMM: 2000, widthMM: 900  },
+];
+
+export function getOpeningType(id) {
+  return OPENING_TYPES.find((o) => o.id === id) || OPENING_TYPES[0];
+}

@@ -68,6 +68,7 @@
           <button data-tool="room" class="seg-btn">部屋を描く</button>
           <button data-tool="furniture" class="seg-btn">家具を置く</button>
           <button data-tool="stair" class="seg-btn">階段を置く</button>
+          <button data-tool="opening" class="seg-btn">建具を置く</button>
           <button data-tool="pan" class="seg-btn">画面移動</button>
         </div>
       </section>
@@ -88,6 +89,13 @@
       <section class="pane" id="stair-pane">
         <h3>階段</h3>
         <div class="chip-grid" id="stair-types"></div>
+      </section>
+
+      <!-- 建具（窓・ドア） -->
+      <section class="pane" id="opening-pane">
+        <h3>建具</h3>
+        <div class="chip-grid" id="opening-types"></div>
+        <p class="pane-hint">壁をクリックして配置。選択後ドラッグで移動。</p>
       </section>
 
       <!-- スナップ・グリッド -->

@@ -147,15 +147,25 @@ export function wallsFromPolygon(polygon, { thicknessMM = 120, heightMM = 2400 }
   return walls;
 }
 
-// フロアの壁を全部屋ポリゴンから作り直す（MVP: 壁は部屋外周から自動生成）。
+// フロアの壁を全部屋ポリゴンから作り直す。
+// 壁IDは "w_${roomId}_${edgeIndex}" と決定論的に付与するため
+// openings の wallId が再生成後も有効であり続ける。
 export function rebuildFloorWalls(floor) {
   const walls = [];
   for (const room of floor.rooms) {
-    const segs = wallsFromPolygon(room.polygon, {
-      thicknessMM: 120,
-      heightMM: floor.ceilingHeightMM,
-    });
-    for (const s of segs) walls.push(s);
+    const poly = room.polygon;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      walls.push({
+        id: `w_${room.id}_${i}`,
+        roomId: room.id,          // opening 紐付け用（スキーマ拡張）
+        start: { x: a.x, z: a.z },
+        end: { x: b.x, z: b.z },
+        thicknessMM: 120,
+        heightMM: floor.ceilingHeightMM,
+      });
+    }
   }
   floor.walls = walls;
 }

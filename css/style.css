@@ -103,6 +103,7 @@ html, body {
   color: var(--text-dim);
 }
 .pane.hl h3 { color: var(--hl); }
+.pane-hint { font-size: 10px; color: var(--text-dim); margin: 4px 0 0; line-height: 1.4; }
 
 .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 .row .lbl { color: var(--text-dim); min-width: 64px; }

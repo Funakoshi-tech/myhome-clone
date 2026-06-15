@@ -3,7 +3,7 @@
 // store の同じデータを読み書きするだけ（描画専用ロジック）。
 
 import * as M from './model.js';
-import { getRoomType, getFurniture, getStairType } from './catalog.js';
+import { getRoomType, getFurniture, getStairType, getOpeningType } from './catalog.js';
 
 // ---- モジュールレベルのヘルパー（純粋関数） --------------------------------
 
@@ -187,8 +187,28 @@ export class Editor2D {
       this._placeStair(M.snapPoint(w, this._snapDiv()));
       return;
     }
+    if (tool === 'opening') {
+      this._placeOpening(w);
+      return;
+    }
 
     // ---- select ツール ----
+    // Opening 選択中 → 移動ドラッグ
+    if (this.ui.selection?.kind === 'opening') {
+      const flr = this._floor();
+      const op = (flr.openings || []).find((o) => o.id === this.ui.selection.id);
+      if (op) {
+        const wall = flr.walls.find((wl) => wl.id === op.wallId);
+        if (wall) {
+          const pts = this._openingWorldPoints(wall, op);
+          if (pts && _ptSegDist(w, pts.start, pts.end) <= 15 / this.cam.scale) {
+            this.drag = { kind: 'move-opening', id: op.id, wallId: wall.id, startW: w, origOffset: op.offsetMM };
+            return;
+          }
+        }
+      }
+    }
+
     // 部屋選択中 → 頂点ハンドル優先 → 辺平行移動 → 通常ヒットテスト
     if (this.ui.selection?.kind === 'room') {
       const room = this._floor().rooms.find((r) => r.id === this.ui.selection.id);
@@ -296,6 +316,22 @@ export class Editor2D {
       }
       return;
     }
+    if (d.kind === 'move-opening') {
+      const floor = this._floor();
+      const op = (floor.openings || []).find((o) => o.id === d.id);
+      const wall = floor.walls.find((wl) => wl.id === d.wallId);
+      if (op && wall) {
+        const wdx = wall.end.x - wall.start.x, wdz = wall.end.z - wall.start.z;
+        const wlen = Math.hypot(wdx, wdz);
+        const ux = wdx / wlen, uz = wdz / wlen;
+        const delta = (w.x - d.startW.x) * ux + (w.z - d.startW.z) * uz;
+        const newOffset = M.snap(d.origOffset + delta, this._snapDiv());
+        const halfW = op.widthMM / 2;
+        op.offsetMM = Math.max(halfW, Math.min(wlen - halfW, newOffset));
+        this.draw();
+      }
+      return;
+    }
     if (d.kind === 'move-room') {
       const floor = this._floor();
       const room = floor.rooms.find((x) => x.id === d.id);
@@ -327,7 +363,7 @@ export class Editor2D {
       }
       return;
     }
-    const persistKinds = ['move-furniture', 'move-stair', 'move-room', 'vertex', 'move-edge'];
+    const persistKinds = ['move-furniture', 'move-stair', 'move-room', 'vertex', 'move-edge', 'move-opening'];
     if (persistKinds.includes(d.kind)) {
       this.store.update(() => {});
       return;
@@ -367,12 +403,46 @@ export class Editor2D {
         return { kind: 'stair', id: s.id };
       }
     }
+    // 建具（壁上のセグメントに近い）
+    const opHit = 12 / this.cam.scale;
+    for (const op of (floor.openings || [])) {
+      const wl = floor.walls.find((x) => x.id === op.wallId);
+      if (!wl) continue;
+      const pts = this._openingWorldPoints(wl, op);
+      if (pts && _ptSegDist(w, pts.start, pts.end) <= opHit) {
+        return { kind: 'opening', id: op.id };
+      }
+    }
     // 部屋
     for (let i = (floor.rooms || []).length - 1; i >= 0; i--) {
       const room = floor.rooms[i];
       if (M.pointInPolygon(w, room.polygon)) {
         return { kind: 'room', id: room.id };
       }
+    }
+    return null;
+  }
+
+  // 建具の世界座標端点（start/end を返す、nullなら壁なし）
+  _openingWorldPoints(wall, opening) {
+    const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return null;
+    const ux = dx / lenMM, uz = dz / lenMM;
+    const oStart = opening.offsetMM - opening.widthMM / 2;
+    const oEnd   = opening.offsetMM + opening.widthMM / 2;
+    return {
+      start: { x: wall.start.x + ux * oStart, z: wall.start.z + uz * oStart },
+      end:   { x: wall.start.x + ux * oEnd,   z: wall.start.z + uz * oEnd   },
+    };
+  }
+
+  // 最寄り壁を返す（ヒット閾値: 12 px換算）
+  _wallAt(w) {
+    const floor = this._floor();
+    const HIT = 12 / this.cam.scale;
+    for (const wall of floor.walls) {
+      if (_ptSegDist(w, wall.start, wall.end) <= HIT) return wall;
     }
     return null;
   }
@@ -488,6 +558,36 @@ export class Editor2D {
     this.onUI();
   }
 
+  _placeOpening(w) {
+    const wall = this._wallAt(w);
+    if (!wall) return;
+    const def = getOpeningType(this.ui.openingId || 'window');
+    const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return;
+    // クリック位置を壁方向に射影してオフセット算出
+    const t = ((w.x - wall.start.x) * dx + (w.z - wall.start.z) * dz) / (lenMM * lenMM);
+    let offsetMM = M.snap(t * lenMM, this._snapDiv());
+    const halfW = def.widthMM / 2;
+    offsetMM = Math.max(halfW, Math.min(lenMM - halfW, offsetMM));
+    this.store.update((plan) => {
+      const fl = M.getFloor(plan, this.ui.floorId);
+      const op = {
+        id: M.uid('op'),
+        wallId: wall.id,
+        type: def.id,
+        offsetMM,
+        widthMM: def.widthMM,
+        sillMM: def.sillMM,
+        heightMM: def.heightMM,
+      };
+      if (!fl.openings) fl.openings = [];
+      fl.openings.push(op);
+      this.ui.selection = { kind: 'opening', id: op.id };
+    });
+    this.onUI();
+  }
+
   _deleteSelection() {
     const sel = this.ui.selection;
     if (!sel) return;
@@ -500,6 +600,8 @@ export class Editor2D {
         M.rebuildFloorWalls(floor);
       } else if (sel.kind === 'stair') {
         floor.stairs = (floor.stairs || []).filter((s) => s.id !== sel.id);
+      } else if (sel.kind === 'opening') {
+        floor.openings = (floor.openings || []).filter((o) => o.id !== sel.id);
       }
     });
     this.ui.selection = null;
@@ -542,6 +644,9 @@ export class Editor2D {
       } else if (sel.kind === 'stair') {
         const s = (floor.stairs || []).find((x) => x.id === sel.id);
         if (s) mutator(s);
+      } else if (sel.kind === 'opening') {
+        const o = (floor.openings || []).find((x) => x.id === sel.id);
+        if (o) mutator(o);
       }
     });
     this.onUI();
@@ -572,6 +677,7 @@ export class Editor2D {
 
     for (const room of floor.rooms) this._drawRoom(ctx, room);
     for (const wall of floor.walls) this._drawWall(ctx, wall);
+    for (const op of (floor.openings || [])) this._drawOpeningSymbol(ctx, op);
     for (const s of (floor.stairs || [])) this._drawStair(ctx, s, false);
     for (const f of floor.furniture) this._drawFurniture(ctx, f);
     this._drawSelection(ctx);
@@ -656,14 +762,100 @@ export class Editor2D {
   }
 
   _drawWall(ctx, wall) {
-    const a = this.worldToScreen(wall.start.x, wall.start.z);
-    const b = this.worldToScreen(wall.end.x, wall.end.z);
+    const floor = this._floor();
+    const ops = (floor.openings || [])
+      .filter((o) => o.wallId === wall.id)
+      .sort((a, b) => a.offsetMM - b.offsetMM);
+
+    const ax = wall.start.x, az = wall.start.z;
+    const bx = wall.end.x, bz = wall.end.z;
+    const dx = bx - ax, dz = bz - az;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return;
+    const ux = dx / lenMM, uz = dz / lenMM;
+
     const px = Math.max(2, wall.thicknessMM * this.cam.scale);
-    ctx.lineCap = 'round';
+    ctx.lineCap = 'square';
     ctx.lineWidth = px;
     ctx.strokeStyle = '#4a5260';
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+
+    const seg = (fromMM, toMM) => {
+      if (toMM - fromMM < 1) return;
+      const sa = this.worldToScreen(ax + ux * fromMM, az + uz * fromMM);
+      const sb = this.worldToScreen(ax + ux * toMM,   az + uz * toMM);
+      ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke();
+    };
+
+    let cur = 0;
+    for (const op of ops) {
+      const oS = Math.max(0, op.offsetMM - op.widthMM / 2);
+      const oE = Math.min(lenMM, op.offsetMM + op.widthMM / 2);
+      seg(cur, oS);
+      cur = oE;
+    }
+    seg(cur, lenMM);
     ctx.lineCap = 'butt';
+  }
+
+  // 建具記号（壁の隙間に上書き）
+  _drawOpeningSymbol(ctx, opening) {
+    const floor = this._floor();
+    const wall = floor.walls.find((w) => w.id === opening.wallId);
+    if (!wall) return;
+    const pts = this._openingWorldPoints(wall, opening);
+    if (!pts) return;
+
+    const ax = wall.start.x, az = wall.start.z;
+    const dx = wall.end.x - ax, dz = wall.end.z - az;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return;
+    const ux = dx / lenMM, uz = dz / lenMM;
+    const nx = -uz, nz = ux;                     // 壁の法線
+    const halfT = (wall.thicknessMM || 120) / 2;
+    const oStart = opening.offsetMM - opening.widthMM / 2;
+    const oEnd   = opening.offsetMM + opening.widthMM / 2;
+
+    if (opening.type === 'door') {
+      // ドア：ドア葉（線）＋ 開き弧
+      const pivot = this.worldToScreen(ax + ux * oStart, az + uz * oStart);
+      const leaf  = this.worldToScreen(ax + ux * oEnd,   az + uz * oEnd);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#2c7be5';
+      ctx.beginPath(); ctx.moveTo(pivot.x, pivot.y); ctx.lineTo(leaf.x, leaf.y); ctx.stroke();
+      const r = Math.hypot(leaf.x - pivot.x, leaf.y - pivot.y);
+      const angLeaf = Math.atan2(leaf.y - pivot.y, leaf.x - pivot.x);
+      ctx.beginPath();
+      ctx.arc(pivot.x, pivot.y, r, angLeaf, angLeaf + Math.PI / 2);
+      ctx.stroke();
+      return;
+    }
+
+    // 窓 / 掃き出し窓：ガラス二重線
+    const color = opening.type === 'sliding' ? '#1a8ab0' : '#2c8fc0';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+
+    // 壁厚の±60% に平行線2本
+    const ratio = 0.58;
+    for (const sign of [-1, 1]) {
+      const p1 = this.worldToScreen(
+        ax + ux * oStart + nx * halfT * ratio * sign,
+        az + uz * oStart + nz * halfT * ratio * sign,
+      );
+      const p2 = this.worldToScreen(
+        ax + ux * oEnd   + nx * halfT * ratio * sign,
+        az + uz * oEnd   + nz * halfT * ratio * sign,
+      );
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+    }
+    // 両端のキャップ線
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#4a5260';
+    for (const offMM of [oStart, oEnd]) {
+      const pA = this.worldToScreen(ax + ux * offMM + nx * halfT, az + uz * offMM + nz * halfT);
+      const pB = this.worldToScreen(ax + ux * offMM - nx * halfT, az + uz * offMM - nz * halfT);
+      ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke();
+    }
   }
 
   _furnitureCorners(f) {
@@ -711,6 +903,27 @@ export class Editor2D {
     } else if (sel.kind === 'stair') {
       const s = (floor.stairs || []).find((x) => x.id === sel.id);
       if (s) { this._polyPath(ctx, this._stairCorners(s)); ctx.stroke(); }
+    } else if (sel.kind === 'opening') {
+      const op = (floor.openings || []).find((x) => x.id === sel.id);
+      if (op) {
+        const wl = floor.walls.find((x) => x.id === op.wallId);
+        if (wl) {
+          const pts = this._openingWorldPoints(wl, op);
+          if (pts) {
+            const sa = this.worldToScreen(pts.start.x, pts.start.z);
+            const sb = this.worldToScreen(pts.end.x, pts.end.z);
+            ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke();
+            // 中心ハンドル
+            ctx.restore();
+            ctx.save();
+            ctx.setLineDash([]);
+            const cx = (sa.x + sb.x) / 2, cy = (sa.y + sb.y) / 2;
+            ctx.fillStyle = '#f5a623';
+            ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+      }
     }
     ctx.restore();
   }

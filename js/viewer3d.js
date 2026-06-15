@@ -167,10 +167,11 @@ export class Viewer3D {
         const mesh = this._buildFloor(room);
         if (mesh) g.add(mesh);
       }
-      // 壁
+      // 壁（建具開口付き）
       for (const wall of floor.walls) {
-        const mesh = this._buildWall(wall);
-        if (mesh) g.add(mesh);
+        const ops = (floor.openings || []).filter((o) => o.wallId === wall.id);
+        const obj = this._buildWallWithOpenings(wall, ops);
+        if (obj) g.add(obj);
       }
       // 階段
       for (const stair of (floor.stairs || [])) {
@@ -236,6 +237,104 @@ export class Viewer3D {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     return mesh;
+  }
+
+  // 建具開口を考慮して壁を分割描画する。
+  // openings: この壁に属する建具の配列（offsetMM でソート済みでなくてよい）
+  _buildWallWithOpenings(wall, openings = [], mat = null) {
+    const ax = wall.start.x, az = wall.start.z;
+    const bx = wall.end.x, bz = wall.end.z;
+    const dx = bx - ax, dz = bz - az;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return null;
+
+    const L = lenMM * MM;
+    const T = (wall.thicknessMM || 120) * MM;
+    const H = (wall.heightMM || 2400) * MM;
+    const ang = -Math.atan2(dz, dx);
+    const useMat = mat || this._materials.wall;
+
+    const group = new THREE.Group();
+    group.position.set((ax + bx) / 2 * MM, 0, (az + bz) / 2 * MM);
+    group.rotation.y = ang;
+
+    // ローカル X の中心からの距離に変換（壁は -L/2 〜 +L/2）
+    const toLocalX = (offMM) => offMM * MM - L / 2;
+
+    const addSeg = (segW, segH, segT, m, cx, cy, cz = 0) => {
+      if (segW < 0.0005 || segH < 0.0005) return;
+      const geo = new THREE.BoxGeometry(segW, segH, segT);
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(cx, cy, cz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    };
+
+    const ops = (openings || [])
+      .slice()
+      .sort((a, b) => a.offsetMM - b.offsetMM)
+      .filter((o) => o.offsetMM - o.widthMM / 2 < lenMM && o.offsetMM + o.widthMM / 2 > 0);
+
+    if (ops.length === 0) {
+      addSeg(L, H, T, useMat, 0, H / 2);
+      return group;
+    }
+
+    let curMM = 0;
+    for (const op of ops) {
+      const oStartMM = Math.max(0, op.offsetMM - op.widthMM / 2);
+      const oEndMM   = Math.min(lenMM, op.offsetMM + op.widthMM / 2);
+      const oSillMM  = op.sillMM || 0;
+      const oHgtMM   = op.heightMM || 1100;
+      const oTopMM   = oSillMM + oHgtMM;
+      const oW       = (oEndMM - oStartMM) * MM;
+      const cx       = toLocalX((oStartMM + oEndMM) / 2);
+
+      // 開口前の柱部分
+      if (oStartMM > curMM) {
+        const w = (oStartMM - curMM) * MM;
+        addSeg(w, H, T, useMat, toLocalX((curMM + oStartMM) / 2), H / 2);
+      }
+
+      // 開口内: 腰壁（sill > 0 の場合）
+      if (oSillMM > 0) {
+        addSeg(oW, oSillMM * MM, T, useMat, cx, oSillMM * MM / 2);
+      }
+      // 開口内: まぐさ（上部）
+      const lintelMM = Math.max(0, (wall.heightMM || 2400) - oTopMM);
+      if (lintelMM > 0) {
+        addSeg(oW, lintelMM * MM, T, useMat, cx, oTopMM * MM + lintelMM * MM / 2);
+      }
+
+      // 窓枠（薄いグレーのボックス）
+      const frameMat = this._getFrameMat();
+      const FT = T * 1.05;   // 壁面から少し突き出す
+      const FW = 0.030;      // 枠幅 30mm
+      addSeg(oW + FW * 2, FW, FT, frameMat, cx, oTopMM * MM + FW / 2);     // 上枠
+      addSeg(oW + FW * 2, FW, FT, frameMat, cx, oSillMM * MM - FW / 2);    // 下枠
+      addSeg(FW, oHgtMM * MM, FT, frameMat, cx - oW / 2 - FW / 2, (oSillMM + oTopMM) / 2 * MM); // 左枠
+      addSeg(FW, oHgtMM * MM, FT, frameMat, cx + oW / 2 + FW / 2, (oSillMM + oTopMM) / 2 * MM); // 右枠
+
+      curMM = oEndMM;
+    }
+
+    // 最終セグメント
+    if (curMM < lenMM) {
+      const w = (lenMM - curMM) * MM;
+      addSeg(w, H, T, useMat, toLocalX((curMM + lenMM) / 2), H / 2);
+    }
+
+    return group;
+  }
+
+  _getFrameMat() {
+    if (!this._materials.frame) {
+      this._materials.frame = new THREE.MeshStandardMaterial({
+        color: 0xd8e4ec, roughness: 0.7, metalness: 0.05,
+      });
+    }
+    return this._materials.frame;
   }
 
   _buildFurniture(f) {
@@ -328,20 +427,21 @@ export class Viewer3D {
     this.sun.intensity = 0.4 + 0.9 * t;
   }
 
-  // 遮蔽判定用のオクルーダー（壁・床・階段・家具）をローカル座標で構築。
-  // 壁・床には userData.roomId を付け、自室の遮蔽は除外できるようにする。
+  // 遮蔽判定用オクルーダー。
+  // 壁は _buildWallWithOpenings（開口ジオメトリ）で構築し、
+  // 開口部を自然にレイが通過できるようにする。
+  // 床は roomId をタグして自室床を除外。壁は roomId でタグして自室床のみ除外。
   _buildOccluder() {
     const grp = new THREE.Group();
     const plan = this.store.current();
     if (!plan) return grp;
-    const mat = OCCLUDER_MAT;
 
     for (const floor of plan.floors) {
       const baseY = (floor.level || 0) * (floor.ceilingHeightMM || 2400) * MM;
       const fg = new THREE.Group();
       fg.position.y = baseY;
 
-      // 床
+      // 床（自室床は computeDaylight 側で除外する）
       for (const room of floor.rooms) {
         if (NO_FLOOR_TYPES.has(room.type)) continue;
         if (!room.polygon || room.polygon.length < 3) continue;
@@ -353,34 +453,28 @@ export class Viewer3D {
         shape.closePath();
         const geo = new THREE.ShapeGeometry(shape);
         geo.rotateX(Math.PI / 2);
-        const mesh = new THREE.Mesh(geo, mat);
+        const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
         mesh.userData = { roomId: room.id, kind: 'floor' };
         fg.add(mesh);
       }
 
-      // 壁（部屋ごとに生成して roomId を付与）
-      for (const room of floor.rooms) {
-        const walls = M.wallsFromPolygon(room.polygon, {
-          thicknessMM: 120, heightMM: floor.ceilingHeightMM || 2400,
+      // 壁（開口対応）
+      for (const wall of floor.walls) {
+        const ops = (floor.openings || []).filter((o) => o.wallId === wall.id);
+        const wallGroup = this._buildWallWithOpenings(wall, ops, OCCLUDER_MAT);
+        if (!wallGroup) continue;
+        // 全子メッシュに roomId タグ
+        const rid = wall.roomId || null;
+        wallGroup.traverse((o) => {
+          if (o.isMesh) o.userData = { roomId: rid, kind: 'wall' };
         });
-        for (const wall of walls) {
-          const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
-          const len = Math.hypot(dx, dz);
-          if (len < 1) continue;
-          const hgt = (wall.heightMM || 2400) * MM;
-          const geo = new THREE.BoxGeometry(len * MM, hgt, (wall.thicknessMM || 120) * MM);
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.position.set((wall.start.x + wall.end.x) / 2 * MM, hgt / 2, (wall.start.z + wall.end.z) / 2 * MM);
-          mesh.rotation.y = -Math.atan2(dz, dx);
-          mesh.userData = { roomId: room.id, kind: 'wall' };
-          fg.add(mesh);
-        }
+        fg.add(wallGroup);
       }
 
       // 階段
       for (const s of (floor.stairs || [])) {
         const geo = new THREE.BoxGeometry(s.widthMM * MM, (floor.ceilingHeightMM || 2400) * MM, s.depthMM * MM);
-        const mesh = new THREE.Mesh(geo, mat);
+        const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
         mesh.position.set(s.x * MM, (floor.ceilingHeightMM || 2400) * MM / 2, s.z * MM);
         mesh.rotation.y = -((s.rotationDeg || 0) * Math.PI) / 180;
         mesh.userData = { roomId: null, kind: 'stair' };
@@ -390,7 +484,7 @@ export class Viewer3D {
       // 家具
       for (const f of floor.furniture) {
         const geo = new THREE.BoxGeometry((f.wMM || 500) * MM, (f.hMM || 500) * MM, (f.dMM || 500) * MM);
-        const mesh = new THREE.Mesh(geo, mat);
+        const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
         mesh.position.set(f.x * MM, (f.y || 0) * MM + (f.hMM || 500) * MM / 2, f.z * MM);
         mesh.rotation.y = -((f.rotationDeg || 0) * Math.PI) / 180;
         mesh.userData = { roomId: null, kind: 'furniture' };
@@ -405,8 +499,14 @@ export class Viewer3D {
 
   /**
    * 各部屋の本日（指定通日）の直射日照時間を集計する。
-   * 部屋中心から太陽方向へレイを飛ばし、他要素に遮られなければ直射ありとする。
-   * 自室の壁・床は遮蔽から除外（窓があるものとみなす簡易版）。
+   *
+   * 【窓対応版】
+   * - 開口ジオメトリ（_buildWallWithOpenings）で壁に穴を開けたオクルーダーを使用。
+   * - 窓のある方向へのレイは自然にくぐり抜ける → 日照カウント。
+   * - 窓のない部屋は全方向が固体壁でふさがれるため 0h になる。
+   * - 自室の「床」のみ除外（床面と光線が交差しないようにする安全策）。
+   *   自室の壁は除外しない（窓ジオメトリが役割を担う）。
+   *
    * @returns {{ [roomId:string]: number }} 直射時間（時間/日）
    */
   computeDaylight(doy) {
@@ -418,7 +518,7 @@ export class Viewer3D {
     const azRad = (plan.site?.azimuth || 0) * Math.PI / 180;
     const date = dateFromDayOfYear(doy);
 
-    // 1時間ごとの太陽方向（ローカル座標）を事前計算
+    // 1時間ごとの太陽方向ベクトルを事前計算
     const dirs = [];
     for (let h = 0; h < 24; h++) {
       const pos = getSunPosition(date, h, lat, lng);
@@ -429,9 +529,8 @@ export class Viewer3D {
     }
 
     const occ = this._buildOccluder();
-    const children = occ.children;
     const ray = new THREE.Raycaster();
-    ray.far = 2000;
+    ray.far = 500;
     const origin = new THREE.Vector3();
 
     for (const floor of plan.floors) {
@@ -439,23 +538,25 @@ export class Viewer3D {
       for (const room of floor.rooms) {
         if (!room.polygon || room.polygon.length < 3) { result[room.id] = 0; continue; }
         const c = M.polygonCentroid(room.polygon);
-        // 床から 1.2m の高さで計測
         origin.set(c.x * MM, baseY + 1.2, c.z * MM);
         let hours = 0;
         for (let h = 0; h < 24; h++) {
           const dir = dirs[h];
           if (!dir) continue;
           ray.set(origin, dir);
-          const hits = ray.intersectObjects(children, true);
-          // 自室の壁・床は無視。それ以外に当たれば遮蔽。
-          const blocked = hits.some((hit) => hit.object.userData?.roomId !== room.id);
+          const hits = ray.intersectObjects(occ.children, true);
+          // 自室の床のみ除外。それ以外（自室壁含む）に当たれば遮蔽。
+          // 自室の壁の開口部分はジオメトリが無いので当たらない → 窓越しに通過。
+          const blocked = hits.some((hit) => {
+            const ud = hit.object.userData;
+            return !(ud?.kind === 'floor' && ud?.roomId === room.id);
+          });
           if (!blocked) hours++;
         }
         result[room.id] = hours;
       }
     }
 
-    // 後始末
     occ.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
     return result;
   }
