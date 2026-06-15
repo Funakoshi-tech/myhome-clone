@@ -175,6 +175,7 @@ export function defaultFloor(id, level) {
     walls: [],
     openings: [], // フェーズAでは空（スキーマのみ）
     furniture: [],
+    stairs: [],   // 独立した階段カテゴリ
   };
 }
 
@@ -229,6 +230,7 @@ export function normalizePlan(plan) {
     walls: Array.isArray(f.walls) ? f.walls : [],
     openings: Array.isArray(f.openings) ? f.openings : [],
     furniture: Array.isArray(f.furniture) ? f.furniture : [],
+    stairs: Array.isArray(f.stairs) ? f.stairs : [],
   }));
   return out;
 }

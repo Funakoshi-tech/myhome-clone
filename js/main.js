@@ -3,7 +3,7 @@
 
 import { store } from './store.js';
 import * as M from './model.js';
-import { ROOM_TYPES, FURNITURE, getRoomType, getFurniture } from './catalog.js';
+import { ROOM_TYPES, FURNITURE, STAIR_TYPES, getRoomType, getFurniture, getStairType } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 
@@ -11,10 +11,11 @@ import { Viewer3D } from './viewer3d.js';
 const ui = {
   view: '2d',            // '2d' | '3d'
   floorId: '1F',
-  tool: 'select',        // 'select' | 'room' | 'furniture' | 'pan'
+  tool: 'select',        // 'select' | 'room' | 'furniture' | 'stair' | 'pan'
   roomType: ROOM_TYPES.find((r) => r.id === 'LDK')?.id || ROOM_TYPES[0].id,
   furnitureId: FURNITURE[0].id,
-  selection: null,       // { kind:'room'|'furniture', id }
+  stairType: STAIR_TYPES[0].id,
+  selection: null,       // { kind:'room'|'furniture'|'stair', id }
   showGrid: true,
 };
 
@@ -53,9 +54,9 @@ function setTool(tool) {
   ui.tool = tool;
   document.querySelectorAll('#tool-group .seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.tool === tool));
-  // 関連パネルの強調
   $('#room-pane').classList.toggle('hl', tool === 'room');
   $('#furniture-pane').classList.toggle('hl', tool === 'furniture');
+  $('#stair-pane').classList.toggle('hl', tool === 'stair');
   updateHint();
 }
 
@@ -101,6 +102,26 @@ function markChips() {
     b.classList.toggle('active', b.dataset.id === ui.roomType));
   document.querySelectorAll('#furniture-types .chip').forEach((b) =>
     b.classList.toggle('active', b.dataset.id === ui.furnitureId));
+  document.querySelectorAll('#stair-types .chip').forEach((b) =>
+    b.classList.toggle('active', b.dataset.id === ui.stairType));
+}
+
+function buildStairChips() {
+  const wrap = $('#stair-types');
+  wrap.innerHTML = '';
+  for (const t of STAIR_TYPES) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.dataset.id = t.id;
+    b.innerHTML = `<span class="stair-icon">${t.icon}</span>${t.name}`;
+    b.addEventListener('click', () => {
+      ui.stairType = t.id;
+      ui.tool = 'stair';
+      setTool('stair');
+      markChips();
+    });
+    wrap.appendChild(b);
+  }
 }
 
 // ---- プラン選択 -------------------------------------------------------------
@@ -135,7 +156,7 @@ function buildProps() {
 
   if (!sel) {
     body.className = 'props-empty';
-    body.textContent = '未選択（選択ツールで部屋や家具をクリック）';
+    body.textContent = '未選択（選択ツールで部屋・家具・階段をクリック）';
     return;
   }
   body.className = '';
@@ -199,6 +220,46 @@ function buildProps() {
     })));
 
     body.appendChild(deleteButton('この家具を削除'));
+
+  } else if (sel.kind === 'stair') {
+    const s = (floor.stairs || []).find((x) => x.id === sel.id);
+    if (!s) { body.textContent = '—'; return; }
+    const def = getStairType(s.type);
+
+    body.appendChild(readonlyRow('種類', def.name));
+    body.appendChild(readonlyRow('サイズ', `W${s.widthMM}×D${s.depthMM}mm`));
+
+    // 種別変更
+    const typeSel = document.createElement('select');
+    for (const t of STAIR_TYPES) {
+      const o = document.createElement('option');
+      o.value = t.id; o.textContent = `${t.icon} ${t.name}`;
+      if (t.id === s.type) o.selected = true;
+      typeSel.appendChild(o);
+    }
+    typeSel.addEventListener('change', () => {
+      const newDef = getStairType(typeSel.value);
+      editor.applyToSelection((stair) => {
+        stair.type = newDef.id;
+        stair.widthMM = newDef.defaultW;
+        stair.depthMM = newDef.defaultD;
+      });
+    });
+    body.appendChild(field('種別変更', typeSel));
+
+    // 回転
+    const rotWrap = document.createElement('div');
+    rotWrap.className = 'btn-row';
+    const rl = document.createElement('button');
+    rl.className = 'btn'; rl.textContent = '⟲ -90°';
+    rl.addEventListener('click', () => editor.rotateSelectedStair(-90));
+    const rr = document.createElement('button');
+    rr.className = 'btn'; rr.textContent = '+90° ⟳';
+    rr.addEventListener('click', () => editor.rotateSelectedStair(90));
+    rotWrap.append(rl, rr);
+    body.appendChild(field(`向き（${s.rotationDeg || 0}°）`, rotWrap));
+
+    body.appendChild(deleteButton('この階段を削除'));
   }
 }
 
@@ -259,6 +320,7 @@ function buildFloorInfo() {
     <div><span>フロア</span><b>${floor.id}（天井 ${floor.ceilingHeightMM}mm）</b></div>
     <div><span>部屋数</span><b>${floor.rooms.length}</b></div>
     <div><span>家具数</span><b>${floor.furniture.length}</b></div>
+    <div><span>階段数</span><b>${(floor.stairs || []).length}</b></div>
     <div><span>床面積合計</span><b>${M.formatAreaLabel(total, tatami)}</b></div>
   `;
 }
@@ -276,9 +338,10 @@ function updateHint() {
     return;
   }
   const map = {
-    select: '選択：クリックで選択/ドラッグで移動。部屋選択中は○頂点をドラッグ、辺の＋で頂点追加。Del削除 / R回転',
+    select: '選択：クリックで選択/ドラッグで移動。部屋選択中は●頂点ドラッグ・辺ドラッグで平行移動・右クリックで頂点挿入。Del削除 / R回転',
     room: 'ドラッグで部屋を矩形作成（スナップ適用）',
     furniture: 'クリックで家具を配置',
+    stair: 'クリックで階段を配置。選択後 R で回転 / Del で削除。1F に置くと 2F に参照表示が自動追加',
     pan: 'ドラッグで画面移動。ホイールでズーム',
   };
   hint.textContent = map[ui.tool] || '';
@@ -364,6 +427,7 @@ store.subscribe(() => {
 function boot() {
   buildRoomChips();
   buildFurnitureChips();
+  buildStairChips();
   buildPlanSelect();
   wireEvents();
 

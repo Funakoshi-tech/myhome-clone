@@ -19,7 +19,6 @@ export const ROOM_TYPES = [
   { id: 'toilet', name: 'トイレ', color: '#9a5b8a' },
   { id: 'washroom', name: '洗面所', color: '#5b8aa6' },
   { id: 'corridor', name: '廊下', color: '#6a6a72' },
-  { id: 'stair', name: '階段', color: '#8a7a5a' },
   { id: 'balcony', name: 'バルコニー', color: '#7d7d55' },
   { id: 'tokonoma', name: '床の間', color: '#8a7340' },
   { id: 'hiroen', name: '広縁', color: '#80764a' },
@@ -51,4 +50,18 @@ export const FURNITURE = [
 
 export function getFurniture(id) {
   return FURNITURE.find((f) => f.id === id) || FURNITURE[0];
+}
+
+// ---- 階段（独立カテゴリ） ---------------------------------------------------
+// defaultW=間口(X mm), defaultD=奥行(Z mm)
+export const STAIR_TYPES = [
+  { id: 'straight', name: '直進階段',   icon: '↑', defaultW: 910,  defaultD: 2730 },
+  { id: 'l_shape',  name: 'L字階段',    icon: '↳', defaultW: 1820, defaultD: 1820 },
+  { id: 'u_shape',  name: 'U字折返し',  icon: '⇅', defaultW: 1820, defaultD: 2730 },
+  { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 910,  defaultD: 2730 },
+  { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 1820, defaultD: 1820 },
+];
+
+export function getStairType(id) {
+  return STAIR_TYPES.find((s) => s.id === id) || STAIR_TYPES[0];
 }

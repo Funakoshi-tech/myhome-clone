@@ -129,7 +129,8 @@ export class Viewer3D {
     if (!plan) return;
 
     for (const floor of plan.floors) {
-      if (!floor.rooms.length && !floor.furniture.length) continue;
+      const hasContent = floor.rooms.length || floor.furniture.length || (floor.stairs || []).length;
+      if (!hasContent) continue;
       const baseY = (floor.level || 0) * (floor.ceilingHeightMM || 2400) * MM;
       const g = new THREE.Group();
       g.position.y = baseY;
@@ -143,6 +144,11 @@ export class Viewer3D {
       for (const wall of floor.walls) {
         const mesh = this._buildWall(wall);
         if (mesh) g.add(mesh);
+      }
+      // 階段
+      for (const stair of (floor.stairs || [])) {
+        const obj = this._buildStair(stair, floor.ceilingHeightMM || 2400);
+        if (obj) g.add(obj);
       }
       // 家具
       for (const f of floor.furniture) {
@@ -208,6 +214,44 @@ export class Viewer3D {
     mesh.position.set(f.x * MM, (f.y || 0) * MM + h / 2, f.z * MM);
     mesh.rotation.y = -((f.rotationDeg || 0) * Math.PI) / 180;
     return mesh;
+  }
+
+  // 階段の3D表示（直進はステップ状、その他は単純ボックス）
+  _buildStair(stair, ceilingHeightMM) {
+    const w = stair.widthMM * MM;
+    const d = stair.depthMM * MM;
+    const h = ceilingHeightMM * MM;
+    const rot = -(stair.rotationDeg || 0) * Math.PI / 180;
+
+    const group = new THREE.Group();
+    group.position.set(stair.x * MM, 0, stair.z * MM);
+    group.rotation.y = rot;
+
+    const nSteps = Math.max(4, Math.min(14, Math.round(stair.depthMM / 230)));
+    const stepH = h / nSteps;
+    const stepD = d / nSteps;
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xd4b896, roughness: 0.88, metalness: 0.0,
+    });
+
+    if (stair.type === 'straight') {
+      // 踏み板を1段ずつ積み上げる
+      for (let i = 0; i < nSteps; i++) {
+        const geo = new THREE.BoxGeometry(w, stepH * (i + 1), stepD);
+        const step = new THREE.Mesh(geo, mat);
+        step.position.set(0, stepH * (i + 1) / 2, -d / 2 + stepD * (i + 0.5));
+        group.add(step);
+      }
+    } else {
+      // その他: 半分の高さのボックスで表現
+      const geo = new THREE.BoxGeometry(w, h * 0.5, d);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(0, h * 0.25, 0);
+      mesh.material = mat;
+      group.add(mesh);
+    }
+    return group;
   }
 
   _fitCamera() {
