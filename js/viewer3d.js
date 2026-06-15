@@ -9,6 +9,9 @@ import { getRoomType } from './catalog.js';
 
 const MM = 0.001; // mm → m
 
+// 床板を描かない部屋種別（貫通表現）: 吹抜け・階段
+const NO_FLOOR_TYPES = new Set(['fukinuke', 'stair']);
+
 export class Viewer3D {
   constructor(container, store, ui) {
     this.container = container;
@@ -24,7 +27,7 @@ export class Viewer3D {
     this._inited = true;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x10131a);
+    this.scene.background = new THREE.Color(0xeef1f4);
 
     const w = this.container.clientWidth || 800;
     const h = this.container.clientHeight || 600;
@@ -51,7 +54,7 @@ export class Viewer3D {
     this.scene.add(hemi);
 
     // グリッド & 地面
-    this.grid = new THREE.GridHelper(60, 60, 0x3a4250, 0x252b34);
+    this.grid = new THREE.GridHelper(60, 60, 0xb7c0cc, 0xd5dbe3);
     this.scene.add(this.grid);
 
     // 3D 内容を入れるグループ
@@ -158,6 +161,7 @@ export class Viewer3D {
 
   _buildFloor(room) {
     if (!room.polygon || room.polygon.length < 3) return null;
+    if (NO_FLOOR_TYPES.has(room.type)) return null; // 床板なし（貫通）
     const shape = new THREE.Shape();
     room.polygon.forEach((p, i) => {
       const x = p.x * MM, z = p.z * MM;

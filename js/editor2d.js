@@ -27,6 +27,10 @@ export class Editor2D {
     // ドラッグ状態
     this.drag = null;
 
+    // 頂点編集のホバー状態（選択中の部屋に対して）
+    this.hoverVertex = null; // { id, index }
+    this.hoverEdge = null;   // { id, index }（辺 i の中点）
+
     this._bind();
   }
 
@@ -150,9 +154,37 @@ export class Editor2D {
       return;
     }
 
-    // select
+    // select ツール
+    // 部屋を選択中なら、頂点ハンドル → 辺の「＋」ハンドル の順で最優先判定
+    if (this.ui.selection && this.ui.selection.kind === 'room') {
+      const room = this._floor().rooms.find((r) => r.id === this.ui.selection.id);
+      if (room) {
+        const vi = this._vertexHandleAt(room, sx, sy);
+        if (vi >= 0) {
+          this.drag = { kind: 'vertex', roomId: room.id, index: vi };
+          return;
+        }
+        const ei = this._edgeHandleAt(room, sx, sy);
+        if (ei >= 0) {
+          // 辺の中点に頂点を挿入し、その頂点のドラッグを即開始
+          const a = room.polygon[ei];
+          const b = room.polygon[(ei + 1) % room.polygon.length];
+          const mid = M.snapPoint({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }, this._snapDiv());
+          room.polygon.splice(ei + 1, 0, mid);
+          M.rebuildFloorWalls(this._floor());
+          this.hoverEdge = null;
+          this.hoverVertex = { id: room.id, index: ei + 1 };
+          this.drag = { kind: 'vertex', roomId: room.id, index: ei + 1 };
+          this.draw();
+          return;
+        }
+      }
+    }
+
     const hit = this._hitTest(w);
     this.ui.selection = hit;
+    this.hoverVertex = null;
+    this.hoverEdge = null;
     this.onUI();
     if (hit) {
       if (hit.kind === 'furniture') {
@@ -166,10 +198,22 @@ export class Editor2D {
   }
 
   _onMove(e) {
-    if (!this.active || !this.drag) return;
+    if (!this.active) return;
     const { sx, sy } = this._mouse(e);
     const w = this.screenToWorld(sx, sy);
     const d = this.drag;
+    if (!d) { this._updateHover(sx, sy); return; }
+
+    if (d.kind === 'vertex') {
+      const floor = this._floor();
+      const room = floor.rooms.find((x) => x.id === d.roomId);
+      if (room && room.polygon[d.index]) {
+        room.polygon[d.index] = M.snapPoint(w, this._snapDiv());
+        M.rebuildFloorWalls(floor);
+        this.draw();
+      }
+      return;
+    }
 
     if (d.kind === 'pan') {
       this.cam.panX = d.panX + (sx - d.sx);
@@ -225,7 +269,7 @@ export class Editor2D {
       }
       return;
     }
-    if (d.kind === 'move-furniture' || d.kind === 'move-room') {
+    if (d.kind === 'move-furniture' || d.kind === 'move-room' || d.kind === 'vertex') {
       // 永続化＋通知
       this.store.update(() => {});
       return;
@@ -268,6 +312,49 @@ export class Editor2D {
       }
     }
     return null;
+  }
+
+  // ---- 頂点/辺ハンドル -----------------------------------------------------
+  _vertexHandleAt(room, sx, sy) {
+    const HIT = 10;
+    for (let i = 0; i < room.polygon.length; i++) {
+      const s = this.worldToScreen(room.polygon[i].x, room.polygon[i].z);
+      if (Math.hypot(s.x - sx, s.y - sy) <= HIT) return i;
+    }
+    return -1;
+  }
+
+  _edgeHandleAt(room, sx, sy) {
+    const HIT = 10;
+    const poly = room.polygon;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const s = this.worldToScreen((a.x + b.x) / 2, (a.z + b.z) / 2);
+      if (Math.hypot(s.x - sx, s.y - sy) <= HIT) return i;
+    }
+    return -1;
+  }
+
+  // ドラッグしていないときのホバー状態更新（選択中の部屋に対して）
+  _updateHover(sx, sy) {
+    let hv = null, he = null;
+    if (this.ui.tool === 'select' && this.ui.selection && this.ui.selection.kind === 'room') {
+      const room = this._floor().rooms.find((r) => r.id === this.ui.selection.id);
+      if (room) {
+        const vi = this._vertexHandleAt(room, sx, sy);
+        if (vi >= 0) hv = { id: room.id, index: vi };
+        else {
+          const ei = this._edgeHandleAt(room, sx, sy);
+          if (ei >= 0) he = { id: room.id, index: ei };
+        }
+      }
+    }
+    const changed = JSON.stringify(hv) !== JSON.stringify(this.hoverVertex)
+      || JSON.stringify(he) !== JSON.stringify(this.hoverEdge);
+    this.hoverVertex = hv;
+    this.hoverEdge = he;
+    this.canvas.style.cursor = hv ? 'grab' : (he ? 'copy' : '');
+    if (changed) this.draw();
   }
 
   // ---- 生成・編集 -----------------------------------------------------------
@@ -363,7 +450,7 @@ export class Editor2D {
     ctx.clearRect(0, 0, this.cssW, this.cssH);
 
     // 背景
-    ctx.fillStyle = '#15181d';
+    ctx.fillStyle = '#eef1f4';
     ctx.fillRect(0, 0, this.cssW, this.cssH);
 
     if (this.ui.showGrid) this._drawGrid(ctx);
@@ -379,8 +466,50 @@ export class Editor2D {
     for (const f of floor.furniture) this._drawFurniture(ctx, f);
     // 選択ハイライト
     this._drawSelection(ctx);
+    // 頂点/辺ハンドル（部屋選択時）
+    this._drawRoomHandles(ctx);
     // 部屋ドラッグのプレビュー
     if (this.drag && this.drag.kind === 'room') this._drawRoomPreview(ctx, this.drag);
+  }
+
+  _drawRoomHandles(ctx) {
+    if (this.ui.tool !== 'select') return;
+    const sel = this.ui.selection;
+    if (!sel || sel.kind !== 'room') return;
+    const room = this._floor().rooms.find((r) => r.id === sel.id);
+    if (!room) return;
+    const poly = room.polygon;
+
+    // 頂点の○ハンドル
+    for (let i = 0; i < poly.length; i++) {
+      const s = this.worldToScreen(poly[i].x, poly[i].z);
+      const hovered = this.hoverVertex
+        && this.hoverVertex.id === room.id && this.hoverVertex.index === i;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = hovered ? '#f5a623' : '#2c7be5';
+      ctx.stroke();
+    }
+
+    // 辺の中点「＋」ハンドル（ホバー時のみ）
+    if (this.hoverEdge && this.hoverEdge.id === room.id) {
+      const i = this.hoverEdge.index;
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const s = this.worldToScreen((a.x + b.x) / 2, (a.z + b.z) / 2);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#2c7be5';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(s.x - 4, s.y); ctx.lineTo(s.x + 4, s.y);
+      ctx.moveTo(s.x, s.y - 4); ctx.lineTo(s.x, s.y + 4);
+      ctx.stroke();
+    }
   }
 
   _drawGrid(ctx) {
@@ -399,7 +528,7 @@ export class Editor2D {
     // サブグリッド（スナップ）
     if (this.cam.scale * sub > 6) {
       ctx.lineWidth = 1;
-      ctx.strokeStyle = '#21262e';
+      ctx.strokeStyle = '#e1e6ec';
       ctx.beginPath();
       for (let x = startX; x <= endX; x += sub) {
         const s = this.worldToScreen(x, 0).x;
@@ -418,7 +547,7 @@ export class Editor2D {
     const startPZ = Math.floor(tl.z / P) * P;
     const endPZ = Math.ceil(br.z / P) * P;
     ctx.lineWidth = 1;
-    ctx.strokeStyle = '#2c333d';
+    ctx.strokeStyle = '#ccd4de';
     ctx.beginPath();
     for (let x = startPX; x <= endPX; x += P) {
       const s = this.worldToScreen(x, 0).x;
@@ -460,20 +589,82 @@ export class Editor2D {
     ctx.strokeStyle = this._hexA(color, 0.9);
     ctx.stroke();
 
+    // 階段は段板を表す等間隔の線を描く（建築図面風）
+    if (room.type === 'stair') this._drawStairTreads(ctx, room, color);
+
     if (room.labelVisible !== false) {
       const c = M.polygonCentroid(room.polygon);
       const s = this.worldToScreen(c.x, c.z);
       const areaM2 = M.polygonAreaM2(room.polygon);
       const tatami = this._plan().meta.tatamiM2 || 1.62;
-      ctx.fillStyle = '#e6e6e6';
+      ctx.fillStyle = '#1f2733';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '600 13px system-ui, sans-serif';
       ctx.fillText(room.name || getRoomType(room.type).name, s.x, s.y - 8);
       ctx.font = '11px system-ui, sans-serif';
-      ctx.fillStyle = '#aeb4bd';
+      ctx.fillStyle = '#5b6470';
       ctx.fillText(M.formatAreaLabel(areaM2, tatami), s.x, s.y + 9);
     }
+  }
+
+  // 階段の段板（トレッド）を等間隔の線で描く。長手方向に上り矢印を添える。
+  _drawStairTreads(ctx, room, color) {
+    const b = M.polygonBounds(room.polygon);
+    const w = b.maxX - b.minX, h = b.maxZ - b.minZ;
+    if (w < 100 || h < 100) return;
+    const treadMM = 250;
+
+    ctx.save();
+    this._polyPath(ctx, room.polygon);
+    ctx.clip();
+
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = this._hexA(color, 0.95);
+    ctx.beginPath();
+    if (w >= h) {
+      const n = Math.max(2, Math.round(w / treadMM));
+      for (let i = 1; i < n; i++) {
+        const x = b.minX + (w * i) / n;
+        const p1 = this.worldToScreen(x, b.minZ);
+        const p2 = this.worldToScreen(x, b.maxZ);
+        ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+      }
+    } else {
+      const n = Math.max(2, Math.round(h / treadMM));
+      for (let i = 1; i < n; i++) {
+        const z = b.minZ + (h * i) / n;
+        const p1 = this.worldToScreen(b.minX, z);
+        const p2 = this.worldToScreen(b.maxX, z);
+        ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+      }
+    }
+    ctx.stroke();
+
+    // 上り方向の矢印（中心線）
+    const cz = (b.minZ + b.maxZ) / 2;
+    const cx = (b.minX + b.maxX) / 2;
+    let a, c2;
+    if (w >= h) {
+      a = this.worldToScreen(b.minX + w * 0.12, cz);
+      c2 = this.worldToScreen(b.maxX - w * 0.12, cz);
+    } else {
+      a = this.worldToScreen(cx, b.minZ + h * 0.12);
+      c2 = this.worldToScreen(cx, b.maxZ - h * 0.12);
+    }
+    ctx.strokeStyle = this._hexA('#1f2733', 0.55);
+    ctx.fillStyle = this._hexA('#1f2733', 0.55);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(c2.x, c2.y); ctx.stroke();
+    const ang = Math.atan2(c2.y - a.y, c2.x - a.x);
+    const ah = 7;
+    ctx.beginPath();
+    ctx.moveTo(c2.x, c2.y);
+    ctx.lineTo(c2.x - ah * Math.cos(ang - Math.PI / 6), c2.y - ah * Math.sin(ang - Math.PI / 6));
+    ctx.lineTo(c2.x - ah * Math.cos(ang + Math.PI / 6), c2.y - ah * Math.sin(ang + Math.PI / 6));
+    ctx.closePath(); ctx.fill();
+
+    ctx.restore();
   }
 
   _drawWall(ctx, wall) {
@@ -482,7 +673,7 @@ export class Editor2D {
     const px = Math.max(2, wall.thicknessMM * this.cam.scale);
     ctx.lineCap = 'round';
     ctx.lineWidth = px;
-    ctx.strokeStyle = '#e8eaed';
+    ctx.strokeStyle = '#4a5260';
     ctx.beginPath();
     ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
     ctx.stroke();
@@ -557,7 +748,7 @@ export class Editor2D {
     const tatami = this._plan().meta.tatamiM2 || 1.62;
     const c = M.polygonCentroid(poly);
     const s = this.worldToScreen(c.x, c.z);
-    ctx.fillStyle = '#e6e6e6';
+    ctx.fillStyle = '#1f2733';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = '12px system-ui, sans-serif';

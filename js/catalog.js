@@ -19,6 +19,7 @@ export const ROOM_TYPES = [
   { id: 'toilet', name: 'トイレ', color: '#9a5b8a' },
   { id: 'washroom', name: '洗面所', color: '#5b8aa6' },
   { id: 'corridor', name: '廊下', color: '#6a6a72' },
+  { id: 'stair', name: '階段', color: '#8a7a5a' },
   { id: 'balcony', name: 'バルコニー', color: '#7d7d55' },
   { id: 'tokonoma', name: '床の間', color: '#8a7340' },
   { id: 'hiroen', name: '広縁', color: '#80764a' },
