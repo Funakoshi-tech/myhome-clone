@@ -643,6 +643,15 @@ export class Editor2D {
       ctx.font = '11px system-ui, sans-serif';
       ctx.fillStyle = '#5b6470';
       ctx.fillText(M.formatAreaLabel(areaM2, tatami), s.x, s.y + 9);
+
+      // 日照時間（フェーズB: 現在選択中の日付での直射時間）
+      const daylight = this.ui.daylight;
+      if (daylight && Object.prototype.hasOwnProperty.call(daylight, room.id)) {
+        const hrs = daylight[room.id];
+        ctx.font = '600 11px system-ui, sans-serif';
+        ctx.fillStyle = hrs > 0 ? '#c8860a' : '#8a93a0';
+        ctx.fillText(`☀ ${hrs.toFixed(1)}h`, s.x, s.y + 24);
+      }
     }
   }
 

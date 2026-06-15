@@ -6,6 +6,7 @@ import * as M from './model.js';
 import { ROOM_TYPES, FURNITURE, STAIR_TYPES, getRoomType, getFurniture, getStairType } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
+import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
 
 // ---- 共有 UI 状態（永続化しない一時状態） ----------------------------------
 const ui = {
@@ -17,7 +18,11 @@ const ui = {
   stairType: STAIR_TYPES[0].id,
   selection: null,       // { kind:'room'|'furniture'|'stair', id }
   showGrid: true,
+  // 日射シミュレーション（フェーズB）
+  sun: { doy: 172, hour: 12, playing: false },
+  daylight: {},          // { [roomId]: 直射時間 }
 };
+let sunTimer = null;
 
 // ---- DOM 取得 ---------------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
@@ -33,11 +38,18 @@ function setView(view) {
   const is3d = view === '3d';
   canvas.hidden = is3d;
   viewer3dEl.hidden = !is3d;
+  $('#sun-panel').hidden = !is3d;
   editor.setActive(!is3d);
   viewer.setActive(is3d);
   document.querySelectorAll('#view-toggle .seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.view === view));
-  if (!is3d) { editor.resize(); editor.draw(); }
+  if (is3d) {
+    viewer.updateSun(ui.sun.doy, ui.sun.hour);
+    updateSunInfo();
+  } else {
+    stopSunAnimation();
+    editor.resize(); editor.draw();
+  }
   updateHint();
 }
 
@@ -347,6 +359,119 @@ function updateHint() {
   hint.textContent = map[ui.tool] || '';
 }
 
+// ---- 日射シミュレーション（フェーズB） -------------------------------------
+function buildSunStatics() {
+  const seasons = $('#sun-seasons');
+  seasons.innerHTML = '';
+  for (const m of SEASON_MARKERS) {
+    const b = document.createElement('button');
+    b.textContent = m.label;
+    b.title = `${m.label} に移動`;
+    b.addEventListener('click', () => {
+      ui.sun.doy = m.doy;
+      $('#sun-date').value = m.doy;
+      onSunDateChange();
+    });
+    seasons.appendChild(b);
+  }
+  const ticks = $('#sun-date-ticks');
+  ticks.innerHTML = '';
+  for (const m of SEASON_MARKERS) {
+    const o = document.createElement('option');
+    o.value = String(m.doy);
+    o.label = m.label;
+    ticks.appendChild(o);
+  }
+}
+
+function updateSunLabels() {
+  $('#sun-date-label').textContent = formatMonthDay(ui.sun.doy);
+  $('#sun-hour-label').textContent = `${ui.sun.hour}:00`;
+}
+
+function updateSunInfo() {
+  const plan = store.current();
+  const pos = getSunPosition(dateFromDayOfYear(ui.sun.doy), ui.sun.hour, plan.meta.lat, plan.meta.lng);
+  const el = $('#sun-info');
+  if (pos.altitudeDeg <= 0) {
+    el.classList.add('night');
+    el.textContent = `日没（太陽は地平線下） ${ui.sun.hour}:00`;
+  } else {
+    el.classList.remove('night');
+    el.textContent = `方位 ${Math.round(pos.azimuthDeg)}° / 高度 ${Math.round(pos.altitudeDeg)}°`;
+  }
+}
+
+function syncSunPanel() {
+  const plan = store.current();
+  $('#sun-date').value = ui.sun.doy;
+  $('#sun-hour').value = ui.sun.hour;
+  updateSunLabels();
+  $('#sun-azimuth').value = Math.round(plan.site.azimuth || 0);
+  $('#sun-lat').value = plan.meta.lat ?? '';
+  $('#sun-lng').value = plan.meta.lng ?? '';
+}
+
+// 各部屋の直射日照時間を再計算（部屋ラベルに反映）
+function recomputeDaylight() {
+  try {
+    ui.daylight = viewer.computeDaylight(ui.sun.doy);
+  } catch (err) {
+    console.warn('日照計算に失敗', err);
+    ui.daylight = {};
+  }
+  if (ui.view === '2d') editor.draw();
+}
+
+function onSunDateChange() {
+  updateSunLabels();
+  if (ui.view === '3d') viewer.updateSun(ui.sun.doy, ui.sun.hour);
+  updateSunInfo();
+  recomputeDaylight();
+}
+function onSunHourChange() {
+  updateSunLabels();
+  if (ui.view === '3d') viewer.updateSun(ui.sun.doy, ui.sun.hour);
+  updateSunInfo();
+}
+
+function startSunAnimation() {
+  ui.sun.playing = true;
+  const btn = $('#sun-play');
+  btn.classList.add('playing');
+  btn.textContent = '⏸ 停止';
+  // 1秒で1時間進む
+  sunTimer = setInterval(() => {
+    ui.sun.hour = (ui.sun.hour + 1) % 24;
+    $('#sun-hour').value = ui.sun.hour;
+    onSunHourChange();
+  }, 1000);
+}
+function stopSunAnimation() {
+  ui.sun.playing = false;
+  if (sunTimer) { clearInterval(sunTimer); sunTimer = null; }
+  const btn = $('#sun-play');
+  if (btn) { btn.classList.remove('playing'); btn.textContent = '▶ 再生'; }
+}
+
+function wireSunPanel() {
+  $('#sun-date').addEventListener('input', (e) => { ui.sun.doy = Number(e.target.value); onSunDateChange(); });
+  $('#sun-hour').addEventListener('input', (e) => { ui.sun.hour = Number(e.target.value); onSunHourChange(); });
+  $('#sun-play').addEventListener('click', () => { ui.sun.playing ? stopSunAnimation() : startSunAnimation(); });
+  $('#sun-azimuth').addEventListener('change', (e) => {
+    const v = ((Number(e.target.value) % 360) + 360) % 360;
+    store.update((plan) => { plan.site.azimuth = v; });
+  });
+  $('#sun-lat').addEventListener('change', (e) => {
+    const v = Number(e.target.value);
+    if (!Number.isNaN(v)) store.update((plan) => { plan.meta.lat = v; });
+  });
+  $('#sun-lng').addEventListener('change', (e) => {
+    const v = Number(e.target.value);
+    if (!Number.isNaN(v)) store.update((plan) => { plan.meta.lng = v; });
+  });
+}
+
 // ---- イベント配線 -----------------------------------------------------------
 function wireEvents() {
   document.querySelectorAll('#view-toggle .seg-btn').forEach((b) =>
@@ -415,12 +540,16 @@ function afterPlanChange() {
   setFloor('1F');
   viewer._fitted = false;
   refreshPanels();
+  syncSunPanel();
+  recomputeDaylight();
   if (ui.view === '2d') editor.zoomFit();
 }
 
 // ---- store 購読: データ変更時に各所を更新 ----------------------------------
 store.subscribe(() => {
   refreshPanels();
+  recomputeDaylight();
+  if (ui.view === '3d') updateSunInfo();
 });
 
 // ---- 起動 -------------------------------------------------------------------
@@ -428,13 +557,17 @@ function boot() {
   buildRoomChips();
   buildFurnitureChips();
   buildStairChips();
+  buildSunStatics();
   buildPlanSelect();
   wireEvents();
+  wireSunPanel();
 
   setTool('select');
   setFloor('1F');
   setView('2d');
   refreshPanels();
+  syncSunPanel();
+  recomputeDaylight();
   editor.resize();
   editor.zoomFit();
   updateHint();

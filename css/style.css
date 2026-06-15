@@ -172,6 +172,68 @@ html, body {
   max-width: 70%;
 }
 
+/* ===== 日射シミュレーション パネル ===== */
+#sun-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 290px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 12px 14px;
+  font-size: 13px;
+}
+.sun-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.sun-title { font-weight: 700; color: #b8770a; }
+.sun-play { padding: 5px 10px; font-size: 12px; }
+.sun-play.playing { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.sun-row { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.sun-row > label { color: var(--text-dim); font-size: 12px; }
+.sun-row > label b { color: var(--text); font-weight: 700; }
+.sun-row input[type=range] { width: 100%; accent-color: var(--accent); }
+
+.sun-seasons { display: flex; flex-wrap: wrap; gap: 4px; margin: -2px 0 6px; }
+.sun-seasons button {
+  flex: 1 1 auto;
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 4px;
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sun-seasons button:hover { background: #e7ebf0; color: var(--text); }
+
+.sun-info {
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: #fff7e6;
+  border: 1px solid #f0dcaf;
+  border-radius: 6px;
+  font-weight: 600;
+  color: #8a6d10;
+  text-align: center;
+}
+.sun-info.night { background: #e7ecf5; border-color: #c8d2e2; color: #3a4a66; }
+
+.sun-geo { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sun-geo label { color: var(--text-dim); font-size: 11px; }
+.sun-geo input[type=number] {
+  width: 64px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 5px;
+  font-size: 12px;
+}
+.sun-geo input#sun-azimuth { width: 52px; }
+
 /* スクロールバー */
 #panel::-webkit-scrollbar { width: 10px; }
 #panel::-webkit-scrollbar-thumb { background: #c5ccd6; border-radius: 5px; }

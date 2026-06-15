@@ -187,6 +187,9 @@ export function createEmptyPlan(name = '新しいプラン') {
       unitMM: 910,
       snapDivisions: 4,
       tatamiM2: 1.62,
+      // 日射計算用の緯度経度（既定: 板橋区赤塚）。将来変更可能。
+      lat: 35.775,
+      lng: 139.679,
     },
     site: {
       boundary: [],

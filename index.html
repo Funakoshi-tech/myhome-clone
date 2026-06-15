@@ -127,6 +127,37 @@
       <canvas id="canvas2d"></canvas>
       <div id="viewer3d" hidden></div>
       <div id="hint"></div>
+
+      <!-- 日射シミュレーション パネル（3D表示中のみ） -->
+      <div id="sun-panel" hidden>
+        <div class="sun-head">
+          <span class="sun-title">☀ 日射シミュレーション</span>
+          <button id="sun-play" class="btn sun-play" title="1日の動きを再生">▶ 再生</button>
+        </div>
+
+        <div class="sun-row">
+          <label>日付 <b id="sun-date-label">6/21</b></label>
+          <input type="range" id="sun-date" min="1" max="365" value="172" />
+          <datalist id="sun-date-ticks"></datalist>
+        </div>
+        <div class="sun-seasons" id="sun-seasons"></div>
+
+        <div class="sun-row">
+          <label>時刻 <b id="sun-hour-label">12:00</b></label>
+          <input type="range" id="sun-hour" min="0" max="23" value="12" />
+        </div>
+
+        <div class="sun-info" id="sun-info">方位 — / 高度 —</div>
+
+        <div class="sun-row sun-geo">
+          <label>方位角(°)</label>
+          <input type="number" id="sun-azimuth" min="0" max="359" step="1" value="0" />
+          <label>緯度</label>
+          <input type="number" id="sun-lat" step="0.001" />
+          <label>経度</label>
+          <input type="number" id="sun-lng" step="0.001" />
+        </div>
+      </div>
     </section>
   </main>
 
