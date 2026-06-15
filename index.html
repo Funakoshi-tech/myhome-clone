@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Home Clone — 3D間取り・日射シミュレーター</title>
+  <link rel="stylesheet" href="css/style.css" />
+
+  <!-- Three.js を CDN + importmap で読み込む（npm不要） -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- ===== 上部バー ===== -->
+  <header id="topbar">
+    <div class="brand">
+      <span class="logo">🏠</span>
+      <span class="title">My Home Clone</span>
+    </div>
+
+    <!-- 2D / 3D 切替 -->
+    <div class="seg" id="view-toggle" role="group" aria-label="ビュー切替">
+      <button data-view="2d" class="seg-btn active">2D</button>
+      <button data-view="3d" class="seg-btn">3D</button>
+    </div>
+
+    <!-- フロア切替 -->
+    <div class="seg" id="floor-tabs" role="group" aria-label="フロア切替">
+      <button data-floor="1F" class="seg-btn active">1F</button>
+      <button data-floor="2F" class="seg-btn">2F</button>
+      <button data-floor="3F" class="seg-btn">3F</button>
+    </div>
+
+    <div class="spacer"></div>
+
+    <!-- プラン管理 -->
+    <div class="plan-bar">
+      <select id="plan-select" title="プラン選択"></select>
+      <button id="plan-new" class="btn" title="新規プラン">新規</button>
+      <button id="plan-dup" class="btn" title="プランを複製">複製</button>
+      <button id="plan-del" class="btn danger" title="プランを削除">削除</button>
+      <button id="plan-rename" class="btn" title="名前変更">名前</button>
+    </div>
+
+    <!-- JSON入出力 -->
+    <div class="io-bar">
+      <button id="json-export" class="btn">JSON書出</button>
+      <button id="json-import" class="btn">JSON読込</button>
+      <input id="json-file" type="file" accept="application/json,.json" hidden />
+    </div>
+  </header>
+
+  <!-- ===== 本体 ===== -->
+  <main id="layout">
+    <!-- 左: コントロールパネル -->
+    <aside id="panel">
+      <!-- ツール -->
+      <section class="pane">
+        <h3>ツール</h3>
+        <div class="seg vertical" id="tool-group">
+          <button data-tool="select" class="seg-btn active">選択 / 移動</button>
+          <button data-tool="room" class="seg-btn">部屋を描く</button>
+          <button data-tool="furniture" class="seg-btn">家具を置く</button>
+          <button data-tool="pan" class="seg-btn">画面移動</button>
+        </div>
+      </section>
+
+      <!-- 部屋種別 -->
+      <section class="pane" id="room-pane">
+        <h3>部屋種別</h3>
+        <div class="chip-grid" id="room-types"></div>
+      </section>
+
+      <!-- 家具 -->
+      <section class="pane" id="furniture-pane">
+        <h3>家具</h3>
+        <div class="chip-grid" id="furniture-types"></div>
+      </section>
+
+      <!-- スナップ・グリッド -->
+      <section class="pane">
+        <h3>グリッド / スナップ</h3>
+        <div class="row">
+          <span class="lbl">スナップ</span>
+          <div class="seg" id="snap-group">
+            <button data-snap="2" class="seg-btn">0.5P</button>
+            <button data-snap="4" class="seg-btn active">0.25P</button>
+          </div>
+        </div>
+        <label class="row check">
+          <input type="checkbox" id="grid-toggle" checked />
+          <span>グリッドを表示</span>
+        </label>
+        <div class="row">
+          <button id="zoom-fit" class="btn wide">全体表示にズーム</button>
+        </div>
+      </section>
+
+      <!-- 選択中プロパティ -->
+      <section class="pane" id="props-pane">
+        <h3>プロパティ</h3>
+        <div id="props-body" class="props-empty">未選択</div>
+      </section>
+
+      <!-- 情報 -->
+      <section class="pane">
+        <h3>このフロアの情報</h3>
+        <div id="floor-info" class="info"></div>
+      </section>
+    </aside>
+
+    <!-- 右: 作図 / 3D -->
+    <section id="stage">
+      <canvas id="canvas2d"></canvas>
+      <div id="viewer3d" hidden></div>
+      <div id="hint"></div>
+    </section>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
