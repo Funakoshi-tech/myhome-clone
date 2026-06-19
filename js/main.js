@@ -216,6 +216,9 @@ function syncBgPanel() {
   const hasBg = !!(bg?.dataUrl);
   $('#bg-recalib').hidden = !hasBg;
   $('#bg-position').hidden = !hasBg || !M.isBackgroundImageScaled(bg);
+  $('#bg-delete').hidden = !hasBg;
+  $('#bg-visible').closest('.row.check').hidden = !hasBg;
+  $('#bg-opacity').closest('.row').hidden = !hasBg;
   if (hasBg) {
     $('#bg-visible').checked = bg.visible !== false;
     const opPct = Math.round((bg.opacity ?? 0.5) * 100);
@@ -342,6 +345,21 @@ function wireBgPanel() {
   });
 
   $('#bg-position').addEventListener('click', () => showBgPosModal());
+
+  $('#bg-delete').addEventListener('click', () => {
+    if (!store.current()?.site?.backgroundImage?.dataUrl) return;
+    if (!confirm('下絵を削除しますか？')) return;
+    store.update((plan) => {
+      plan.site.backgroundImage = null;
+    });
+    editor.cancelBgCalibration();
+    editor.invalidateBgImage();
+    hideBgScaleModal();
+    hideBgPosModal();
+    syncBgPanel();
+    updateHint();
+    editor.draw();
+  });
 
   $('#bg-visible').addEventListener('change', (e) => {
     store.update((plan) => {
