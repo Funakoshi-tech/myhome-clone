@@ -19,6 +19,7 @@ const ui = {
   openingId: OPENING_TYPES[0].id,  // 'window' | 'sliding' | 'door'
   selection: null,       // { kind:'room'|'furniture'|'stair'|'opening', id }
   showGrid: true,
+  view3dAllFloors: false, // 3D: true=全階積み上げ表示, false=選択階のみ
   // 日射シミュレーション（フェーズB）
   sun: { doy: 172, hour: 12, playing: false },
   daylight: {},          // { [roomId]: 直射時間 }
@@ -51,14 +52,35 @@ function setView(view) {
     stopSunAnimation();
     editor.resize(); editor.draw();
   }
+  syncView3dAllFloorsButton();
   updateHint();
+}
+
+function syncView3dAllFloorsButton() {
+  const btn = $('#view3d-all-floors');
+  if (!btn) return;
+  const is3d = ui.view === '3d';
+  btn.hidden = !is3d;
+  btn.classList.toggle('active', is3d && ui.view3dAllFloors);
+  btn.textContent = ui.view3dAllFloors ? '全階表示中' : '全階表示';
+}
+
+function setView3dAllFloors(on) {
+  ui.view3dAllFloors = !!on;
+  syncView3dAllFloorsButton();
+  if (ui.view === '3d') {
+    viewer.rebuild({ fitCamera: true });
+    updateHint();
+  }
 }
 
 function setFloor(floorId) {
   ui.floorId = floorId;
   ui.selection = null;
+  ui.view3dAllFloors = false;
   document.querySelectorAll('#floor-tabs .seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.floor === floorId));
+  syncView3dAllFloorsButton();
   if (ui.view === '2d') editor.draw();
   refreshPanels();
 }
@@ -73,6 +95,8 @@ function setTool(tool) {
   $('#opening-pane').classList.toggle('hl', tool === 'opening');
   updateHint();
 }
+
+ui.setTool = (tool) => setTool(tool);
 
 // ---- パネル構築 -------------------------------------------------------------
 function buildRoomChips() {
@@ -307,15 +331,38 @@ function buildProps() {
     body.appendChild(readonlyRow('種類', def.name));
     if (wallLen > 0) body.appendChild(readonlyRow('壁長さ', `${wallLen}mm`));
 
-    body.appendChild(field('幅 (mm)', inputNumber(op.widthMM, (v) => {
-      editor.applyToSelection((o) => { o.widthMM = Math.max(100, v); });
-    })));
-    body.appendChild(field('腰高 (mm)', inputNumber(op.sillMM, (v) => {
-      editor.applyToSelection((o) => { o.sillMM = Math.max(0, v); });
-    })));
-    body.appendChild(field('開口高 (mm)', inputNumber(op.heightMM, (v) => {
-      editor.applyToSelection((o) => { o.heightMM = Math.max(100, v); });
-    })));
+    if (op.type === 'door') {
+      // ドア：開き方反転のみ（サイズ変更なし）
+      const flipWrap = document.createElement('div');
+      flipWrap.className = 'btn-row';
+      const lr = document.createElement('button');
+      lr.className = 'btn';
+      lr.textContent = '左右反転';
+      lr.addEventListener('click', () => editor.toggleDoorFlip('flipLR'));
+      const ud = document.createElement('button');
+      ud.className = 'btn';
+      ud.textContent = '上下反転';
+      ud.addEventListener('click', () => editor.toggleDoorFlip('flipUD'));
+      flipWrap.append(lr, ud);
+      body.appendChild(field('開き方', flipWrap));
+    } else {
+      // 窓・掃き出し窓：幅・腰高・開口高
+      body.appendChild(field('幅 (mm)', inputNumber(op.widthMM, (v) => {
+        editor.applyToSelection((o) => {
+          o.widthMM = Math.max(100, v);
+          if (wall) {
+            const halfW = o.widthMM / 2;
+            o.offsetMM = Math.max(halfW, Math.min(wallLen - halfW, o.offsetMM));
+          }
+        });
+      })));
+      body.appendChild(field('腰高 (mm)', inputNumber(op.sillMM, (v) => {
+        editor.applyToSelection((o) => { o.sillMM = Math.max(0, v); });
+      })));
+      body.appendChild(field('開口高 (mm)', inputNumber(op.heightMM, (v) => {
+        editor.applyToSelection((o) => { o.heightMM = Math.max(100, v); });
+      })));
+    }
     body.appendChild(readonlyRow('壁中心からの距離', `${Math.round(op.offsetMM)}mm`));
 
     body.appendChild(deleteButton('この建具を削除'));
@@ -400,15 +447,17 @@ function syncSnapButtons() {
 function updateHint() {
   const hint = $('#hint');
   if (ui.view === '3d') {
-    hint.textContent = 'ドラッグで回転 / ホイールでズーム / 右ドラッグで平行移動';
+    hint.textContent = ui.view3dAllFloors
+      ? '全階表示中。フロア切替または全階表示ボタンで現在階のみに戻せます。ドラッグで回転 / ホイールでズーム'
+      : `${ui.floorId} のみ表示中。全階表示ボタンですべての階を積み上げ表示。ドラッグで回転 / ホイールでズーム`;
     return;
   }
   const map = {
-    select: '選択：クリックで選択/ドラッグで移動。部屋選択中は●頂点ドラッグ・辺ドラッグで平行移動・右クリックで頂点挿入。Del削除 / R回転',
-    room: 'ドラッグで部屋を矩形作成（スナップ適用）',
-    furniture: 'クリックで家具を配置',
-    stair: 'クリックで階段を配置。選択後 R で回転 / Del で削除。1F に置くと 2F に参照表示が自動追加',
-    opening: '壁をクリックで建具を配置。選択してドラッグで移動 / Del で削除。プロパティで幅・腰高・開口高を編集',
+    select: '選択：クリックで選択/ドラッグで移動。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。階段・ドアは緑丸で90°回転。短クリック/右クリック→操作メニュー',
+    room: 'ドラッグで部屋を矩形作成（スナップ適用）。完了後は自動で選択モードへ',
+    furniture: 'クリックで家具を配置。完了後は自動で選択モードへ',
+    stair: 'クリックで階段を配置。完了後は自動で選択モードへ。辺ドラッグでサイズ変更 / 緑丸ドラッグで90°回転',
+    opening: '壁をクリックで建具を配置。ドア選択時は緑丸ドラッグで90°刻みの開き方向変更。短クリック/右クリック→操作メニュー',
     pan: 'ドラッグで画面移動。ホイールでズーム',
   };
   hint.textContent = map[ui.tool] || '';
@@ -533,6 +582,9 @@ function wireEvents() {
     b.addEventListener('click', () => setView(b.dataset.view)));
   document.querySelectorAll('#floor-tabs .seg-btn').forEach((b) =>
     b.addEventListener('click', () => setFloor(b.dataset.floor)));
+  $('#view3d-all-floors').addEventListener('click', () => {
+    setView3dAllFloors(!ui.view3dAllFloors);
+  });
   document.querySelectorAll('#tool-group .seg-btn').forEach((b) =>
     b.addEventListener('click', () => setTool(b.dataset.tool)));
 

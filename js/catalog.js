@@ -54,12 +54,14 @@ export function getFurniture(id) {
 
 // ---- 階段（独立カテゴリ） ---------------------------------------------------
 // defaultW=間口(X mm), defaultD=奥行(Z mm)
+// 直線系: 3P×1P / 折返し系: 2P×2P
+const P = 910;
 export const STAIR_TYPES = [
-  { id: 'straight', name: '直進階段',   icon: '↑', defaultW: 910,  defaultD: 2730 },
-  { id: 'l_shape',  name: 'L字階段',    icon: '↳', defaultW: 1820, defaultD: 1820 },
-  { id: 'u_shape',  name: 'U字折返し',  icon: '⇅', defaultW: 1820, defaultD: 2730 },
-  { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 910,  defaultD: 2730 },
-  { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 1820, defaultD: 1820 },
+  { id: 'straight', name: '直進階段',   icon: '↑', defaultW: 3 * P, defaultD: 1 * P },
+  { id: 'l_shape',  name: 'L字階段',    icon: '↳', defaultW: 2 * P, defaultD: 2 * P },
+  { id: 'u_shape',  name: 'U字折返し',  icon: '⇅', defaultW: 2 * P, defaultD: 2 * P },
+  { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 2 * P, defaultD: 2 * P },
+  { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 2 * P, defaultD: 2 * P },
 ];
 
 export function getStairType(id) {

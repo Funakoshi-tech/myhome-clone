@@ -52,11 +52,11 @@ export function tatamiCount(areaM2, tatamiM2 = 1.62) {
   return areaM2 / tatamiM2;
 }
 
-// 「12.4㎡（7.6帖）」形式
+// 「7.6畳（12.4㎡）」形式
 export function formatAreaLabel(areaM2, tatamiM2 = 1.62) {
   const m2 = areaM2.toFixed(1);
   const jo = tatamiCount(areaM2, tatamiM2).toFixed(1);
-  return `${m2}㎡（${jo}帖）`;
+  return `${jo}畳（${m2}㎡）`;
 }
 
 // ---- 幾何 -------------------------------------------------------------------
@@ -172,7 +172,7 @@ export function rebuildFloorWalls(floor) {
 
 // ポリゴン全体を平行移動
 export function translatePolygon(polygon, dx, dz) {
-  return polygon.map((p) => ({ x: p.x + dx, z: p.z + dz }));
+  return polygon.map((p) => ({ ...p, x: p.x + dx, z: p.z + dz }));
 }
 
 // ---- 既定データ -------------------------------------------------------------
@@ -245,5 +245,45 @@ export function normalizePlan(plan) {
     furniture: Array.isArray(f.furniture) ? f.furniture : [],
     stairs: Array.isArray(f.stairs) ? f.stairs : [],
   }));
+  ensureWallRoomIds(out);
+  for (const floor of out.floors) {
+    if (!floor.rooms.length) continue;
+    const missingRoomId = floor.walls.some((w) => !w.roomId);
+    const wrongCount = floor.rooms.some((r) =>
+      floor.walls.filter((w) => inferWallRoomId(w) === r.id).length !== r.polygon.length,
+    );
+    if (!missingRoomId && !wrongCount) continue;
+    const oldWalls = floor.walls.slice();
+    rebuildFloorWalls(floor);
+    for (const op of floor.openings) {
+      const ow = oldWalls.find((w) => w.id === op.wallId);
+      if (!ow) continue;
+      const match = (a, b) =>
+        (a.start.x === b.start.x && a.start.z === b.start.z && a.end.x === b.end.x && a.end.z === b.end.z)
+        || (a.start.x === b.end.x && a.start.z === b.end.z && a.end.x === b.start.x && a.end.z === b.start.z);
+      const owRoom = inferWallRoomId(ow);
+      const nw = floor.walls.find((w) => match(w, ow) && inferWallRoomId(w) === owRoom);
+      if (nw) op.wallId = nw.id;
+    }
+  }
   return out;
+}
+
+/** 壁に roomId が無い古いデータ向けに ID パターン w_{roomId}_{edge} から復元 */
+export function inferWallRoomId(wall) {
+  if (wall?.roomId) return wall.roomId;
+  const m = wall?.id?.match(/^w_(.+)_\d+$/);
+  return m ? m[1] : null;
+}
+
+/** 全フロアの壁 roomId を補完（開口紐付け用） */
+export function ensureWallRoomIds(plan) {
+  for (const floor of plan.floors || []) {
+    for (const wall of floor.walls || []) {
+      if (!wall.roomId) {
+        const rid = inferWallRoomId(wall);
+        if (rid) wall.roomId = rid;
+      }
+    }
+  }
 }

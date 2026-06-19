@@ -77,6 +77,7 @@ html, body {
   font-size: 13px;
 }
 .btn:hover { background: #e7ebf0; }
+#view3d-all-floors.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .btn.danger { color: var(--danger); border-color: #e6c3c2; }
 .btn.danger:hover { background: #fbecec; }
 .btn.wide { width: 100%; }
@@ -234,6 +235,38 @@ html, body {
   font-size: 12px;
 }
 .sun-geo input#sun-azimuth { width: 52px; }
+
+/* 右クリックコンテキストメニュー */
+#ctx-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 100px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+}
+#ctx-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  border-radius: 5px;
+  cursor: pointer;
+}
+#ctx-menu button:hover {
+  background: #eef3fa;
+  color: var(--accent);
+}
+#ctx-menu button[data-danger]:hover {
+  background: #fee8e8;
+  color: #c0392b;
+}
 
 /* スクロールバー */
 #panel::-webkit-scrollbar { width: 10px; }

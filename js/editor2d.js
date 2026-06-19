@@ -45,6 +45,250 @@ export class Editor2D {
 
     this._space = false;
     this._bind();
+    this._initContextMenu();
+  }
+
+  _initContextMenu() {
+    this.ctxMenu = document.createElement('div');
+    this.ctxMenu.id = 'ctx-menu';
+    this.ctxMenu.hidden = true;
+    document.body.appendChild(this.ctxMenu);
+    this._ctxMenuHide = (e) => {
+      if (e.button !== 0) return;
+      if (!this.ctxMenu.hidden && !this.ctxMenu.contains(e.target)) this._hideContextMenu();
+    };
+    window.addEventListener('pointerdown', this._ctxMenuHide);
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') this._hideContextMenu(); });
+  }
+
+  _getContextMenuItems() {
+    const sel = this.ui.selection;
+    if (!sel) return [];
+    const items = [];
+    if (sel.kind === 'opening') {
+      const op = (this._floor().openings || []).find((o) => o.id === sel.id);
+      if (op?.type === 'door') {
+        items.push({ label: '左右反転', action: () => this._toggleDoorFlip('flipLR') });
+        items.push({ label: '上下反転', action: () => this._toggleDoorFlip('flipUD') });
+      }
+    }
+    items.push({ label: '削除', action: () => this._deleteSelection(), danger: true });
+    return items;
+  }
+
+  _doorFlipState(opening) {
+    // flipLR = 内開き(false) / 外開き(true)
+    // flipUD = 左開き(false) / 右開き(true)
+    if (opening.doorFlipV2) {
+      return { swingOut: !!opening.flipLR, hingeRight: !!opening.flipUD };
+    }
+    return {
+      swingOut: !!(opening.flipUD ?? opening.flipIO),
+      hingeRight: !!opening.flipLR,
+    };
+  }
+
+  _normAng(a) {
+    let x = a % (2 * Math.PI);
+    if (x > Math.PI) x -= 2 * Math.PI;
+    if (x < -Math.PI) x += 2 * Math.PI;
+    return x;
+  }
+
+  // 中心からマウス方向を 90° 刻みにスナップ（階段・ドア共通）
+  _snapRadialRad(centerW, w) {
+    const raw = Math.atan2(w.z - centerW.z, w.x - centerW.x);
+    return Math.round(raw / (Math.PI / 2)) * (Math.PI / 2);
+  }
+
+  // ドアの開き側に対応するハンドル方向（ラジアン）
+  _doorNaturalHandleRad(g) {
+    const openSide = Math.sign(Math.sin(this._normAng(g.openAng - g.closedAng))) || 1;
+    return Math.atan2(g.nz * openSide, g.nx * openSide);
+  }
+
+  _doorHandleRadForConfig(wall, opening, hingeRight, swingOut) {
+    const probe = { ...opening, flipUD: hingeRight, flipLR: swingOut, doorFlipV2: true };
+    delete probe.doorSwingRad;
+    delete probe.flipIO;
+    const g = this._doorLayout(wall, probe);
+    if (!g) return 0;
+    const natural = this._doorNaturalHandleRad(g);
+    return Math.round(natural / (Math.PI / 2)) * (Math.PI / 2);
+  }
+
+  // 中心基準・90°スナップでドアの開き方向（4パターン）を決定
+  _applyDoorRotationSnap(opening, wall, centerW, w) {
+    const snappedRad = this._snapRadialRad(centerW, w);
+    const candidates = [
+      { hingeRight: false, swingOut: false },
+      { hingeRight: false, swingOut: true },
+      { hingeRight: true, swingOut: false },
+      { hingeRight: true, swingOut: true },
+    ];
+    let best = candidates[0], bestDiff = Infinity;
+    for (const c of candidates) {
+      const handleRad = this._doorHandleRadForConfig(wall, opening, c.hingeRight, c.swingOut);
+      const diff = Math.abs(this._normAng(handleRad - snappedRad));
+      if (diff < bestDiff) { bestDiff = diff; best = c; }
+    }
+    opening.flipUD = best.hingeRight;
+    opening.flipLR = best.swingOut;
+    opening.doorFlipV2 = true;
+    delete opening.flipIO;
+    this._syncDoorSwingFromFlips(opening, wall);
+  }
+
+  // ドアの幾何（丁番・開き方向・回転ハンドル位置）
+  _doorLayout(wall, opening, handleOverrideW = null) {
+    const ax = wall.start.x, az = wall.start.z;
+    const bx = wall.end.x, bz = wall.end.z;
+    const dx = bx - ax, dz = bz - az;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return null;
+    const ux = dx / lenMM, uz = dz / lenMM;
+    const nx = -uz, nz = ux;
+    const halfT = (wall.thicknessMM || 120) / 2;
+    const oStart = opening.offsetMM - opening.widthMM / 2;
+    const oEnd = opening.offsetMM + opening.widthMM / 2;
+    const width = opening.widthMM;
+
+    const { swingOut, hingeRight } = this._doorFlipState(opening);
+    const hingeMM = hingeRight ? oEnd : oStart;
+    const otherMM = hingeRight ? oStart : oEnd;
+    const hingeW = { x: ax + ux * hingeMM, z: az + uz * hingeMM };
+    const otherW = { x: ax + ux * otherMM, z: az + uz * otherMM };
+    const centerW = { x: ax + ux * opening.offsetMM, z: az + uz * opening.offsetMM };
+    const closedAng = Math.atan2(otherW.z - hingeW.z, otherW.x - hingeW.x);
+
+    let openAng;
+    if (typeof opening.doorSwingRad === 'number') {
+      openAng = opening.doorSwingRad;
+    } else {
+      openAng = closedAng + (swingOut ? -1 : 1) * Math.PI / 2;
+    }
+
+    const leafEndW = {
+      x: hingeW.x + Math.cos(openAng) * width,
+      z: hingeW.z + Math.sin(openAng) * width,
+    };
+
+    let handleW;
+    const stemLenMM = Math.max(opening.widthMM, (wall.thicknessMM || 120)) * 0.55 + 280;
+    let handleRad;
+    if (handleOverrideW) {
+      handleRad = Math.atan2(handleOverrideW.z - centerW.z, handleOverrideW.x - centerW.x);
+      handleRad = Math.round(handleRad / (Math.PI / 2)) * (Math.PI / 2);
+    } else {
+      const openSide = Math.sign(Math.sin(this._normAng(openAng - closedAng))) || 1;
+      const natural = Math.atan2(nz * openSide, nx * openSide);
+      handleRad = Math.round(natural / (Math.PI / 2)) * (Math.PI / 2);
+    }
+    handleW = {
+      x: centerW.x + Math.cos(handleRad) * stemLenMM,
+      z: centerW.z + Math.sin(handleRad) * stemLenMM,
+    };
+
+    return {
+      ux, uz, nx, nz, halfT, oStart, oEnd, width, lenMM,
+      hingeW, otherW, centerW, leafEndW, handleW, closedAng, openAng,
+    };
+  }
+
+  _syncDoorSwingFromFlips(o, wall) {
+    const { swingOut, hingeRight } = this._doorFlipState(o);
+    const ax = wall.start.x, az = wall.start.z;
+    const dx = wall.end.x - ax, dz = wall.end.z - az;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return;
+    const ux = dx / lenMM, uz = dz / lenMM;
+    const oStart = o.offsetMM - o.widthMM / 2;
+    const oEnd = o.offsetMM + o.widthMM / 2;
+    const hingeMM = hingeRight ? oEnd : oStart;
+    const otherMM = hingeRight ? oStart : oEnd;
+    const hingeW = { x: ax + ux * hingeMM, z: az + uz * hingeMM };
+    const otherW = { x: ax + ux * otherMM, z: az + uz * otherMM };
+    const closedAng = Math.atan2(otherW.z - hingeW.z, otherW.x - hingeW.x);
+    o.doorSwingRad = closedAng + (swingOut ? -1 : 1) * Math.PI / 2;
+  }
+
+  _doorRotateHandleHit(op, wall, sx, sy) {
+    const override = this.drag?.kind === 'rotate-door' && this.drag.id === op.id
+      ? this.drag.tempHandleW : null;
+    const g = this._doorLayout(wall, op, override);
+    if (!g) return false;
+    const hs = this.worldToScreen(g.handleW.x, g.handleW.z);
+    return Math.hypot(sx - hs.x, sy - hs.y) <= 10;
+  }
+
+  _toggleDoorFlip(field) {
+    const sel = this.ui.selection;
+    if (!sel || sel.kind !== 'opening') return;
+    this.store.update((plan) => {
+      const floor = M.getFloor(plan, this.ui.floorId);
+      const o = (floor.openings || []).find((x) => x.id === sel.id);
+      const wall = floor.walls.find((w) => w.id === o?.wallId);
+      if (o && o.type === 'door' && wall) {
+        o[field] = !o[field];
+        o.doorFlipV2 = true;
+        delete o.flipIO;
+        this._syncDoorSwingFromFlips(o, wall);
+      }
+    });
+    this.onUI();
+  }
+
+  _showContextMenu(clientX, clientY) {
+    const items = this._getContextMenuItems();
+    if (!items.length) return;
+    this.ctxMenu.innerHTML = '';
+    for (const item of items) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = item.label;
+      if (item.danger) btn.dataset.danger = '1';
+      btn.addEventListener('click', () => {
+        this._hideContextMenu();
+        item.action();
+      });
+      this.ctxMenu.appendChild(btn);
+    }
+    this.ctxMenu.hidden = false;
+    this.ctxMenu.style.left = `${clientX}px`;
+    this.ctxMenu.style.top = `${clientY}px`;
+  }
+
+  _hideContextMenu() {
+    if (this.ctxMenu) this.ctxMenu.hidden = true;
+  }
+
+  _clickMenuMeta(e, sx, sy) {
+    return { clickSx: sx, clickSy: sy, clientX: e.clientX, clientY: e.clientY };
+  }
+
+  _revertDrag(d) {
+    const floor = this._floor();
+    if (d.kind === 'move-opening') {
+      const op = (floor.openings || []).find((o) => o.id === d.id);
+      if (op) op.offsetMM = d.origOffset;
+    } else if (d.kind === 'move-furniture') {
+      const f = floor.furniture.find((x) => x.id === d.id);
+      if (f) { f.x = d.ox; f.z = d.oz; }
+    } else if (d.kind === 'move-stair') {
+      const s = (floor.stairs || []).find((x) => x.id === d.id);
+      if (s) { s.x = d.ox; s.z = d.oz; }
+    } else if (d.kind === 'rotate-stair') {
+      const s = (floor.stairs || []).find((x) => x.id === d.id);
+      if (s) s.rotationDeg = d.origRotationDeg;
+    } else if (d.kind === 'rotate-door') {
+      const op = (floor.openings || []).find((o) => o.id === d.id);
+      if (op) {
+        op.flipLR = d.origFlipLR;
+        op.flipUD = d.origFlipUD;
+        if (typeof d.origSwingRad === 'number') op.doorSwingRad = d.origSwingRad;
+        else delete op.doorSwingRad;
+      }
+    }
   }
 
   // ---- ライフサイクル -------------------------------------------------------
@@ -141,6 +385,7 @@ export class Editor2D {
 
   _onDown(e) {
     if (!this.active) return;
+    if (e.button === 0) this._hideContextMenu();
     this.canvas.setPointerCapture?.(e.pointerId);
     const { sx, sy } = this._mouse(e);
     const w = this.screenToWorld(sx, sy);
@@ -153,19 +398,35 @@ export class Editor2D {
       return;
     }
 
-    // ---- 右クリック: 選択中の部屋の辺に頂点を挿入 ----
+    // ---- 右クリック ----
     if (e.button === 2) {
-      if (tool === 'select' && this.ui.selection?.kind === 'room') {
-        const room = this._floor().rooms.find((r) => r.id === this.ui.selection.id);
-        if (room) {
-          const ei = this._edgeAt(room, w);
-          if (ei >= 0) {
-            const snapped = M.snapPoint(w, this._snapDiv());
-            room.polygon.splice(ei + 1, 0, snapped);
-            M.rebuildFloorWalls(this._floor());
-            this.store.update(() => {});
-            this.draw();
+      this._hideContextMenu();
+      if (tool === 'select' && this.ui.selection) {
+        const sel = this.ui.selection;
+        // 部屋：追加頂点上なら削除 → 辺上なら頂点挿入（メニューより優先）
+        if (sel.kind === 'room') {
+          const room = this._floor().rooms.find((r) => r.id === sel.id);
+          if (room) {
+            const vi = this._vertexHandleAt(room, sx, sy);
+            if (vi >= 0 && this._canDeleteVertex(room, vi)) {
+              this._deleteRoomVertex(room, vi);
+              return;
+            }
+            const ei = this._edgeAt(room, w);
+            if (ei >= 0) {
+              const snapped = M.snapPoint(w, this._snapDiv());
+              room.polygon.splice(ei + 1, 0, { ...snapped, userAdded: true });
+              M.rebuildFloorWalls(this._floor());
+              this.store.update(() => {});
+              this.draw();
+              return;
+            }
           }
+        }
+        // 選択済みパーツ上 → コンテキストメニュー
+        if (this._isOnSelection(w, sx, sy)) {
+          this._showContextMenu(e.clientX, e.clientY);
+          return;
         }
       }
       return;
@@ -193,18 +454,91 @@ export class Editor2D {
     }
 
     // ---- select ツール ----
-    // Opening 選択中 → 移動ドラッグ
+    // Opening 選択中 → 端点ドラッグ（幅調整）→ 移動ドラッグ
     if (this.ui.selection?.kind === 'opening') {
       const flr = this._floor();
       const op = (flr.openings || []).find((o) => o.id === this.ui.selection.id);
       if (op) {
         const wall = flr.walls.find((wl) => wl.id === op.wallId);
+        if (wall && op.type === 'door') {
+          if (this._doorRotateHandleHit(op, wall, sx, sy)) {
+            const g = this._doorLayout(wall, op);
+            this.drag = {
+              kind: 'rotate-door', id: op.id, wallId: wall.id,
+              centerW: { ...g.centerW },
+              origFlipLR: op.flipLR,
+              origFlipUD: op.flipUD,
+              origSwingRad: op.doorSwingRad,
+            };
+            return;
+          }
+        }
+        if (wall && op.type !== 'door') {
+          const handle = this._openingHandleAt(op, wall, sx, sy);
+          if (handle) {
+            const lenMM = Math.hypot(wall.end.x - wall.start.x, wall.end.z - wall.start.z);
+            const oStart = op.offsetMM - op.widthMM / 2;
+            const oEnd = op.offsetMM + op.widthMM / 2;
+            this.drag = {
+              kind: 'resize-opening',
+              id: op.id,
+              wallId: wall.id,
+              end: handle,
+              fixedStartMM: oStart,
+              fixedEndMM: oEnd,
+              wallLenMM: lenMM,
+            };
+            return;
+          }
+        }
         if (wall) {
           const pts = this._openingWorldPoints(wall, op);
           if (pts && _ptSegDist(w, pts.start, pts.end) <= 15 / this.cam.scale) {
-            this.drag = { kind: 'move-opening', id: op.id, wallId: wall.id, startW: w, origOffset: op.offsetMM };
+            this.drag = {
+              kind: 'move-opening', id: op.id, wallId: wall.id,
+              startW: w, origOffset: op.offsetMM,
+              ...this._clickMenuMeta(e, sx, sy),
+            };
             return;
           }
+        }
+      }
+    }
+
+    // 階段選択中 → 回転ハンドル → 辺平行移動 → 移動ドラッグ
+    if (this.ui.selection?.kind === 'stair') {
+      const s = (this._floor().stairs || []).find((x) => x.id === this.ui.selection.id);
+      if (s) {
+        if (this._stairRotateHandleHit(s, sx, sy)) {
+          this.drag = {
+            kind: 'rotate-stair',
+            id: s.id,
+            centerW: { x: s.x, z: s.z },
+            origRotationDeg: s.rotationDeg || 0,
+          };
+          return;
+        }
+        const ei = this._stairEdgeAt(s, w);
+        if (ei >= 0) {
+          this.drag = {
+            kind: 'move-stair-edge',
+            id: s.id,
+            edgeIndex: ei,
+            startW: w,
+            orig: {
+              x: s.x, z: s.z,
+              widthMM: s.widthMM, depthMM: s.depthMM,
+              rotationDeg: s.rotationDeg || 0,
+            },
+          };
+          return;
+        }
+        if (M.pointInOrientedRect(w, s.x, s.z, s.widthMM, s.depthMM, s.rotationDeg || 0)) {
+          this.drag = {
+            kind: 'move-stair', id: s.id, startW: w, ox: s.x, oz: s.z,
+            ...this._clickMenuMeta(e, sx, sy),
+          };
+          return;
         }
       }
     }
@@ -243,10 +577,28 @@ export class Editor2D {
     if (hit) {
       if (hit.kind === 'furniture') {
         const f = this._floor().furniture.find((x) => x.id === hit.id);
-        this.drag = { kind: 'move-furniture', id: hit.id, startW: w, ox: f.x, oz: f.z };
+        this.drag = {
+          kind: 'move-furniture', id: hit.id, startW: w, ox: f.x, oz: f.z,
+          ...this._clickMenuMeta(e, sx, sy),
+        };
       } else if (hit.kind === 'stair') {
         const s = (this._floor().stairs || []).find((x) => x.id === hit.id);
-        if (s) this.drag = { kind: 'move-stair', id: hit.id, startW: w, ox: s.x, oz: s.z };
+        if (s) {
+          this.drag = {
+            kind: 'move-stair', id: hit.id, startW: w, ox: s.x, oz: s.z,
+            ...this._clickMenuMeta(e, sx, sy),
+          };
+        }
+      } else if (hit.kind === 'opening') {
+        const op = (this._floor().openings || []).find((x) => x.id === hit.id);
+        const wall = op ? this._floor().walls.find((wl) => wl.id === op.wallId) : null;
+        if (op && wall) {
+          this.drag = {
+            kind: 'move-opening', id: hit.id, wallId: wall.id,
+            startW: w, origOffset: op.offsetMM,
+            ...this._clickMenuMeta(e, sx, sy),
+          };
+        }
       } else if (hit.kind === 'room') {
         this.drag = { kind: 'move-room', id: hit.id, startW: w };
       }
@@ -266,7 +618,8 @@ export class Editor2D {
       const floor = this._floor();
       const room = floor.rooms.find((x) => x.id === d.roomId);
       if (room && room.polygon[d.index]) {
-        room.polygon[d.index] = M.snapPoint(w, this._snapDiv());
+        const pt = room.polygon[d.index];
+        room.polygon[d.index] = { ...M.snapPoint(w, this._snapDiv()), userAdded: pt.userAdded };
         M.rebuildFloorWalls(floor);
         this.draw();
       }
@@ -279,8 +632,8 @@ export class Editor2D {
       if (room) {
         const dx = M.snap(w.x - d.startW.x, this._snapDiv());
         const dz = M.snap(w.z - d.startW.z, this._snapDiv());
-        room.polygon[d.idxA] = { x: d.origA.x + dx, z: d.origA.z + dz };
-        room.polygon[d.idxB] = { x: d.origB.x + dx, z: d.origB.z + dz };
+        room.polygon[d.idxA] = { x: d.origA.x + dx, z: d.origA.z + dz, userAdded: d.origA.userAdded };
+        room.polygon[d.idxB] = { x: d.origB.x + dx, z: d.origB.z + dz, userAdded: d.origB.userAdded };
         M.rebuildFloorWalls(floor);
         this.draw();
       }
@@ -303,6 +656,22 @@ export class Editor2D {
       if (f) {
         f.x = M.snap(d.ox + (w.x - d.startW.x), this._snapDiv());
         f.z = M.snap(d.oz + (w.z - d.startW.z), this._snapDiv());
+        this.draw();
+      }
+      return;
+    }
+    if (d.kind === 'move-stair-edge') {
+      const s = (this._floor().stairs || []).find((x) => x.id === d.id);
+      if (s) this._applyStairEdgeDrag(s, d.edgeIndex, d.startW, w, d.orig);
+      this.draw();
+      return;
+    }
+    if (d.kind === 'rotate-stair') {
+      const s = (this._floor().stairs || []).find((x) => x.id === d.id);
+      if (s) {
+        s.rotationDeg = this._snapStairRotationDeg(d.centerW, w);
+        const g = this._stairRotateLayout(s);
+        d.tempHandleW = g ? { ...g.handleW } : null;
         this.draw();
       }
       return;
@@ -332,6 +701,42 @@ export class Editor2D {
       }
       return;
     }
+    if (d.kind === 'rotate-door') {
+      const floor = this._floor();
+      const op = (floor.openings || []).find((o) => o.id === d.id);
+      const wall = floor.walls.find((wl) => wl.id === d.wallId);
+      if (op && wall) {
+        this._applyDoorRotationSnap(op, wall, d.centerW, w);
+        const g = this._doorLayout(wall, op);
+        if (g) d.tempHandleW = { ...g.handleW };
+        this.draw();
+      }
+      return;
+    }
+    if (d.kind === 'resize-opening') {
+      const floor = this._floor();
+      const op = (floor.openings || []).find((o) => o.id === d.id);
+      const wall = floor.walls.find((wl) => wl.id === d.wallId);
+      if (op && wall) {
+        const wdx = wall.end.x - wall.start.x, wdz = wall.end.z - wall.start.z;
+        const wlen = d.wallLenMM || Math.hypot(wdx, wdz);
+        const ux = wdx / wlen, uz = wdz / wlen;
+        const distMM = (w.x - wall.start.x) * ux + (w.z - wall.start.z) * uz;
+        const snapped = M.snap(distMM, this._snapDiv());
+        const MIN_W = 100;
+        if (d.end === 'start') {
+          const newStart = Math.max(0, Math.min(d.fixedEndMM - MIN_W, snapped));
+          op.widthMM = d.fixedEndMM - newStart;
+          op.offsetMM = (newStart + d.fixedEndMM) / 2;
+        } else {
+          const newEnd = Math.min(wlen, Math.max(d.fixedStartMM + MIN_W, snapped));
+          op.widthMM = newEnd - d.fixedStartMM;
+          op.offsetMM = (d.fixedStartMM + newEnd) / 2;
+        }
+        this.draw();
+      }
+      return;
+    }
     if (d.kind === 'move-room') {
       const floor = this._floor();
       const room = floor.rooms.find((x) => x.id === d.id);
@@ -352,6 +757,17 @@ export class Editor2D {
   _onUp(e) {
     if (!this.drag) return;
     const d = this.drag;
+    const { sx, sy } = this._mouse(e);
+
+    // 左クリック短押し（ほぼ移動なし）→ コンテキストメニュー
+    if (d.clickSx != null && Math.hypot(sx - d.clickSx, sy - d.clickSy) < 6) {
+      this._revertDrag(d);
+      this.drag = null;
+      this._showContextMenu(d.clientX, d.clientY);
+      this.draw();
+      return;
+    }
+
     this.drag = null;
 
     if (d.kind === 'room') {
@@ -363,9 +779,16 @@ export class Editor2D {
       }
       return;
     }
-    const persistKinds = ['move-furniture', 'move-stair', 'move-room', 'vertex', 'move-edge', 'move-opening'];
+    const persistKinds = ['move-furniture', 'move-stair', 'move-stair-edge', 'rotate-stair', 'move-room', 'vertex', 'move-edge', 'move-opening', 'resize-opening', 'rotate-door'];
     if (persistKinds.includes(d.kind)) {
-      this.store.update(() => {});
+      this.store.update((plan) => {
+        if (d.kind === 'rotate-door') {
+          const floor = M.getFloor(plan, this.ui.floorId);
+          const o = (floor.openings || []).find((x) => x.id === d.id);
+          const wall = floor.walls.find((w) => w.id === d.wallId);
+          if (o && wall) this._syncDoorSwingFromFlips(o, wall);
+        }
+      });
       return;
     }
   }
@@ -447,7 +870,61 @@ export class Editor2D {
     return null;
   }
 
+  // 選択中パーツ上にポインタがあるか（右クリックメニュー用）
+  _isOnSelection(w, sx, sy) {
+    const sel = this.ui.selection;
+    if (!sel) return false;
+    const floor = this._floor();
+    if (sel.kind === 'room') {
+      const room = floor.rooms.find((r) => r.id === sel.id);
+      return room ? M.pointInPolygon(w, room.polygon) : false;
+    }
+    if (sel.kind === 'furniture') {
+      const f = floor.furniture.find((x) => x.id === sel.id);
+      return f ? M.pointInOrientedRect(w, f.x, f.z, f.wMM, f.dMM, f.rotationDeg || 0) : false;
+    }
+    if (sel.kind === 'stair') {
+      const s = (floor.stairs || []).find((x) => x.id === sel.id);
+      return s ? M.pointInOrientedRect(w, s.x, s.z, s.widthMM, s.depthMM, s.rotationDeg || 0) : false;
+    }
+    if (sel.kind === 'opening') {
+      const op = (floor.openings || []).find((x) => x.id === sel.id);
+      if (!op) return false;
+      const wall = floor.walls.find((wl) => wl.id === op.wallId);
+      if (!wall) return false;
+      const pts = this._openingWorldPoints(wall, op);
+      return pts ? _ptSegDist(w, pts.start, pts.end) <= 15 / this.cam.scale : false;
+    }
+    return false;
+  }
+
+  // 建具端点ハンドル（'start' | 'end' | null）
+  _openingHandleAt(op, wall, sx, sy) {
+    const pts = this._openingWorldPoints(wall, op);
+    if (!pts) return null;
+    const HIT = 10;
+    const ss = this.worldToScreen(pts.start.x, pts.start.z);
+    const se = this.worldToScreen(pts.end.x, pts.end.z);
+    if (Math.hypot(sx - ss.x, sy - ss.y) <= HIT) return 'start';
+    if (Math.hypot(sx - se.x, sy - se.y) <= HIT) return 'end';
+    return null;
+  }
+
   // ---- 頂点/辺ハンドル -----------------------------------------------------
+  _canDeleteVertex(room, index) {
+    const p = room.polygon[index];
+    return !!p?.userAdded && room.polygon.length > 3;
+  }
+
+  _deleteRoomVertex(room, index) {
+    if (!this._canDeleteVertex(room, index)) return;
+    room.polygon.splice(index, 1);
+    M.rebuildFloorWalls(this._floor());
+    this.store.update(() => {});
+    this.hoverVertex = null;
+    this.draw();
+  }
+
   _vertexHandleAt(room, sx, sy) {
     const HIT = 10;
     for (let i = 0; i < room.polygon.length; i++) {
@@ -491,6 +968,36 @@ export class Editor2D {
       } else {
         this.canvas.style.cursor = '';
       }
+    } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'stair') {
+      const s = (this._floor().stairs || []).find((x) => x.id === this.ui.selection.id);
+      if (s) {
+        if (this._stairRotateHandleHit(s, sx, sy)) {
+          this.canvas.style.cursor = 'grab';
+        } else {
+          const w = this.screenToWorld(sx, sy);
+          const ei = this._stairEdgeAt(s, w);
+          if (ei >= 0) {
+            he = { id: s.id, index: ei };
+            this.canvas.style.cursor = 'col-resize';
+          } else {
+            this.canvas.style.cursor = '';
+          }
+        }
+      } else {
+        this.canvas.style.cursor = '';
+      }
+    } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'opening') {
+      const op = (this._floor().openings || []).find((o) => o.id === this.ui.selection.id);
+      if (op?.type === 'door') {
+        const wall = this._floor().walls.find((w) => w.id === op.wallId);
+        if (wall && this._doorRotateHandleHit(op, wall, sx, sy)) {
+          this.canvas.style.cursor = 'grab';
+        } else {
+          this.canvas.style.cursor = '';
+        }
+      } else {
+        this.canvas.style.cursor = '';
+      }
     } else {
       this.canvas.style.cursor = '';
     }
@@ -502,6 +1009,12 @@ export class Editor2D {
   }
 
   // ---- 生成・編集 -----------------------------------------------------------
+  // パーツ配置後の共通処理：UI更新 → 選択/移動モードへ自動切替
+  _afterPlace() {
+    this.onUI();
+    if (this.ui.setTool) this.ui.setTool('select');
+  }
+
   _createRoom(a, b) {
     const type = getRoomType(this.ui.roomType);
     const poly = M.rectPolygon(a.x, a.z, b.x, b.z);
@@ -518,7 +1031,7 @@ export class Editor2D {
       M.rebuildFloorWalls(floor);
       this.ui.selection = { kind: 'room', id: room.id };
     });
-    this.onUI();
+    this._afterPlace();
   }
 
   _placeFurniture(p) {
@@ -536,7 +1049,7 @@ export class Editor2D {
       floor.furniture.push(f);
       this.ui.selection = { kind: 'furniture', id: f.id };
     });
-    this.onUI();
+    this._afterPlace();
   }
 
   _placeStair(p) {
@@ -555,7 +1068,7 @@ export class Editor2D {
       floor.stairs.push(s);
       this.ui.selection = { kind: 'stair', id: s.id };
     });
-    this.onUI();
+    this._afterPlace();
   }
 
   _placeOpening(w) {
@@ -581,11 +1094,23 @@ export class Editor2D {
         sillMM: def.sillMM,
         heightMM: def.heightMM,
       };
+      if (def.id === 'door') {
+        op.doorFlipV2 = true;
+        op.flipLR = false;
+        op.flipUD = false;
+        const ux = dx / lenMM, uz = dz / lenMM;
+        const oStart = offsetMM - def.widthMM / 2;
+        const oEnd = offsetMM + def.widthMM / 2;
+        const hingeW = { x: wall.start.x + ux * oStart, z: wall.start.z + uz * oStart };
+        const otherW = { x: wall.start.x + ux * oEnd, z: wall.start.z + uz * oEnd };
+        const wallAng = Math.atan2(dz, dx);
+        op.doorSwingRad = wallAng + Math.PI / 2;
+      }
       if (!fl.openings) fl.openings = [];
       fl.openings.push(op);
       this.ui.selection = { kind: 'opening', id: op.id };
     });
-    this.onUI();
+    this._afterPlace();
   }
 
   _deleteSelection() {
@@ -682,6 +1207,7 @@ export class Editor2D {
     for (const f of floor.furniture) this._drawFurniture(ctx, f);
     this._drawSelection(ctx);
     this._drawRoomHandles(ctx);
+    this._drawStairHandles(ctx);
     if (this.drag?.kind === 'room') this._drawRoomPreview(ctx, this.drag);
   }
 
@@ -745,10 +1271,10 @@ export class Editor2D {
       ctx.fillStyle = '#1f2733';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.font = '600 13px system-ui, sans-serif';
-      ctx.fillText(room.name || getRoomType(room.type).name, s.x, s.y - 8);
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.fillStyle = '#5b6470';
-      ctx.fillText(M.formatAreaLabel(areaM2, tatami), s.x, s.y + 9);
+      ctx.fillText(room.name || getRoomType(room.type).name, s.x, s.y - 10);
+      ctx.font = '700 15px system-ui, sans-serif';
+      ctx.fillStyle = '#3d4654';
+      ctx.fillText(M.formatAreaLabel(areaM2, tatami), s.x, s.y + 10);
 
       // 日照時間（フェーズB: 現在選択中の日付での直射時間）
       const daylight = this.ui.daylight;
@@ -756,7 +1282,7 @@ export class Editor2D {
         const hrs = daylight[room.id];
         ctx.font = '600 11px system-ui, sans-serif';
         ctx.fillStyle = hrs > 0 ? '#c8860a' : '#8a93a0';
-        ctx.fillText(`☀ ${hrs.toFixed(1)}h`, s.x, s.y + 24);
+        ctx.fillText(`☀ ${hrs.toFixed(1)}h`, s.x, s.y + 28);
       }
     }
   }
@@ -797,6 +1323,83 @@ export class Editor2D {
     ctx.lineCap = 'butt';
   }
 
+  // MyHomeCloud 仕様のドア記号（黒線の弧＋扉、選択時は青枠＋緑回転ハンドル）
+  _drawDoorSymbol(ctx, wall, opening) {
+    const isSelected = this.ui.selection?.kind === 'opening'
+      && this.ui.selection.id === opening.id
+      && this.ui.tool === 'select';
+    const handleOverride = (this.drag?.kind === 'rotate-door' && this.drag.id === opening.id)
+      ? this.drag.tempHandleW : null;
+    const g = this._doorLayout(wall, opening, handleOverride);
+    if (!g) return;
+
+    const ax = wall.start.x, az = wall.start.z;
+    const { halfT, oStart, oEnd, ux, uz, nx, nz } = g;
+
+    // 框（建具枠）：開口両端を壁厚方向にキャップ
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#333';
+    for (const offMM of [oStart, oEnd]) {
+      const pA = this.worldToScreen(ax + ux * offMM + nx * halfT, az + uz * offMM + nz * halfT);
+      const pB = this.worldToScreen(ax + ux * offMM - nx * halfT, az + uz * offMM - nz * halfT);
+      ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke();
+    }
+
+    const hingeS = this.worldToScreen(g.hingeW.x, g.hingeW.z);
+    const otherS = this.worldToScreen(g.otherW.x, g.otherW.z);
+    const leafS = this.worldToScreen(g.leafEndW.x, g.leafEndW.z);
+    const r = Math.hypot(otherS.x - hingeS.x, otherS.y - hingeS.y);
+    const closedAng = Math.atan2(otherS.y - hingeS.y, otherS.x - hingeS.x);
+    const openAng = Math.atan2(leafS.y - hingeS.y, leafS.x - hingeS.x);
+    const ccw = this._normAng(openAng - closedAng) > 0;
+
+    // 開き弧＋扉（黒線）
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(hingeS.x, hingeS.y, r, closedAng, openAng, !ccw);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(hingeS.x, hingeS.y);
+    ctx.lineTo(leafS.x, leafS.y);
+    ctx.stroke();
+
+    if (isSelected) {
+      // 選択枠（壁厚内の青矩形）
+      const corners = [
+        [oStart, halfT], [oEnd, halfT], [oEnd, -halfT], [oStart, -halfT],
+      ].map(([off, nt]) => this.worldToScreen(ax + ux * off + nx * nt, az + uz * off + nz * nt));
+      ctx.strokeStyle = '#2c7be5';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      corners.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      ctx.closePath();
+      ctx.stroke();
+
+      // 回転ハンドル（開口中心から垂直な青線＋緑丸）
+      const centerS = this.worldToScreen(g.centerW.x, g.centerW.z);
+      const handleS = this.worldToScreen(g.handleW.x, g.handleW.z);
+      ctx.strokeStyle = '#2c7be5';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(centerS.x, centerS.y);
+      ctx.lineTo(handleS.x, handleS.y);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#27ae60';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(handleS.x, handleS.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#27ae60';
+      ctx.beginPath();
+      ctx.arc(handleS.x, handleS.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   // 建具記号（壁の隙間に上書き）
   _drawOpeningSymbol(ctx, opening) {
     const floor = this._floor();
@@ -816,17 +1419,7 @@ export class Editor2D {
     const oEnd   = opening.offsetMM + opening.widthMM / 2;
 
     if (opening.type === 'door') {
-      // ドア：ドア葉（線）＋ 開き弧
-      const pivot = this.worldToScreen(ax + ux * oStart, az + uz * oStart);
-      const leaf  = this.worldToScreen(ax + ux * oEnd,   az + uz * oEnd);
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = '#2c7be5';
-      ctx.beginPath(); ctx.moveTo(pivot.x, pivot.y); ctx.lineTo(leaf.x, leaf.y); ctx.stroke();
-      const r = Math.hypot(leaf.x - pivot.x, leaf.y - pivot.y);
-      const angLeaf = Math.atan2(leaf.y - pivot.y, leaf.x - pivot.x);
-      ctx.beginPath();
-      ctx.arc(pivot.x, pivot.y, r, angLeaf, angLeaf + Math.PI / 2);
-      ctx.stroke();
+      this._drawDoorSymbol(ctx, wall, opening);
       return;
     }
 
@@ -905,7 +1498,9 @@ export class Editor2D {
       if (s) { this._polyPath(ctx, this._stairCorners(s)); ctx.stroke(); }
     } else if (sel.kind === 'opening') {
       const op = (floor.openings || []).find((x) => x.id === sel.id);
-      if (op) {
+      if (op?.type === 'door') {
+        // ドアの選択 UI は _drawDoorSymbol 内で描画
+      } else if (op) {
         const wl = floor.walls.find((x) => x.id === op.wallId);
         if (wl) {
           const pts = this._openingWorldPoints(wl, op);
@@ -914,13 +1509,19 @@ export class Editor2D {
             const sb = this.worldToScreen(pts.end.x, pts.end.z);
             ctx.lineWidth = 4;
             ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke();
-            // 中心ハンドル
             ctx.restore();
             ctx.save();
             ctx.setLineDash([]);
-            const cx = (sa.x + sb.x) / 2, cy = (sa.y + sb.y) / 2;
-            ctx.fillStyle = '#f5a623';
-            ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI * 2); ctx.fill();
+            // 窓・掃き出し窓：端点ハンドル（幅調整）
+            if (op.type !== 'door') {
+              ctx.fillStyle = '#ffffff';
+              ctx.strokeStyle = '#2c7be5';
+              ctx.lineWidth = 2;
+              for (const pt of [sa, sb]) {
+                ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+                ctx.fill(); ctx.stroke();
+              }
+            }
           }
         }
       }
@@ -928,12 +1529,137 @@ export class Editor2D {
     ctx.restore();
   }
 
+  toggleDoorFlip(field) { this._toggleDoorFlip(field); }
+
   _stairCorners(stair) {
     return this._furnitureCorners({
       x: stair.x, z: stair.z,
       wMM: stair.widthMM, dMM: stair.depthMM,
       rotationDeg: stair.rotationDeg || 0,
     });
+  }
+
+  // 階段の回転ハンドル位置（中心から上り方向へ青線＋緑丸）
+  _stairRotateLayout(stair, handleOverrideW = null) {
+    const centerW = { x: stair.x, z: stair.z };
+    const rad = (stair.rotationDeg || 0) * Math.PI / 180;
+    const stemLenMM = Math.max(stair.widthMM, stair.depthMM) * 0.55 + 280;
+    let handleW;
+    if (handleOverrideW) {
+      handleW = { x: handleOverrideW.x, z: handleOverrideW.z };
+    } else {
+      // ローカル −Z（上り方向）をワールドへ
+      handleW = {
+        x: centerW.x + Math.sin(rad) * stemLenMM,
+        z: centerW.z - Math.cos(rad) * stemLenMM,
+      };
+    }
+    return { centerW, handleW };
+  }
+
+  _snapStairRotationDeg(centerW, w) {
+    const snappedRad = this._snapRadialRad(centerW, w);
+    const snappedDeg = snappedRad * 180 / Math.PI;
+    return ((snappedDeg + 90) % 360 + 360) % 360;
+  }
+
+  _stairRotateHandleHit(stair, sx, sy) {
+    const override = this.drag?.kind === 'rotate-stair' && this.drag.id === stair.id
+      ? this.drag.tempHandleW : null;
+    const g = this._stairRotateLayout(stair, override);
+    if (!g) return false;
+    const hs = this.worldToScreen(g.handleW.x, g.handleW.z);
+    return Math.hypot(sx - hs.x, sy - hs.y) <= 10;
+  }
+
+  // 階段矩形の辺ヒット（0〜3）
+  _stairEdgeAt(stair, w) {
+    const HIT = 8 / this.cam.scale;
+    const corners = this._stairCorners(stair);
+    for (let i = 0; i < 4; i++) {
+      const a = corners[i], b = corners[(i + 1) % 4];
+      if (_ptSegDist(w, a, b) <= HIT) return i;
+    }
+    return -1;
+  }
+
+  // 辺の平行移動で widthMM / depthMM を更新（部屋の辺移動と同様）
+  _applyStairEdgeDrag(stair, edgeIndex, startW, curW, orig) {
+    const rad = (orig.rotationDeg || 0) * Math.PI / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    const wdx = curW.x - startW.x, wdz = curW.z - startW.z;
+    const ldx = wdx * cos + wdz * sin;
+    const ldz = -wdx * sin + wdz * cos;
+
+    // ローカル辺法線: 0=−Z, 1=+X, 2=+Z, 3=−X
+    const edges = [
+      { lx: 0, lz: -1, dim: 'depth', cSign: -0.5 },
+      { lx: 1, lz: 0, dim: 'width', cSign: 0.5 },
+      { lx: 0, lz: 1, dim: 'depth', cSign: 0.5 },
+      { lx: -1, lz: 0, dim: 'width', cSign: -0.5 },
+    ];
+    const e = edges[edgeIndex];
+    const deltaN = M.snap(ldx * e.lx + ldz * e.lz, this._snapDiv());
+    const MIN = M.P_MM;
+
+    if (e.dim === 'depth') {
+      const newDepth = Math.max(MIN, orig.depthMM + deltaN);
+      const applied = newDepth - orig.depthMM;
+      stair.depthMM = newDepth;
+      const clx = 0, clz = e.cSign * applied;
+      stair.x = orig.x + clx * cos - clz * sin;
+      stair.z = orig.z + clx * sin + clz * cos;
+    } else {
+      const newWidth = Math.max(MIN, orig.widthMM + deltaN);
+      const applied = newWidth - orig.widthMM;
+      stair.widthMM = newWidth;
+      const clx = e.cSign * applied, clz = 0;
+      stair.x = orig.x + clx * cos - clz * sin;
+      stair.z = orig.z + clx * sin + clz * cos;
+    }
+  }
+
+  _drawStairHandles(ctx) {
+    if (this.ui.tool !== 'select') return;
+    const sel = this.ui.selection;
+    if (!sel || sel.kind !== 'stair') return;
+    const stair = (this._floor().stairs || []).find((s) => s.id === sel.id);
+    if (!stair) return;
+    const corners = this._stairCorners(stair);
+
+    if (this.hoverEdge?.id === stair.id) {
+      const i = this.hoverEdge.index;
+      const a = corners[i], b = corners[(i + 1) % 4];
+      const sa = this.worldToScreen(a.x, a.z);
+      const sb = this.worldToScreen(b.x, b.z);
+      ctx.strokeStyle = 'rgba(44,123,229,0.45)';
+      ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke();
+    }
+
+    // 回転ハンドル（中心から上り方向の青線＋緑丸）
+    const handleOverride = (this.drag?.kind === 'rotate-stair' && this.drag.id === stair.id)
+      ? this.drag.tempHandleW : null;
+    const g = this._stairRotateLayout(stair, handleOverride);
+    const centerS = this.worldToScreen(g.centerW.x, g.centerW.z);
+    const handleS = this.worldToScreen(g.handleW.x, g.handleW.z);
+    ctx.strokeStyle = '#2c7be5';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(centerS.x, centerS.y);
+    ctx.lineTo(handleS.x, handleS.y);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#27ae60';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(handleS.x, handleS.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#27ae60';
+    ctx.beginPath();
+    ctx.arc(handleS.x, handleS.y, 3, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   _drawRoomHandles(ctx) {
@@ -955,17 +1681,18 @@ export class Editor2D {
       ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke();
     }
 
-    // 頂点の○ハンドル（辺のドラッグ・右クリック挿入のガイドも兼ねる）
+    // 頂点の○ハンドル（追加頂点は橙、右クリックで削除）
     for (let i = 0; i < poly.length; i++) {
       const s = this.worldToScreen(poly[i].x, poly[i].z);
       const hovered = this.hoverVertex?.id === room.id && this.hoverVertex?.index === i;
+      const added = !!poly[i].userAdded;
       ctx.beginPath(); ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffff'; ctx.fill();
       ctx.lineWidth = 2;
-      ctx.strokeStyle = hovered ? '#f5a623' : '#2c7be5';
+      ctx.strokeStyle = hovered ? '#f5a623' : (added ? '#e67e22' : '#2c7be5');
       ctx.stroke();
     }
-    // 辺の＋ハンドル表示は廃止。右クリックで頂点挿入。
+    // 辺の右クリックで頂点挿入、追加頂点の右クリックで削除。
   }
 
   _drawRoomPreview(ctx, d) {
@@ -981,9 +1708,9 @@ export class Editor2D {
     const tatami = this._plan().meta.tatamiM2 || 1.62;
     const c = M.polygonCentroid(poly);
     const s = this.worldToScreen(c.x, c.z);
-    ctx.fillStyle = '#1f2733';
+    ctx.fillStyle = '#3d4654';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '12px system-ui, sans-serif';
+    ctx.font = '700 15px system-ui, sans-serif';
     ctx.fillText(M.formatAreaLabel(areaM2, tatami), s.x, s.y);
   }
 

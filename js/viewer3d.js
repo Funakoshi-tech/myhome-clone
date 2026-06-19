@@ -10,11 +10,13 @@ import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_L
 
 const MM = 0.001; // mm → m
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
-// 遮蔽判定専用の共有マテリアル（描画しないので軽量）
-const OCCLUDER_MAT = new THREE.MeshBasicMaterial();
+const CEILING_SLAB_M = 0.05; // 天井板厚（レイキャスト安定用）
+const OCCLUDER_MAT = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
 
-// 床板を描かない部屋種別（貫通表現）: 吹抜け・階段
-const NO_FLOOR_TYPES = new Set(['fukinuke', 'stair']);
+// 床板なし（上下貫通）: 吹抜け
+const NO_FLOOR_TYPES = new Set(['fukinuke']);
+// 天井なし: バルコニー・吹抜け・階段部屋
+const NO_CEILING_TYPES = new Set(['balcony', 'fukinuke', 'stair']);
 
 export class Viewer3D {
   constructor(container, store, ui) {
@@ -84,10 +86,30 @@ export class Viewer3D {
 
     // 日射の現在状態
     this._center = new THREE.Vector3(0, 0, 0);
+    this._lastDisplayKey = null;
 
     this._materials = {
       floor: new Map(),
       wall: new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.9, metalness: 0.0 }),
+      ceiling: new THREE.MeshStandardMaterial({
+        color: 0xd8e4ef,
+        transparent: true,
+        opacity: 0.14,
+        roughness: 0.92,
+        metalness: 0.0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+      // 3D 表示専用：影のみ落とす不可視天井（日射計算 occluder とは別）
+      ceilingShadow: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        roughness: 0.92,
+        side: THREE.DoubleSide,
+        depthWrite: true,
+        colorWrite: false,
+      }),
     };
 
     this._onResize = () => this.resize();
@@ -145,46 +167,37 @@ export class Viewer3D {
     return this._materials.floor.get(hex);
   }
 
-  // 全フロアを level で積み上げて描画する
-  rebuild() {
+  // 3D 表示。view3dAllFloors=false なら ui.floorId のみ（y=0 に配置）。
+  // view3dAllFloors=true なら全フロアを level で積み上げ表示。
+  rebuild(opts = {}) {
     if (!this._inited || !this.active) return;
     this._clearRoot();
     const plan = this.store.current();
     if (!plan) return;
 
+    const showAll = !!this.ui?.view3dAllFloors;
+    const selectedId = this.ui?.floorId || '1F';
+    const displayKey = showAll ? '__all__' : selectedId;
+    const fitCamera = opts.fitCamera || displayKey !== this._lastDisplayKey;
+
     // site.azimuth（真北からの回転角）を建物全体に反映
     this.root.rotation.y = (plan.site?.azimuth || 0) * Math.PI / 180;
 
     for (const floor of plan.floors) {
+      if (!showAll && floor.id !== selectedId) continue;
       const hasContent = floor.rooms.length || floor.furniture.length || (floor.stairs || []).length;
       if (!hasContent) continue;
-      const baseY = (floor.level || 0) * (floor.ceilingHeightMM || 2400) * MM;
+      const baseY = showAll
+        ? (floor.level || 0) * (floor.ceilingHeightMM || 2400) * MM
+        : 0;
       const g = new THREE.Group();
       g.position.y = baseY;
-
-      // 床（部屋ポリゴン）
-      for (const room of floor.rooms) {
-        const mesh = this._buildFloor(room);
-        if (mesh) g.add(mesh);
-      }
-      // 壁（建具開口付き）
-      for (const wall of floor.walls) {
-        const ops = (floor.openings || []).filter((o) => o.wallId === wall.id);
-        const obj = this._buildWallWithOpenings(wall, ops);
-        if (obj) g.add(obj);
-      }
-      // 階段
-      for (const stair of (floor.stairs || [])) {
-        const obj = this._buildStair(stair, floor.ceilingHeightMM || 2400);
-        if (obj) g.add(obj);
-      }
-      // 家具
-      for (const f of floor.furniture) {
-        const mesh = this._buildFurniture(f);
-        if (mesh) g.add(mesh);
-      }
+      g.userData = { floorId: floor.id };
+      this._populateFloorGeometry(g, floor, 'visual');
       this.root.add(g);
     }
+
+    this._lastDisplayKey = displayKey;
 
     // 建物中心（太陽光ターゲット・影カメラ用）
     const box = new THREE.Box3().setFromObject(this.root);
@@ -193,30 +206,325 @@ export class Viewer3D {
     // 太陽光を現在のUI状態で更新
     if (this.ui?.sun) this.updateSun(this.ui.sun.doy, this.ui.sun.hour);
 
-    // 初回フィット
-    if (!this._fitted) {
+    if (fitCamera || !this._fitted) {
       this._fitted = true;
       this._fitCamera();
     }
   }
 
-  _buildFloor(room) {
+  _roomHasFloor(room) {
+    return !NO_FLOOR_TYPES.has(room.type);
+  }
+
+  _roomHasCeiling(room) {
+    return !NO_CEILING_TYPES.has(room.type);
+  }
+
+  // 部屋の底面（床）
+  _buildRoomFloor(room, yM, mat, opts = {}) {
+    if (!this._roomHasFloor(room)) return null;
+    return this._buildRoomPolygonMesh(room, yM, mat, opts);
+  }
+
+  // 部屋の天井面（箱の上面。日射・3D 共用ジオメトリ）
+  _buildRoomCeiling(room, ceilingYM, mat, floor = null) {
+    if (!this._roomHasCeiling(room)) return null;
+    const shape = floor ? this._roomCeilingShape(room, floor) : this._roomShape(room);
+    if (!shape) return null;
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: CEILING_SLAB_M, bevelEnabled: false });
+    geo.rotateX(Math.PI / 2);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = ceilingYM - CEILING_SLAB_M;
+    return mesh;
+  }
+
+  /**
+   * 1フロア分の物理構造（床・壁・天井・階段・家具）をグループへ追加。
+   * @param {'visual'|'occluder'} mode
+   */
+  _populateFloorGeometry(fg, floor, mode) {
+    const ceilingY = (floor.ceilingHeightMM || 2400) * MM;
+    const isOcc = mode === 'occluder';
+
+    for (const room of floor.rooms) {
+      const floorMesh = this._buildRoomFloor(
+        room,
+        isOcc ? 0 : 0.005,
+        isOcc ? OCCLUDER_MAT : null,
+        isOcc ? {} : { color: getRoomType(room.type).color, receiveShadow: true },
+      );
+      if (floorMesh) {
+        floorMesh.userData = { roomId: room.id, kind: 'floor' };
+        fg.add(floorMesh);
+      }
+
+      const ceilMesh = this._buildRoomCeiling(room, ceilingY, isOcc ? OCCLUDER_MAT : this._materials.ceiling, floor);
+      if (ceilMesh) {
+        ceilMesh.userData = { roomId: room.id, kind: 'ceiling' };
+        if (!isOcc) {
+          // 表示用：半透明で室内が見える
+          ceilMesh.castShadow = false;
+          ceilMesh.receiveShadow = false;
+          ceilMesh.renderOrder = 2;
+          fg.add(ceilMesh);
+          // 影用：不可視だが castShadow で上からの直射を床に遮る
+          const shadowCeil = this._buildRoomCeiling(room, ceilingY, this._materials.ceilingShadow, floor);
+          if (shadowCeil) {
+            shadowCeil.userData = { roomId: room.id, kind: 'ceiling-shadow' };
+            shadowCeil.castShadow = true;
+            shadowCeil.receiveShadow = false;
+            shadowCeil.renderOrder = 0;
+            fg.add(shadowCeil);
+          }
+        } else {
+          fg.add(ceilMesh);
+        }
+      }
+    }
+
+    for (const wall of floor.walls) {
+      const ops = (floor.openings || []).filter((o) => o.wallId === wall.id);
+      const wallGroup = this._buildWallWithOpenings(wall, ops, isOcc ? OCCLUDER_MAT : null, { occluder: isOcc });
+      if (!wallGroup) continue;
+      const rid = wall.roomId || null;
+      wallGroup.traverse((o) => {
+        if (o.isMesh) o.userData = { roomId: rid, kind: 'wall' };
+      });
+      fg.add(wallGroup);
+    }
+
+    for (const s of (floor.stairs || [])) {
+      if (isOcc) {
+        const geo = new THREE.BoxGeometry(s.widthMM * MM, ceilingY, s.depthMM * MM);
+        const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
+        mesh.position.set(s.x * MM, ceilingY / 2, s.z * MM);
+        mesh.rotation.y = -((s.rotationDeg || 0) * Math.PI) / 180;
+        mesh.userData = { roomId: null, kind: 'stair' };
+        fg.add(mesh);
+      } else {
+        const obj = this._buildStair(s, floor.ceilingHeightMM || 2400);
+        if (obj) fg.add(obj);
+      }
+    }
+
+    if (isOcc) {
+      for (const f of floor.furniture) {
+        const geo = new THREE.BoxGeometry((f.wMM || 500) * MM, (f.hMM || 500) * MM, (f.dMM || 500) * MM);
+        const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
+        mesh.position.set(f.x * MM, (f.y || 0) * MM + (f.hMM || 500) * MM / 2, f.z * MM);
+        mesh.rotation.y = -((f.rotationDeg || 0) * Math.PI) / 180;
+        mesh.userData = { roomId: null, kind: 'furniture' };
+        fg.add(mesh);
+      }
+    } else {
+      for (const f of floor.furniture) {
+        const mesh = this._buildFurniture(f);
+        if (mesh) fg.add(mesh);
+      }
+    }
+  }
+
+  // 部屋ポリゴンの水平面（床・天井オクルーダー共用）
+  _buildRoomPolygonMesh(room, yM, mat, opts = {}) {
     if (!room.polygon || room.polygon.length < 3) return null;
-    if (NO_FLOOR_TYPES.has(room.type)) return null; // 床板なし（貫通）
+    const shape = this._roomShape(room);
+    if (!shape) return null;
+    const geo = new THREE.ShapeGeometry(shape);
+    geo.rotateX(Math.PI / 2);
+    const useMat = mat || this._floorMaterial(opts.color || '#888');
+    const mesh = new THREE.Mesh(geo, useMat);
+    mesh.position.y = yM;
+    if (opts.receiveShadow) mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  _roomShape(room) {
+    if (!room.polygon || room.polygon.length < 3) return null;
     const shape = new THREE.Shape();
     room.polygon.forEach((p, i) => {
       const x = p.x * MM, z = p.z * MM;
       if (i === 0) shape.moveTo(x, z); else shape.lineTo(x, z);
     });
     shape.closePath();
-    const geo = new THREE.ShapeGeometry(shape);
-    // Shape は XY 平面 → XZ へ寝かせる
-    geo.rotateX(Math.PI / 2);
-    const color = getRoomType(room.type).color;
-    const mesh = new THREE.Mesh(geo, this._floorMaterial(color));
-    mesh.position.y = 0.005;
-    mesh.receiveShadow = true;
-    return mesh;
+    return shape;
+  }
+
+  _stairFootprintCorners(stair) {
+    const rad = (stair.rotationDeg || 0) * Math.PI / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    const hw = stair.widthMM / 2, hd = stair.depthMM / 2;
+    return [
+      { x: -hw, z: -hd }, { x: hw, z: -hd }, { x: hw, z: hd }, { x: -hw, z: hd },
+    ].map((p) => ({
+      x: stair.x + p.x * cos - p.z * sin,
+      z: stair.z + p.x * sin + p.z * cos,
+    }));
+  }
+
+  // 階段配置箇所に穴を開けた天井用シェイプ
+  _roomCeilingShape(room, floor) {
+    const shape = this._roomShape(room);
+    if (!shape) return null;
+    for (const stair of (floor.stairs || [])) {
+      if (!M.pointInPolygon({ x: stair.x, z: stair.z }, room.polygon)) continue;
+      const corners = this._stairFootprintCorners(stair);
+      const hole = new THREE.Path();
+      corners.forEach((p, i) => {
+        const x = p.x * MM, z = p.z * MM;
+        if (i === 0) hole.moveTo(x, z); else hole.lineTo(x, z);
+      });
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+    return shape;
+  }
+
+  // 日射遮蔽用シーン（3D表示と同じ物理構造・不透明材質）
+  _buildOccluder() {
+    const grp = new THREE.Group();
+    const plan = this.store.current();
+    if (!plan) return grp;
+
+    for (const floor of plan.floors) {
+      const baseY = (floor.level || 0) * (floor.ceilingHeightMM || 2400) * MM;
+      const fg = new THREE.Group();
+      fg.position.y = baseY;
+      this._populateFloorGeometry(fg, floor, 'occluder');
+      grp.add(fg);
+    }
+    grp.updateMatrixWorld(true);
+    return grp;
+  }
+
+  /** レイが遮蔽されるか（自室の床のみ除外）— 開口部なし屋外系部屋用 */
+  _rayBlockedExceptOwnFloor(room, hits) {
+    return hits.some((hit) => {
+      const ud = hit.object.userData;
+      return !(ud?.kind === 'floor' && ud?.roomId === room.id);
+    });
+  }
+
+  _openingWorldPoints(wall, opening) {
+    const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return null;
+    const ux = dx / lenMM, uz = dz / lenMM;
+    const oStart = opening.offsetMM - opening.widthMM / 2;
+    const oEnd = opening.offsetMM + opening.widthMM / 2;
+    return {
+      start: { x: wall.start.x + ux * oStart, z: wall.start.z + uz * oStart },
+      end: { x: wall.start.x + ux * oEnd, z: wall.start.z + uz * oEnd },
+    };
+  }
+
+  // 部屋の外側を向く壁法線（XZ）
+  _wallExteriorNormal(wall, room) {
+    const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1) return null;
+    const ux = dx / len, uz = dz / len;
+    let nx = -uz, nz = ux;
+    const mid = { x: (wall.start.x + wall.end.x) / 2, z: (wall.start.z + wall.end.z) / 2 };
+    const c = M.polygonCentroid(room.polygon);
+    if (nx * (mid.x - c.x) + nz * (mid.z - c.z) > 0) { nx = -nx; nz = -nz; }
+    return { nx, nz, ux, uz };
+  }
+
+  _roomOpeningPairs(floor, room) {
+    const pairs = [];
+    for (const op of (floor.openings || [])) {
+      const wall = floor.walls.find((w) => w.id === op.wallId);
+      if (!wall) continue;
+      const wallRoomId = M.inferWallRoomId(wall);
+      if (wallRoomId !== room.id) continue;
+      pairs.push({ op, wall });
+    }
+    return pairs;
+  }
+
+  // 自室の箱（床壁天井）以外の遮蔽ヒットか
+  _isExternalOcclusionHit(hit, room) {
+    const ud = hit.object.userData;
+    if (!ud) return true;
+    if (ud.roomId === room.id) return false;
+    return true;
+  }
+
+  // サンプル点 sy が開口の鉛直範囲内か（高高度の太陽も窓から入るため仰角比較は使わない）
+  _sunWithinOpeningVertical(opening, sampleY, dir, baseYM) {
+    const sill = (opening.sillMM || 0) * MM;
+    const h = (opening.heightMM || 1100) * MM;
+    const y0 = baseYM + sill;
+    const y1 = baseYM + sill + h;
+    if (sampleY < y0 - 0.02 || sampleY > y1 + 0.02) return false;
+    // 太陽が地平線より十分上（開口から見える前提）
+    const horiz = Math.hypot(dir.x, dir.z);
+    return dir.y > -0.05 && Math.atan2(dir.y, Math.max(horiz, 1e-4)) > -0.05;
+  }
+
+  // 1つの開口から太陽が見えるか
+  _openingAdmitsSun(opening, wall, room, baseYM, dir, ray, occ) {
+    const wn = this._wallExteriorNormal(wall, room);
+    if (!wn) return false;
+    const n3 = new THREE.Vector3(wn.nx, 0, wn.nz);
+    if (dir.dot(n3) < 0.05) return false;
+
+    const pts = this._openingWorldPoints(wall, opening);
+    if (!pts) return false;
+    const sill = (opening.sillMM || 0) * MM;
+    const h = (opening.heightMM || 1100) * MM;
+    const outDist = (wall.thicknessMM || 120) * MM * 2.5 + 0.15;
+    const widthFracs = [0.25, 0.5, 0.75];
+    const heightFracs = [0.35, 0.55, 0.75];
+
+    for (const wf of widthFracs) {
+      const cx = (pts.start.x + (pts.end.x - pts.start.x) * wf) * MM;
+      const cz = (pts.start.z + (pts.end.z - pts.start.z) * wf) * MM;
+      for (const hf of heightFracs) {
+        const sy = baseYM + sill + h * hf;
+        if (!this._sunWithinOpeningVertical(opening, sy, dir, baseYM)) continue;
+
+        const exterior = new THREE.Vector3(
+          cx + wn.nx * outDist,
+          sy,
+          cz + wn.nz * outDist,
+        );
+        ray.set(exterior, dir);
+        const hits = ray.intersectObjects(occ.children, true);
+        if (!hits.some((hit) => this._isExternalOcclusionHit(hit, room))) return true;
+      }
+    }
+    return false;
+  }
+
+  // 天井なし部屋：開口経由のみ（上空直晒しはバルコニー等の室外用途に限定）
+  _openTopRoomAdmitsSun(room, floor, baseYM, dir, ray, occ) {
+    const pairs = this._roomOpeningPairs(floor, room);
+    if (pairs.some(({ op, wall }) => this._openingAdmitsSun(op, wall, room, baseYM, dir, ray, occ))) {
+      return true;
+    }
+    // バルコニーのみ：壁に囲まれず上方からの直射も許可（閾値を上げて過大計測を抑制）
+    if (room.type !== 'balcony') return false;
+    if (dir.y < 0.15) return false;
+    const c = M.polygonCentroid(room.polygon);
+    const origin = new THREE.Vector3(c.x * MM, baseYM + 1.2, c.z * MM);
+    ray.set(origin, dir);
+    const hits = ray.intersectObjects(occ.children, true);
+    return !this._rayBlockedExceptOwnFloor(room, hits);
+  }
+
+  // 囲まれた部屋：窓・開口から入る光のみ（デフォルト遮蔽）
+  _enclosedRoomAdmitsSun(room, floor, baseYM, dir, ray, occ) {
+    const pairs = this._roomOpeningPairs(floor, room);
+    if (!pairs.length) return false;
+    return pairs.some(({ op, wall }) => this._openingAdmitsSun(op, wall, room, baseYM, dir, ray, occ));
+  }
+
+  _roomAdmitsSunHour(room, floor, baseYM, dir, ray, occ) {
+    if (this._roomHasCeiling(room)) {
+      return this._enclosedRoomAdmitsSun(room, floor, baseYM, dir, ray, occ);
+    }
+    return this._openTopRoomAdmitsSun(room, floor, baseYM, dir, ray, occ);
   }
 
   _buildWall(wall) {
@@ -241,7 +549,8 @@ export class Viewer3D {
 
   // 建具開口を考慮して壁を分割描画する。
   // openings: この壁に属する建具の配列（offsetMM でソート済みでなくてよい）
-  _buildWallWithOpenings(wall, openings = [], mat = null) {
+  _buildWallWithOpenings(wall, openings = [], mat = null, options = {}) {
+    const forOccluder = !!options.occluder;
     const ax = wall.start.x, az = wall.start.z;
     const bx = wall.end.x, bz = wall.end.z;
     const dx = bx - ax, dz = bz - az;
@@ -307,14 +616,16 @@ export class Viewer3D {
         addSeg(oW, lintelMM * MM, T, useMat, cx, oTopMM * MM + lintelMM * MM / 2);
       }
 
-      // 窓枠（薄いグレーのボックス）
-      const frameMat = this._getFrameMat();
-      const FT = T * 1.05;   // 壁面から少し突き出す
-      const FW = 0.030;      // 枠幅 30mm
-      addSeg(oW + FW * 2, FW, FT, frameMat, cx, oTopMM * MM + FW / 2);     // 上枠
-      addSeg(oW + FW * 2, FW, FT, frameMat, cx, oSillMM * MM - FW / 2);    // 下枠
-      addSeg(FW, oHgtMM * MM, FT, frameMat, cx - oW / 2 - FW / 2, (oSillMM + oTopMM) / 2 * MM); // 左枠
-      addSeg(FW, oHgtMM * MM, FT, frameMat, cx + oW / 2 + FW / 2, (oSillMM + oTopMM) / 2 * MM); // 右枠
+      // 窓枠（日射オクルーダーでは開口を塞がないよう省略）
+      if (!forOccluder) {
+        const frameMat = this._getFrameMat();
+        const FT = T * 1.05;
+        const FW = 0.030;
+        addSeg(oW + FW * 2, FW, FT, frameMat, cx, oTopMM * MM + FW / 2);
+        addSeg(oW + FW * 2, FW, FT, frameMat, cx, oSillMM * MM - FW / 2);
+        addSeg(FW, oHgtMM * MM, FT, frameMat, cx - oW / 2 - FW / 2, (oSillMM + oTopMM) / 2 * MM);
+        addSeg(FW, oHgtMM * MM, FT, frameMat, cx + oW / 2 + FW / 2, (oSillMM + oTopMM) / 2 * MM);
+      }
 
       curMM = oEndMM;
     }
@@ -427,85 +738,11 @@ export class Viewer3D {
     this.sun.intensity = 0.4 + 0.9 * t;
   }
 
-  // 遮蔽判定用オクルーダー。
-  // 壁は _buildWallWithOpenings（開口ジオメトリ）で構築し、
-  // 開口部を自然にレイが通過できるようにする。
-  // 床は roomId をタグして自室床を除外。壁は roomId でタグして自室床のみ除外。
-  _buildOccluder() {
-    const grp = new THREE.Group();
-    const plan = this.store.current();
-    if (!plan) return grp;
-
-    for (const floor of plan.floors) {
-      const baseY = (floor.level || 0) * (floor.ceilingHeightMM || 2400) * MM;
-      const fg = new THREE.Group();
-      fg.position.y = baseY;
-
-      // 床（自室床は computeDaylight 側で除外する）
-      for (const room of floor.rooms) {
-        if (NO_FLOOR_TYPES.has(room.type)) continue;
-        if (!room.polygon || room.polygon.length < 3) continue;
-        const shape = new THREE.Shape();
-        room.polygon.forEach((p, i) => {
-          const x = p.x * MM, z = p.z * MM;
-          if (i === 0) shape.moveTo(x, z); else shape.lineTo(x, z);
-        });
-        shape.closePath();
-        const geo = new THREE.ShapeGeometry(shape);
-        geo.rotateX(Math.PI / 2);
-        const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
-        mesh.userData = { roomId: room.id, kind: 'floor' };
-        fg.add(mesh);
-      }
-
-      // 壁（開口対応）
-      for (const wall of floor.walls) {
-        const ops = (floor.openings || []).filter((o) => o.wallId === wall.id);
-        const wallGroup = this._buildWallWithOpenings(wall, ops, OCCLUDER_MAT);
-        if (!wallGroup) continue;
-        // 全子メッシュに roomId タグ
-        const rid = wall.roomId || null;
-        wallGroup.traverse((o) => {
-          if (o.isMesh) o.userData = { roomId: rid, kind: 'wall' };
-        });
-        fg.add(wallGroup);
-      }
-
-      // 階段
-      for (const s of (floor.stairs || [])) {
-        const geo = new THREE.BoxGeometry(s.widthMM * MM, (floor.ceilingHeightMM || 2400) * MM, s.depthMM * MM);
-        const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
-        mesh.position.set(s.x * MM, (floor.ceilingHeightMM || 2400) * MM / 2, s.z * MM);
-        mesh.rotation.y = -((s.rotationDeg || 0) * Math.PI) / 180;
-        mesh.userData = { roomId: null, kind: 'stair' };
-        fg.add(mesh);
-      }
-
-      // 家具
-      for (const f of floor.furniture) {
-        const geo = new THREE.BoxGeometry((f.wMM || 500) * MM, (f.hMM || 500) * MM, (f.dMM || 500) * MM);
-        const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
-        mesh.position.set(f.x * MM, (f.y || 0) * MM + (f.hMM || 500) * MM / 2, f.z * MM);
-        mesh.rotation.y = -((f.rotationDeg || 0) * Math.PI) / 180;
-        mesh.userData = { roomId: null, kind: 'furniture' };
-        fg.add(mesh);
-      }
-
-      grp.add(fg);
-    }
-    grp.updateMatrixWorld(true);
-    return grp;
-  }
-
   /**
    * 各部屋の本日（指定通日）の直射日照時間を集計する。
    *
-   * 【窓対応版】
-   * - 開口ジオメトリ（_buildWallWithOpenings）で壁に穴を開けたオクルーダーを使用。
-   * - 窓のある方向へのレイは自然にくぐり抜ける → 日照カウント。
-   * - 窓のない部屋は全方向が固体壁でふさがれるため 0h になる。
-   * - 自室の「床」のみ除外（床面と光線が交差しないようにする安全策）。
-   *   自室の壁は除外しない（窓ジオメトリが役割を担う）。
+   * デフォルト遮蔽型：室内は原則ふさがれ、窓・開口から見える太陽のみカウント。
+   * 天井なし部屋（バルコニー・吹抜け等）は開口または上空への直射も許可。
    *
    * @returns {{ [roomId:string]: number }} 直射時間（時間/日）
    */
@@ -513,19 +750,18 @@ export class Viewer3D {
     const plan = this.store.current();
     const result = {};
     if (!plan) return result;
+    M.ensureWallRoomIds(plan);
     const lat = plan.meta?.lat ?? DEFAULT_LAT;
     const lng = plan.meta?.lng ?? DEFAULT_LNG;
     const azRad = (plan.site?.azimuth || 0) * Math.PI / 180;
     const date = dateFromDayOfYear(doy);
 
-    // 1時間ごとの太陽方向ベクトルを事前計算
     const dirs = [];
     for (let h = 0; h < 24; h++) {
       const pos = getSunPosition(date, h, lat, lng);
       if (pos.altitudeDeg <= 0) { dirs.push(null); continue; }
       const dw = sunDirection(pos.azimuthDeg, pos.altitudeDeg);
-      const v = new THREE.Vector3(dw.x, dw.y, dw.z).applyAxisAngle(Y_AXIS, -azRad).normalize();
-      dirs.push(v);
+      dirs.push(new THREE.Vector3(dw.x, dw.y, dw.z).applyAxisAngle(Y_AXIS, -azRad).normalize());
     }
 
     const occ = this._buildOccluder();
@@ -543,15 +779,7 @@ export class Viewer3D {
         for (let h = 0; h < 24; h++) {
           const dir = dirs[h];
           if (!dir) continue;
-          ray.set(origin, dir);
-          const hits = ray.intersectObjects(occ.children, true);
-          // 自室の床のみ除外。それ以外（自室壁含む）に当たれば遮蔽。
-          // 自室の壁の開口部分はジオメトリが無いので当たらない → 窓越しに通過。
-          const blocked = hits.some((hit) => {
-            const ud = hit.object.userData;
-            return !(ud?.kind === 'floor' && ud?.roomId === room.id);
-          });
-          if (!blocked) hours++;
+          if (this._roomAdmitsSunHour(room, floor, baseY, dir, ray, occ)) hours++;
         }
         result[room.id] = hours;
       }
