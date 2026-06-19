@@ -19,6 +19,7 @@ const ui = {
   openingId: OPENING_TYPES[0].id,  // 'window' | 'sliding' | 'door'
   selection: null,       // { kind:'room'|'furniture'|'stair'|'opening', id }
   showGrid: true,
+  showDimensions: false,
   view3dAllFloors: false, // 3D: true=全階積み上げ表示, false=選択階のみ
   // 日射シミュレーション（フェーズB）
   sun: { doy: 172, hour: 12, playing: false },
@@ -664,6 +665,8 @@ function syncSnapButtons() {
   const div = store.current().meta.snapDivisions || 4;
   document.querySelectorAll('#snap-group .seg-btn').forEach((b) =>
     b.classList.toggle('active', Number(b.dataset.snap) === div));
+  const dimEl = $('#dim-toggle');
+  if (dimEl) dimEl.checked = !!ui.showDimensions;
 }
 
 function updateHint() {
@@ -822,6 +825,11 @@ function wireEvents() {
 
   $('#grid-toggle').addEventListener('change', (e) => {
     ui.showGrid = e.target.checked;
+    editor.draw();
+  });
+
+  $('#dim-toggle').addEventListener('change', (e) => {
+    ui.showDimensions = e.target.checked;
     editor.draw();
   });
 

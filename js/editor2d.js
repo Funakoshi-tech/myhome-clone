@@ -17,6 +17,33 @@ function _ptSegDist(p, a, b) {
   return Math.hypot(p.x - a.x - t * dx, p.z - a.z - t * dz);
 }
 
+function _edgeKey(a, b) {
+  const r = (v) => Math.round(v);
+  const p1 = `${r(a.x)},${r(a.z)}`;
+  const p2 = `${r(b.x)},${r(b.z)}`;
+  return p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
+}
+
+function _wallExteriorNormal(wall, room) {
+  const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 1) return null;
+  const ux = dx / len, uz = dz / len;
+  let nx = -uz, nz = ux;
+  const mid = { x: (wall.start.x + wall.end.x) / 2, z: (wall.start.z + wall.end.z) / 2 };
+  const c = M.polygonCentroid(room.polygon);
+  if (nx * (mid.x - c.x) + nz * (mid.z - c.z) > 0) { nx = -nx; nz = -nz; }
+  return { nx, nz, ux, uz, len };
+}
+
+function _ptNear(a, b, eps = 2) {
+  return Math.hypot(a.x - b.x, a.z - b.z) <= eps;
+}
+
+function _formatDimMm(mm) {
+  return `${Math.round(mm).toLocaleString('ja-JP')}mm`;
+}
+
 // ============================================================================
 export class Editor2D {
   /**
@@ -1475,6 +1502,7 @@ export class Editor2D {
     this._drawRoomHandles(ctx);
     this._drawStairHandles(ctx);
     if (this.drag?.kind === 'room') this._drawRoomPreview(ctx, this.drag);
+    if (this.ui.showDimensions) this._drawWallDimensions(ctx, floor);
     this._drawBgCalibOverlay(ctx);
   }
 
@@ -1510,6 +1538,172 @@ export class Editor2D {
     ctx.beginPath(); ctx.moveTo(0, o.y); ctx.lineTo(this.cssW, o.y); ctx.stroke();
     ctx.strokeStyle = 'rgba(97,175,239,0.5)';
     ctx.beginPath(); ctx.moveTo(o.x, 0); ctx.lineTo(o.x, this.cssH); ctx.stroke();
+  }
+
+  /** 建物外周の壁に沿った寸法線（内側=各辺、外側=連続合計） */
+  _collectExteriorWallSegments(floor) {
+    const edgeMap = new Map();
+    for (const wall of floor.walls) {
+      const key = _edgeKey(wall.start, wall.end);
+      if (!edgeMap.has(key)) edgeMap.set(key, []);
+      edgeMap.get(key).push(wall);
+    }
+
+    const segments = [];
+    for (const walls of edgeMap.values()) {
+      if (walls.length !== 1) continue;
+      const wall = walls[0];
+      const room = floor.rooms.find((r) => r.id === (wall.roomId || M.inferWallRoomId(wall)));
+      if (!room?.polygon) continue;
+      const wn = _wallExteriorNormal(wall, room);
+      if (!wn || wn.len < 1) continue;
+      segments.push({
+        ax: wall.start.x, az: wall.start.z,
+        bx: wall.end.x, bz: wall.end.z,
+        len: wn.len,
+        nx: wn.nx, nz: wn.nz,
+        ux: wn.ux, uz: wn.uz,
+      });
+    }
+    return segments;
+  }
+
+  _mergeExteriorChains(segments) {
+    const used = new Set();
+    const chains = [];
+
+    const sameAxis = (a, b) => Math.abs(a.ux * b.ux + a.uz * b.uz) > 0.99
+      && Math.abs(a.nx - b.nx) < 0.05 && Math.abs(a.nz - b.nz) < 0.05;
+
+    for (let i = 0; i < segments.length; i++) {
+      if (used.has(i)) continue;
+      let chain = [{ ...segments[i] }];
+      used.add(i);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (let j = 0; j < segments.length; j++) {
+          if (used.has(j)) continue;
+          const s = segments[j];
+          const first = chain[0];
+          const last = chain[chain.length - 1];
+          const a0 = { x: first.ax, z: first.az };
+          const a1 = { x: last.bx, z: last.bz };
+
+          if (sameAxis(last, s) && _ptNear(a1, { x: s.ax, z: s.az })) {
+            chain.push({ ...s });
+            used.add(j);
+            changed = true;
+          } else if (sameAxis(last, s) && _ptNear(a1, { x: s.bx, z: s.bz })) {
+            chain.push({
+              ax: s.bx, az: s.bz, bx: s.ax, bz: s.az,
+              len: s.len, nx: s.nx, nz: s.nz, ux: -s.ux, uz: -s.uz,
+            });
+            used.add(j);
+            changed = true;
+          } else if (sameAxis(first, s) && _ptNear(a0, { x: s.bx, z: s.bz })) {
+            chain.unshift({ ...s });
+            used.add(j);
+            changed = true;
+          } else if (sameAxis(first, s) && _ptNear(a0, { x: s.ax, z: s.az })) {
+            chain.unshift({
+              ax: s.bx, az: s.bz, bx: s.ax, bz: s.az,
+              len: s.len, nx: s.nx, nz: s.nz, ux: -s.ux, uz: -s.uz,
+            });
+            used.add(j);
+            changed = true;
+          }
+        }
+      }
+      chains.push(chain);
+    }
+    return chains;
+  }
+
+  _drawDimensionSegment(ctx, ax, az, bx, bz, lenMM, nx, nz, offsetMM, opts = {}) {
+    const thick = opts.thick || false;
+    const off = offsetMM;
+    const da = { x: ax + nx * off, z: az + nz * off };
+    const db = { x: bx + nx * off, z: bz + nz * off };
+    const sa = this.worldToScreen(ax, az);
+    const sb = this.worldToScreen(bx, bz);
+    const sda = this.worldToScreen(da.x, da.z);
+    const sdb = this.worldToScreen(db.x, db.z);
+
+    const segPx = Math.hypot(sb.x - sa.x, sb.y - sa.y);
+    if (segPx < 24) return;
+
+    ctx.save();
+    ctx.strokeStyle = thick ? '#2a3140' : '#4a5260';
+    ctx.fillStyle = thick ? '#1f2733' : '#3d4654';
+    ctx.lineWidth = thick ? 1.2 : 1;
+
+    // 引出線
+    ctx.beginPath();
+    ctx.moveTo(sa.x, sa.y);
+    ctx.lineTo(sda.x, sda.y);
+    ctx.moveTo(sb.x, sb.y);
+    ctx.lineTo(sdb.x, sdb.y);
+    ctx.stroke();
+
+    // 寸法線
+    ctx.beginPath();
+    ctx.moveTo(sda.x, sda.y);
+    ctx.lineTo(sdb.x, sdb.y);
+    ctx.stroke();
+
+    // 端点ティック（45°）
+    const tick = 4;
+    const dx = sdb.x - sda.x, dy = sdb.y - sda.y;
+    const dlen = Math.hypot(dx, dy) || 1;
+    const tx = (-dy / dlen) * tick, ty = (dx / dlen) * tick;
+    for (const p of [sda, sdb]) {
+      ctx.beginPath();
+      ctx.moveTo(p.x - tx - dx / dlen * tick, p.y - ty - dy / dlen * tick);
+      ctx.lineTo(p.x + tx + dx / dlen * tick, p.y + ty + dy / dlen * tick);
+      ctx.stroke();
+    }
+
+    // ラベル（外側法線方向にオフセット）
+    const mx = (sda.x + sdb.x) / 2;
+    const my = (sda.y + sdb.y) / 2;
+    const label = _formatDimMm(lenMM);
+    const nRef = this.worldToScreen(da.x + nx * 300, da.z + nz * 300);
+    let lnx = nRef.x - sda.x, lny = nRef.y - sda.y;
+    const lnlen = Math.hypot(lnx, lny) || 1;
+    lnx /= lnlen; lny /= lnlen;
+    ctx.font = `${thick ? 600 : 500} ${thick ? 12 : 11}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, mx + lnx * 12, my + lny * 12);
+    ctx.restore();
+  }
+
+  _drawWallDimensions(ctx, floor) {
+    const segments = this._collectExteriorWallSegments(floor);
+    if (!segments.length) return;
+
+    const innerOff = 500;
+    const outerOff = 950;
+
+    for (const seg of segments) {
+      this._drawDimensionSegment(
+        ctx, seg.ax, seg.az, seg.bx, seg.bz, seg.len,
+        seg.nx, seg.nz, innerOff,
+      );
+    }
+
+    const chains = this._mergeExteriorChains(segments);
+    for (const chain of chains) {
+      if (chain.length < 2) continue;
+      const first = chain[0];
+      const last = chain[chain.length - 1];
+      const total = chain.reduce((s, c) => s + c.len, 0);
+      this._drawDimensionSegment(
+        ctx, first.ax, first.az, last.bx, last.bz, total,
+        first.nx, first.nz, outerOff, { thick: true },
+      );
+    }
   }
 
   _polyPath(ctx, polygon) {
