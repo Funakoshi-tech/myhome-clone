@@ -23,6 +23,7 @@ const ui = {
   // 日射シミュレーション（フェーズB）
   sun: { doy: 172, hour: 12, playing: false },
   daylight: {},          // { [roomId]: 直射時間 }
+  bgCalib: false,        // 敷地写真：基準線モード中
 };
 let sunTimer = null;
 
@@ -202,8 +203,211 @@ function refreshPanels() {
   buildProps();
   buildFloorInfo();
   syncSnapButtons();
+  syncBgPanel();
   if (ui.view === '2d') editor.draw();
   if (ui.view === '3d') viewer.rebuild();
+}
+
+// ---- 敷地写真（下絵） -------------------------------------------------------
+let _bgPendingPxDist = 0;
+
+function syncBgPanel() {
+  const bg = store.current()?.site?.backgroundImage;
+  const hasBg = !!(bg?.dataUrl);
+  $('#bg-recalib').hidden = !hasBg;
+  $('#bg-position').hidden = !hasBg || !M.isBackgroundImageScaled(bg);
+  if (hasBg) {
+    $('#bg-visible').checked = bg.visible !== false;
+    const opPct = Math.round((bg.opacity ?? 0.5) * 100);
+    $('#bg-opacity').value = String(opPct);
+    $('#bg-opacity-label').textContent = `${opPct}%`;
+    const status = M.isBackgroundImageScaled(bg)
+      ? `スケール ${bg.scaleMMperPx.toFixed(2)} mm/px · ${bg.naturalWidthPx}×${bg.naturalHeightPx}px`
+      : '基準線を設定して実寸合わせしてください';
+    $('#bg-status').textContent = status;
+    editor._ensureBgImage(bg);
+  } else {
+    $('#bg-status').textContent = 'JPEG/PNG を読み込んで実寸合わせ';
+  }
+}
+
+function readImageFileAsDataUrl(file, maxPx = 1600) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        const scale = Math.min(1, maxPx / Math.max(width, height));
+        if (scale < 1) {
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+          const c = document.createElement('canvas');
+          c.width = width;
+          c.height = height;
+          const ctx = c.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve({ dataUrl: c.toDataURL('image/jpeg', 0.88), width, height });
+        } else {
+          resolve({ dataUrl: reader.result, width, height });
+        }
+      };
+      img.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function showBgScaleModal(pxDist) {
+  _bgPendingPxDist = pxDist;
+  $('#bg-scale-px-info').textContent = `画面上の距離: ${pxDist.toFixed(1)} px`;
+  $('#bg-scale-mm').value = '';
+  $('#bg-scale-modal').hidden = false;
+  $('#bg-scale-mm').focus();
+}
+
+function hideBgScaleModal() {
+  $('#bg-scale-modal').hidden = true;
+  _bgPendingPxDist = 0;
+}
+
+function showBgPosModal() {
+  syncBgPosLabel();
+  $('#bg-pos-modal').hidden = false;
+  editor.draw();
+}
+
+function hideBgPosModal() {
+  $('#bg-pos-modal').hidden = true;
+  syncBgPanel();
+  updateHint();
+  editor.draw();
+}
+
+function syncBgPosLabel() {
+  const bg = store.current()?.site?.backgroundImage;
+  if (!bg) return;
+  $('#bg-pos-offset').textContent =
+    `X: ${Math.round(bg.offsetX ?? 0)} / Z: ${Math.round(bg.offsetZ ?? 0)} mm`;
+}
+
+ui.onBgCalibDone = (pxDist) => {
+  if (pxDist < 2) {
+    alert('2点が近すぎます。もう一度設定してください。');
+    editor.startBgCalibration();
+    updateHint();
+    return;
+  }
+  showBgScaleModal(pxDist);
+  updateHint();
+};
+
+function wireBgPanel() {
+  $('#bg-load').addEventListener('click', () => $('#bg-file').click());
+
+  $('#bg-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const { dataUrl, width, height } = await readImageFileAsDataUrl(file);
+      store.update((plan) => {
+        plan.site.backgroundImage = {
+          dataUrl,
+          naturalWidthPx: width,
+          naturalHeightPx: height,
+          scaleMMperPx: null,
+          offsetX: 0,
+          offsetZ: 0,
+          rotationDeg: 0,
+          opacity: 0.5,
+          visible: true,
+        };
+      });
+      editor.invalidateBgImage();
+      editor.startBgCalibration();
+      editor.zoomFit();
+      syncBgPanel();
+      updateHint();
+    } catch (err) {
+      alert(err.message || '画像の読み込みに失敗しました');
+    }
+  });
+
+  $('#bg-recalib').addEventListener('click', () => {
+    editor.startBgCalibration();
+    updateHint();
+  });
+
+  $('#bg-position').addEventListener('click', () => showBgPosModal());
+
+  $('#bg-visible').addEventListener('change', (e) => {
+    store.update((plan) => {
+      const bg = plan.site.backgroundImage;
+      if (bg) bg.visible = e.target.checked;
+    });
+    editor.draw();
+  });
+
+  $('#bg-opacity').addEventListener('input', (e) => {
+    const pct = Number(e.target.value);
+    $('#bg-opacity-label').textContent = `${pct}%`;
+    store.update((plan) => {
+      const bg = plan.site.backgroundImage;
+      if (bg) bg.opacity = pct / 100;
+    });
+    editor.draw();
+  });
+
+  $('#bg-scale-cancel').addEventListener('click', () => {
+    hideBgScaleModal();
+    editor.startBgCalibration();
+    updateHint();
+  });
+
+  $('#bg-scale-ok').addEventListener('click', () => {
+    const mm = Number($('#bg-scale-mm').value);
+    if (!mm || mm <= 0) {
+      alert('0より大きい mm 数値を入力してください');
+      return;
+    }
+    const pxDist = _bgPendingPxDist;
+    if (pxDist < 2) return;
+    store.update((plan) => {
+      const bg = plan.site.backgroundImage;
+      if (!bg) return;
+      bg.scaleMMperPx = mm / pxDist;
+      bg.offsetX = 0;
+      bg.offsetZ = 0;
+    });
+    editor.cancelBgCalibration();
+    hideBgScaleModal();
+    showBgPosModal();
+    syncBgPanel();
+  });
+
+  $('#bg-scale-mm').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('#bg-scale-ok').click();
+  });
+
+  document.querySelectorAll('.bg-pos-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const dx = Number(btn.dataset.dx);
+      const dz = Number(btn.dataset.dz);
+      store.update((plan) => {
+        const bg = plan.site.backgroundImage;
+        if (!bg) return;
+        bg.offsetX = (bg.offsetX ?? 0) + dx;
+        bg.offsetZ = (bg.offsetZ ?? 0) + dz;
+      });
+      syncBgPosLabel();
+      editor.draw();
+    });
+  });
+
+  $('#bg-pos-ok').addEventListener('click', () => hideBgPosModal());
 }
 
 function buildProps() {
@@ -452,6 +656,10 @@ function updateHint() {
       : `${ui.floorId} のみ表示中。全階表示ボタンですべての階を積み上げ表示。ドラッグで回転 / ホイールでズーム`;
     return;
   }
+  if (ui.bgCalib) {
+    hint.textContent = '基準線モード：寸法のわかる2点を下絵上でクリックしてください';
+    return;
+  }
   const map = {
     select: '選択：クリックで選択/ドラッグで移動。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。階段・ドアは緑丸で90°回転。短クリック/右クリック→操作メニュー',
     room: 'ドラッグで部屋を矩形作成（スナップ適用）。完了後は自動で選択モードへ',
@@ -644,6 +852,8 @@ function wireEvents() {
 function afterPlanChange() {
   ui.selection = null;
   ui.floorId = '1F';
+  ui.bgCalib = false;
+  editor.invalidateBgImage();
   setFloor('1F');
   viewer._fitted = false;
   refreshPanels();
@@ -669,6 +879,7 @@ function boot() {
   buildPlanSelect();
   wireEvents();
   wireSunPanel();
+  wireBgPanel();
 
   setTool('select');
   setFloor('1F');

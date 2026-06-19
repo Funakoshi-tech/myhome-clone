@@ -119,6 +119,25 @@
         </div>
       </section>
 
+      <!-- 敷地写真（下絵） -->
+      <section class="pane" id="site-photo-pane">
+        <h3>敷地写真</h3>
+        <button id="bg-load" class="btn wide" type="button">下絵を読込</button>
+        <input id="bg-file" type="file" accept="image/*" hidden />
+        <button id="bg-recalib" class="btn wide" type="button" hidden>基準線を再設定</button>
+        <button id="bg-position" class="btn wide" type="button" hidden>位置を調整</button>
+        <label class="row check">
+          <input type="checkbox" id="bg-visible" checked />
+          <span>下絵を表示</span>
+        </label>
+        <div class="row">
+          <span class="lbl">透過率</span>
+          <input type="range" id="bg-opacity" min="0" max="100" value="50" />
+          <span id="bg-opacity-label" class="lbl-val">50%</span>
+        </div>
+        <p id="bg-status" class="pane-hint">JPEG/PNG を読み込んで実寸合わせ</p>
+      </section>
+
       <!-- 選択中プロパティ -->
       <section class="pane" id="props-pane">
         <h3>プロパティ</h3>
@@ -170,6 +189,40 @@
       </div>
     </section>
   </main>
+
+  <!-- 敷地写真：実寸入力 -->
+  <div id="bg-scale-modal" class="modal" hidden>
+    <div class="modal-box">
+      <h4>実寸を入力</h4>
+      <p id="bg-scale-px-info" class="pane-hint"></p>
+      <label class="modal-field">
+        <span>2点間の実距離 (mm)</span>
+        <input type="number" id="bg-scale-mm" min="1" step="1" placeholder="例: 9100" />
+      </label>
+      <div class="btn-row">
+        <button id="bg-scale-cancel" class="btn" type="button">キャンセル</button>
+        <button id="bg-scale-ok" class="btn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 敷地写真：位置調整 -->
+  <div id="bg-pos-modal" class="modal" hidden>
+    <div class="modal-box">
+      <h4>位置調整</h4>
+      <p class="pane-hint">矢印で mm 単位に移動。Canvas 上で位置を確認してください。</p>
+      <div class="bg-pos-pad">
+        <button type="button" class="btn bg-pos-btn" data-dx="0" data-dz="-100">↑</button>
+        <div class="bg-pos-row">
+          <button type="button" class="btn bg-pos-btn" data-dx="-100" data-dz="0">←</button>
+          <button type="button" class="btn bg-pos-btn" data-dx="100" data-dz="0">→</button>
+        </div>
+        <button type="button" class="btn bg-pos-btn" data-dx="0" data-dz="100">↓</button>
+      </div>
+      <p id="bg-pos-offset" class="pane-hint">X: 0 / Z: 0 mm</p>
+      <button id="bg-pos-ok" class="btn wide" type="button">OK</button>
+    </div>
+  </div>
 
   <script type="module" src="js/main.js"></script>
 </body>

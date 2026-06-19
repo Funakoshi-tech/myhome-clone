@@ -50,7 +50,11 @@ export class Viewer3D {
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
+    this.controls.enableZoom = false; // トラックパッドの wheel は自前処理
     this.controls.target.set(4, 0, 4);
+
+    this._onWheel = (e) => this._handleWheel(e);
+    this.renderer.domElement.addEventListener('wheel', this._onWheel, { passive: false, capture: true });
 
     // 環境光（夜でも残す）
     this.ambient = new THREE.AmbientLight(0xffffff, 0.55);
@@ -136,6 +140,44 @@ export class Viewer3D {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+  }
+
+  /** Mac トラックパッド: ctrlKey=ピンチズーム、それ以外=二本指パン */
+  _handleWheel(e) {
+    if (!this.active) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    let dx = e.deltaX;
+    let dy = e.deltaY;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      dx *= 16;
+      dy *= 16;
+    } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+      dx *= this.container.clientWidth || 800;
+      dy *= this.container.clientHeight || 600;
+    }
+
+    if (e.ctrlKey) {
+      const offset = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
+      const factor = Math.exp(-dy * 0.01);
+      offset.multiplyScalar(factor);
+      const dist = offset.length();
+      if (dist < 1.5) offset.setLength(1.5);
+      else if (dist > 400) offset.setLength(400);
+      this.camera.position.copy(this.controls.target).add(offset);
+    } else {
+      const dist = this.camera.position.distanceTo(this.controls.target);
+      const scale = dist * 0.001;
+      const right = new THREE.Vector3();
+      right.setFromMatrixColumn(this.camera.matrix, 0);
+      const up = new THREE.Vector3();
+      up.setFromMatrixColumn(this.camera.matrix, 1);
+      right.multiplyScalar(-dx * scale);
+      up.multiplyScalar(dy * scale);
+      this.camera.position.add(right).add(up);
+      this.controls.target.add(right).add(up);
+    }
   }
 
   _loop() {

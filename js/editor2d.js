@@ -44,6 +44,9 @@ export class Editor2D {
     this.hoverEdge = null;   // { id, index } — カーソル変更用（+ ハンドルは廃止）
 
     this._space = false;
+    this._bgImgCache = null;
+    this._bgImgUrl = null;
+    this._bgCalib = null; // { step: 1|2, p1?: {px,py}, p2?: {px,py} }
     this._bind();
     this._initContextMenu();
   }
@@ -333,6 +336,11 @@ export class Editor2D {
     for (const room of floor.rooms) for (const p of room.polygon) expand(p);
     for (const f of floor.furniture) expand({ x: f.x, z: f.z });
     for (const s of (floor.stairs || [])) expand({ x: s.x, z: s.z });
+    const bgBounds = this._bgWorldBounds(this._plan().site?.backgroundImage);
+    if (bgBounds) {
+      expand({ x: bgBounds.minX, z: bgBounds.minZ });
+      expand({ x: bgBounds.maxX, z: bgBounds.maxZ });
+    }
 
     if (!b) b = { minX: -1000, maxX: 11000, minZ: -1000, maxZ: 11000 };
     const pad = 800;
@@ -374,12 +382,30 @@ export class Editor2D {
   _onWheel(e) {
     if (!this.active) return;
     e.preventDefault();
-    const { sx, sy } = this._mouse(e);
-    const before = this.screenToWorld(sx, sy);
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    this.cam.scale = Math.max(0.004, Math.min(0.4, this.cam.scale * factor));
-    this.cam.panX = sx - before.x * this.cam.scale;
-    this.cam.panY = sy - before.z * this.cam.scale;
+
+    let dx = e.deltaX;
+    let dy = e.deltaY;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      dx *= 16;
+      dy *= 16;
+    } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+      dx *= this.cssW;
+      dy *= this.cssH;
+    }
+
+    if (e.ctrlKey) {
+      // Mac トラックパッドのピンチ（ctrlKey + wheel）
+      const { sx, sy } = this._mouse(e);
+      const before = this.screenToWorld(sx, sy);
+      const factor = Math.exp(-dy * 0.01);
+      this.cam.scale = Math.max(0.004, Math.min(0.4, this.cam.scale * factor));
+      this.cam.panX = sx - before.x * this.cam.scale;
+      this.cam.panY = sy - before.z * this.cam.scale;
+    } else {
+      // 二本指スクロール → パン
+      this.cam.panX -= dx;
+      this.cam.panY -= dy;
+    }
     this.draw();
   }
 
@@ -388,6 +414,10 @@ export class Editor2D {
     if (e.button === 0) this._hideContextMenu();
     this.canvas.setPointerCapture?.(e.pointerId);
     const { sx, sy } = this._mouse(e);
+
+    // 敷地写真：基準線モード
+    if (this.ui.bgCalib && e.button === 0 && this._onBgCalibClick(sx, sy)) return;
+
     const w = this.screenToWorld(sx, sy);
     const tool = this.ui.tool;
     const middle = e.button === 1;
@@ -1179,6 +1209,240 @@ export class Editor2D {
 
   deleteSelection() { this._deleteSelection(); }
 
+  // ---- 敷地写真（下絵） -----------------------------------------------------
+  invalidateBgImage() {
+    this._bgImgCache = null;
+    this._bgImgUrl = null;
+  }
+
+  startBgCalibration() {
+    this._bgCalib = { step: 1 };
+    this.ui.bgCalib = true;
+    this.draw();
+    if (this.onUI) this.onUI();
+  }
+
+  cancelBgCalibration() {
+    this._bgCalib = null;
+    this.ui.bgCalib = false;
+    this.draw();
+    if (this.onUI) this.onUI();
+  }
+
+  getBgCalibPxDistance() {
+    if (!this._bgCalib?.p1 || !this._bgCalib?.p2) return 0;
+    const { p1, p2 } = this._bgCalib;
+    return Math.hypot(p2.px - p1.px, p2.py - p1.py);
+  }
+
+  clearBgCalibPoints() {
+    if (this._bgCalib) this._bgCalib = { step: 1 };
+    this.draw();
+  }
+
+  _ensureBgImage(bg) {
+    if (!bg?.dataUrl) return Promise.resolve(null);
+    if (this._bgImgCache && this._bgImgUrl === bg.dataUrl) return Promise.resolve(this._bgImgCache);
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        this._bgImgCache = img;
+        this._bgImgUrl = bg.dataUrl;
+        resolve(img);
+      };
+      img.onerror = () => resolve(null);
+      img.src = bg.dataUrl;
+    });
+  }
+
+  /** 未スケール時はプレビュー用の一時 transform を返す */
+  _bgTransform(bg) {
+    if (M.isBackgroundImageScaled(bg)) {
+      return {
+        scaleMMperPx: bg.scaleMMperPx,
+        offsetX: bg.offsetX ?? 0,
+        offsetZ: bg.offsetZ ?? 0,
+        preview: false,
+      };
+    }
+    const wPx = bg.naturalWidthPx || 1;
+    const hPx = bg.naturalHeightPx || 1;
+    const fitW = (this.cssW * 0.85) / this.cam.scale;
+    const fitH = (this.cssH * 0.85) / this.cam.scale;
+    const scale = Math.min(fitW / wPx, fitH / hPx);
+    const wMM = wPx * scale;
+    const hMM = hPx * scale;
+    return {
+      scaleMMperPx: scale,
+      offsetX: -wMM / 2,
+      offsetZ: -hMM / 2,
+      preview: true,
+    };
+  }
+
+  _bgWorldBounds(bg) {
+    if (!bg?.dataUrl || !bg.visible) return null;
+    if (!M.isBackgroundImageScaled(bg) && !this._bgCalib) return null;
+    const t = this._bgTransform(bg);
+    const wMM = bg.naturalWidthPx * t.scaleMMperPx;
+    const hMM = bg.naturalHeightPx * t.scaleMMperPx;
+    const cx = t.offsetX + wMM / 2;
+    const cz = t.offsetZ + hMM / 2;
+    const rot = (bg.rotationDeg || 0) * Math.PI / 180;
+    const hw = wMM / 2;
+    const hh = hMM / 2;
+    const corners = [
+      { x: -hw, z: -hh }, { x: hw, z: -hh }, { x: hw, z: hh }, { x: -hw, z: hh },
+    ];
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    for (const c of corners) {
+      const wx = cx + c.x * cos - c.z * sin;
+      const wz = cz + c.x * sin + c.z * cos;
+      minX = Math.min(minX, wx); maxX = Math.max(maxX, wx);
+      minZ = Math.min(minZ, wz); maxZ = Math.max(maxZ, wz);
+    }
+    return { minX, maxX, minZ, maxZ };
+  }
+
+  _screenToBgPixel(sx, sy, bg) {
+    const t = this._bgTransform(bg);
+    const wMM = bg.naturalWidthPx * t.scaleMMperPx;
+    const hMM = bg.naturalHeightPx * t.scaleMMperPx;
+    const cx = t.offsetX + wMM / 2;
+    const cz = t.offsetZ + hMM / 2;
+    const w = this.screenToWorld(sx, sy);
+    const rot = -(bg.rotationDeg || 0) * Math.PI / 180;
+    const dx = w.x - cx;
+    const dz = w.z - cz;
+    const cos = Math.cos(rot);
+    const sin = Math.sin(rot);
+    const lx = dx * cos - dz * sin;
+    const lz = dx * sin + dz * cos;
+    const localX = lx + wMM / 2;
+    const localZ = lz + hMM / 2;
+    if (localX < 0 || localZ < 0 || localX > wMM || localZ > hMM) return null;
+    return {
+      px: localX / t.scaleMMperPx,
+      py: localZ / t.scaleMMperPx,
+    };
+  }
+
+  _onBgCalibClick(sx, sy) {
+    const bg = this._plan().site?.backgroundImage;
+    if (!bg?.dataUrl || !this._bgCalib) return false;
+    const pt = this._screenToBgPixel(sx, sy, bg);
+    if (!pt) return true;
+    if (this._bgCalib.step === 1) {
+      this._bgCalib = { step: 2, p1: pt };
+    } else {
+      this._bgCalib = { ...this._bgCalib, p2: pt, step: 3 };
+      this.ui.bgCalib = false;
+      if (this.ui.onBgCalibDone) this.ui.onBgCalibDone(this.getBgCalibPxDistance());
+    }
+    this.draw();
+    if (this.onUI) this.onUI();
+    return true;
+  }
+
+  _drawBackground(ctx) {
+    const bg = this._plan().site?.backgroundImage;
+    if (!bg?.dataUrl || bg.visible === false) return;
+    const img = this._bgImgCache;
+    if (!img?.complete) {
+      this._ensureBgImage(bg).then(() => { if (this.active) this.draw(); });
+      return;
+    }
+    const t = this._bgTransform(bg);
+    const wMM = bg.naturalWidthPx * t.scaleMMperPx;
+    const hMM = bg.naturalHeightPx * t.scaleMMperPx;
+    const cx = t.offsetX + wMM / 2;
+    const cz = t.offsetZ + hMM / 2;
+    const sc = this.worldToScreen(cx, cz);
+    const sw = wMM * this.cam.scale;
+    const sh = hMM * this.cam.scale;
+    const rot = (bg.rotationDeg || 0) * Math.PI / 180;
+
+    ctx.save();
+    ctx.globalAlpha = typeof bg.opacity === 'number' ? bg.opacity : 0.5;
+    ctx.translate(sc.x, sc.y);
+    ctx.rotate(rot);
+    ctx.drawImage(img, -sw / 2, -sh / 2, sw, sh);
+    ctx.restore();
+  }
+
+  _drawBgCalibOverlay(ctx) {
+    if (!this.ui.bgCalib || !this._bgCalib) return;
+    const bg = this._plan().site?.backgroundImage;
+    if (!bg?.dataUrl) return;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(44, 123, 229, 0.92)';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    const msg = this._bgCalib.step === 1
+      ? '寸法のわかる2点をクリックしてください（1点目）'
+      : '2点目をクリックしてください';
+    ctx.fillText(msg, 12, 24);
+
+    const drawPt = (pt, label) => {
+      const t = this._bgTransform(bg);
+      const wMM = bg.naturalWidthPx * t.scaleMMperPx;
+      const hMM = bg.naturalHeightPx * t.scaleMMperPx;
+      const cx = t.offsetX + wMM / 2;
+      const cz = t.offsetZ + hMM / 2;
+      const rot = (bg.rotationDeg || 0) * Math.PI / 180;
+      const lx = pt.px * t.scaleMMperPx - wMM / 2;
+      const lz = pt.py * t.scaleMMperPx - hMM / 2;
+      const wx = cx + lx * Math.cos(rot) - lz * Math.sin(rot);
+      const wz = cz + lx * Math.sin(rot) + lz * Math.cos(rot);
+      const s = this.worldToScreen(wx, wz);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = '#f5a623';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#1f2733';
+      ctx.fillText(label, s.x + 10, s.y - 8);
+    };
+
+    if (this._bgCalib.p1) drawPt(this._bgCalib.p1, '1');
+    if (this._bgCalib.p1 && this._bgCalib.p2) {
+      drawPt(this._bgCalib.p2, '2');
+      const t = this._bgTransform(bg);
+      const wMM = bg.naturalWidthPx * t.scaleMMperPx;
+      const hMM = bg.naturalHeightPx * t.scaleMMperPx;
+      const cx = t.offsetX + wMM / 2;
+      const cz = t.offsetZ + hMM / 2;
+      const rot = (bg.rotationDeg || 0) * Math.PI / 180;
+      const cos = Math.cos(rot);
+      const sin = Math.sin(rot);
+      const toWorld = (pt) => {
+        const lx = pt.px * t.scaleMMperPx - wMM / 2;
+        const lz = pt.py * t.scaleMMperPx - hMM / 2;
+        return {
+          x: cx + lx * cos - lz * sin,
+          z: cz + lx * sin + lz * cos,
+        };
+      };
+      const a = toWorld(this._bgCalib.p1);
+      const b = toWorld(this._bgCalib.p2);
+      const sa = this.worldToScreen(a.x, a.z);
+      const sb = this.worldToScreen(b.x, b.z);
+      ctx.strokeStyle = '#f5a623';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(sa.x, sa.y);
+      ctx.lineTo(sb.x, sb.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+
   // ---- 描画 -----------------------------------------------------------------
   draw() {
     if (!this.ctx) return;
@@ -1188,6 +1452,8 @@ export class Editor2D {
 
     ctx.fillStyle = '#eef1f4';
     ctx.fillRect(0, 0, this.cssW, this.cssH);
+
+    this._drawBackground(ctx);
 
     if (this.ui.showGrid) this._drawGrid(ctx);
     this._drawAxes(ctx);
@@ -1209,6 +1475,7 @@ export class Editor2D {
     this._drawRoomHandles(ctx);
     this._drawStairHandles(ctx);
     if (this.drag?.kind === 'room') this._drawRoomPreview(ctx, this.drag);
+    this._drawBgCalibOverlay(ctx);
   }
 
   // ---- 部屋/壁/家具の描画（既存） -------------------------------------------

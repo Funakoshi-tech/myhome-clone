@@ -231,7 +231,13 @@ export function normalizePlan(plan) {
   const base = createEmptyPlan(plan?.meta?.name || 'プラン');
   const out = {
     meta: { ...base.meta, ...(plan.meta || {}) },
-    site: { ...base.site, ...(plan.site || {}) },
+    site: {
+      ...base.site,
+      ...(plan.site || {}),
+      backgroundImage: plan.site?.backgroundImage
+        ? normalizeBackgroundImage(plan.site.backgroundImage)
+        : (plan.site?.backgroundImage ?? null),
+    },
     floors: Array.isArray(plan.floors) && plan.floors.length ? plan.floors : base.floors,
     exterior: Array.isArray(plan.exterior) ? plan.exterior : [],
   };
@@ -267,6 +273,28 @@ export function normalizePlan(plan) {
     }
   }
   return out;
+}
+
+/** site.backgroundImage の正規化（既存 null はそのまま） */
+export function normalizeBackgroundImage(raw) {
+  if (!raw || typeof raw !== 'object' || !raw.dataUrl) return null;
+  const scale = raw.scaleMMperPx;
+  return {
+    dataUrl: raw.dataUrl,
+    naturalWidthPx: raw.naturalWidthPx ?? 0,
+    naturalHeightPx: raw.naturalHeightPx ?? 0,
+    scaleMMperPx: typeof scale === 'number' && scale > 0 ? scale : null,
+    offsetX: raw.offsetX ?? 0,
+    offsetZ: raw.offsetZ ?? 0,
+    rotationDeg: raw.rotationDeg ?? 0,
+    opacity: typeof raw.opacity === 'number' ? raw.opacity : 0.5,
+    visible: raw.visible !== false,
+  };
+}
+
+/** 敷地写真が実寸スケール済みか */
+export function isBackgroundImageScaled(bg) {
+  return !!(bg && typeof bg.scaleMMperPx === 'number' && bg.scaleMMperPx > 0);
 }
 
 /** 壁に roomId が無い古いデータ向けに ID パターン w_{roomId}_{edge} から復元 */
