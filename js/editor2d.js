@@ -32,8 +32,21 @@ function _wallExteriorNormal(wall, room) {
   let nx = -uz, nz = ux;
   const mid = { x: (wall.start.x + wall.end.x) / 2, z: (wall.start.z + wall.end.z) / 2 };
   const c = M.polygonCentroid(room.polygon);
-  if (nx * (mid.x - c.x) + nz * (mid.z - c.z) > 0) { nx = -nx; nz = -nz; }
+  // 法線が部屋重心から離れる方向（外側）を向くよう補正
+  if (nx * (mid.x - c.x) + nz * (mid.z - c.z) < 0) { nx = -nx; nz = -nz; }
   return { nx, nz, ux, uz, len };
+}
+
+/** 全居室ポリゴンの外側を向く法線に確定（内側向きなら反転） */
+function _resolveOutwardNormal(wall, room, floor) {
+  const wn = _wallExteriorNormal(wall, room);
+  if (!wn) return null;
+  let { nx, nz } = wn;
+  const mid = { x: (wall.start.x + wall.end.x) / 2, z: (wall.start.z + wall.end.z) / 2 };
+  const probe = { x: mid.x + nx * 120, z: mid.z + nz * 120 };
+  const insideAny = floor.rooms.some((r) => r.polygon && M.pointInPolygon(probe, r.polygon));
+  if (insideAny) { nx = -nx; nz = -nz; }
+  return { ...wn, nx, nz };
 }
 
 function _ptNear(a, b, eps = 2) {
@@ -1555,7 +1568,7 @@ export class Editor2D {
       const wall = walls[0];
       const room = floor.rooms.find((r) => r.id === (wall.roomId || M.inferWallRoomId(wall)));
       if (!room?.polygon) continue;
-      const wn = _wallExteriorNormal(wall, room);
+      const wn = _resolveOutwardNormal(wall, room, floor);
       if (!wn || wn.len < 1) continue;
       segments.push({
         ax: wall.start.x, az: wall.start.z,
@@ -1563,6 +1576,8 @@ export class Editor2D {
         len: wn.len,
         nx: wn.nx, nz: wn.nz,
         ux: wn.ux, uz: wn.uz,
+        midX: (wall.start.x + wall.end.x) / 2,
+        midZ: (wall.start.z + wall.end.z) / 2,
       });
     }
     return segments;
@@ -1620,9 +1635,20 @@ export class Editor2D {
     return chains;
   }
 
+  /** 寸法線がすべての居室ポリゴンの外に出るオフセット距離（mm） */
+  _dimensionClearance(floor, x, z, nx, nz, minOff = 280) {
+    for (let off = minOff; off <= 12000; off += 40) {
+      const pt = { x: x + nx * off, z: z + nz * off };
+      const inside = floor.rooms.some((r) => r.polygon && M.pointInPolygon(pt, r.polygon));
+      if (!inside) return off;
+    }
+    return minOff;
+  }
+
   _drawDimensionSegment(ctx, ax, az, bx, bz, lenMM, nx, nz, offsetMM, opts = {}) {
     const thick = opts.thick || false;
     const off = offsetMM;
+    // 引出線は壁面上（頂点）から寸法線まで
     const da = { x: ax + nx * off, z: az + nz * off };
     const db = { x: bx + nx * off, z: bz + nz * off };
     const sa = this.worldToScreen(ax, az);
@@ -1638,7 +1664,7 @@ export class Editor2D {
     ctx.fillStyle = thick ? '#1f2733' : '#3d4654';
     ctx.lineWidth = thick ? 1.2 : 1;
 
-    // 引出線
+    // 引出線（壁角 → 寸法線）
     ctx.beginPath();
     ctx.moveTo(sa.x, sa.y);
     ctx.lineTo(sda.x, sda.y);
@@ -1664,12 +1690,15 @@ export class Editor2D {
       ctx.stroke();
     }
 
-    // ラベル（外側法線方向にオフセット）
+    // ラベル（寸法線の外側）
     const mx = (sda.x + sdb.x) / 2;
     const my = (sda.y + sdb.y) / 2;
     const label = _formatDimMm(lenMM);
-    const nRef = this.worldToScreen(da.x + nx * 300, da.z + nz * 300);
-    let lnx = nRef.x - sda.x, lny = nRef.y - sda.y;
+    const nRef = this.worldToScreen(
+      (da.x + db.x) / 2 + nx * 200,
+      (da.z + db.z) / 2 + nz * 200,
+    );
+    let lnx = nRef.x - mx, lny = nRef.y - my;
     const lnlen = Math.hypot(lnx, lny) || 1;
     lnx /= lnlen; lny /= lnlen;
     ctx.font = `${thick ? 600 : 500} ${thick ? 12 : 11}px system-ui, sans-serif`;
@@ -1683,13 +1712,16 @@ export class Editor2D {
     const segments = this._collectExteriorWallSegments(floor);
     if (!segments.length) return;
 
-    const innerOff = 500;
-    const outerOff = 950;
+    const innerOffsets = segments.map((seg) =>
+      this._dimensionClearance(floor, seg.midX, seg.midZ, seg.nx, seg.nz, 280),
+    );
+    const baseInner = Math.max(...innerOffsets, 280);
+    const outerOff = baseInner + 520;
 
     for (const seg of segments) {
       this._drawDimensionSegment(
         ctx, seg.ax, seg.az, seg.bx, seg.bz, seg.len,
-        seg.nx, seg.nz, innerOff,
+        seg.nx, seg.nz, baseInner,
       );
     }
 

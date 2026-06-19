@@ -76,28 +76,72 @@
       </section>
 
       <!-- 部屋種別 -->
-      <section class="pane" id="room-pane">
-        <h3>部屋種別</h3>
-        <div class="chip-grid" id="room-types"></div>
+      <section class="pane pane-fold" id="room-pane" data-fold-id="room">
+        <button type="button" class="pane-fold-head" aria-expanded="true">
+          <span>部屋種別</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <div class="chip-grid" id="room-types"></div>
+        </div>
+      </section>
+
+      <!-- 階段 -->
+      <section class="pane pane-fold" id="stair-pane" data-fold-id="stair">
+        <button type="button" class="pane-fold-head" aria-expanded="true">
+          <span>階段</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <div class="chip-grid" id="stair-types"></div>
+        </div>
+      </section>
+
+      <!-- 建具 -->
+      <section class="pane pane-fold" id="opening-pane" data-fold-id="opening">
+        <button type="button" class="pane-fold-head" aria-expanded="true">
+          <span>建具</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <div class="chip-grid" id="opening-types"></div>
+          <p class="pane-hint">壁をクリックして配置。選択後ドラッグで移動。</p>
+        </div>
+      </section>
+
+      <!-- 住設 -->
+      <section class="pane pane-fold collapsed" id="plumbing-pane" data-fold-id="plumbing">
+        <button type="button" class="pane-fold-head" aria-expanded="false">
+          <span>住設</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <div class="chip-grid" id="plumbing-types"></div>
+          <p class="pane-hint">配置機能は今後追加予定</p>
+        </div>
       </section>
 
       <!-- 家具 -->
-      <section class="pane" id="furniture-pane">
-        <h3>家具</h3>
-        <div class="chip-grid" id="furniture-types"></div>
+      <section class="pane pane-fold" id="furniture-pane" data-fold-id="furniture">
+        <button type="button" class="pane-fold-head" aria-expanded="true">
+          <span>家具</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <div class="chip-grid" id="furniture-types"></div>
+        </div>
       </section>
 
-      <!-- 階段（独立カテゴリ） -->
-      <section class="pane" id="stair-pane">
-        <h3>階段</h3>
-        <div class="chip-grid" id="stair-types"></div>
-      </section>
-
-      <!-- 建具（窓・ドア） -->
-      <section class="pane" id="opening-pane">
-        <h3>建具</h3>
-        <div class="chip-grid" id="opening-types"></div>
-        <p class="pane-hint">壁をクリックして配置。選択後ドラッグで移動。</p>
+      <!-- 外構 -->
+      <section class="pane pane-fold collapsed" id="exterior-pane" data-fold-id="exterior">
+        <button type="button" class="pane-fold-head" aria-expanded="false">
+          <span>外構</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <div class="chip-grid" id="exterior-types"></div>
+          <p class="pane-hint">配置機能は今後追加予定</p>
+        </div>
       </section>
 
       <!-- スナップ・グリッド -->

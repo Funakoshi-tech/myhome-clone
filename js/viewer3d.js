@@ -468,7 +468,7 @@ export class Viewer3D {
     let nx = -uz, nz = ux;
     const mid = { x: (wall.start.x + wall.end.x) / 2, z: (wall.start.z + wall.end.z) / 2 };
     const c = M.polygonCentroid(room.polygon);
-    if (nx * (mid.x - c.x) + nz * (mid.z - c.z) > 0) { nx = -nx; nz = -nz; }
+    if (nx * (mid.x - c.x) + nz * (mid.z - c.z) < 0) { nx = -nx; nz = -nz; }
     return { nx, nz, ux, uz };
   }
 

@@ -3,7 +3,7 @@
 
 import { store } from './store.js';
 import * as M from './model.js';
-import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, getRoomType, getFurniture, getStairType, getOpeningType } from './catalog.js';
+import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, getRoomType, getFurniture, getStairType, getOpeningType } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
@@ -17,6 +17,8 @@ const ui = {
   furnitureId: FURNITURE[0].id,
   stairType: STAIR_TYPES[0].id,
   openingId: OPENING_TYPES[0].id,  // 'window' | 'sliding' | 'door'
+  plumbingId: PLUMBING_TYPES[0].id,
+  exteriorId: EXTERIOR_TYPES[0].id,
   selection: null,       // { kind:'room'|'furniture'|'stair'|'opening', id }
   showGrid: true,
   showDimensions: false,
@@ -92,9 +94,9 @@ function setTool(tool) {
   document.querySelectorAll('#tool-group .seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.tool === tool));
   $('#room-pane').classList.toggle('hl', tool === 'room');
-  $('#furniture-pane').classList.toggle('hl', tool === 'furniture');
   $('#stair-pane').classList.toggle('hl', tool === 'stair');
   $('#opening-pane').classList.toggle('hl', tool === 'opening');
+  $('#furniture-pane').classList.toggle('hl', tool === 'furniture');
   updateHint();
 }
 
@@ -140,12 +142,16 @@ function buildFurnitureChips() {
 function markChips() {
   document.querySelectorAll('#room-types .chip').forEach((b) =>
     b.classList.toggle('active', b.dataset.id === ui.roomType));
-  document.querySelectorAll('#furniture-types .chip').forEach((b) =>
-    b.classList.toggle('active', b.dataset.id === ui.furnitureId));
   document.querySelectorAll('#stair-types .chip').forEach((b) =>
     b.classList.toggle('active', b.dataset.id === ui.stairType));
   document.querySelectorAll('#opening-types .chip').forEach((b) =>
     b.classList.toggle('active', b.dataset.id === ui.openingId));
+  document.querySelectorAll('#plumbing-types .chip').forEach((b) =>
+    b.classList.toggle('active', b.dataset.id === ui.plumbingId));
+  document.querySelectorAll('#furniture-types .chip').forEach((b) =>
+    b.classList.toggle('active', b.dataset.id === ui.furnitureId));
+  document.querySelectorAll('#exterior-types .chip').forEach((b) =>
+    b.classList.toggle('active', b.dataset.id === ui.exteriorId));
 }
 
 function buildOpeningChips() {
@@ -182,6 +188,50 @@ function buildStairChips() {
     });
     wrap.appendChild(b);
   }
+}
+
+function buildPlumbingChips() {
+  const wrap = $('#plumbing-types');
+  wrap.innerHTML = '';
+  for (const t of PLUMBING_TYPES) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.dataset.id = t.id;
+    b.innerHTML = `<span class="dot" style="background:${t.color}"></span>${t.name}`;
+    b.addEventListener('click', () => {
+      ui.plumbingId = t.id;
+      markChips();
+    });
+    wrap.appendChild(b);
+  }
+}
+
+function buildExteriorChips() {
+  const wrap = $('#exterior-types');
+  wrap.innerHTML = '';
+  for (const t of EXTERIOR_TYPES) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.dataset.id = t.id;
+    b.innerHTML = `<span class="dot" style="background:${t.color}"></span>${t.name}`;
+    b.addEventListener('click', () => {
+      ui.exteriorId = t.id;
+      markChips();
+    });
+    wrap.appendChild(b);
+  }
+}
+
+function wireCollapsiblePanes() {
+  document.querySelectorAll('.pane-fold').forEach((pane) => {
+    const head = pane.querySelector('.pane-fold-head');
+    if (!head || head.dataset.wired) return;
+    head.dataset.wired = '1';
+    head.addEventListener('click', () => {
+      const collapsed = pane.classList.toggle('collapsed');
+      head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    });
+  });
 }
 
 // ---- プラン選択 -------------------------------------------------------------
@@ -898,9 +948,12 @@ store.subscribe(() => {
 // ---- 起動 -------------------------------------------------------------------
 function boot() {
   buildRoomChips();
-  buildFurnitureChips();
   buildStairChips();
   buildOpeningChips();
+  buildPlumbingChips();
+  buildFurnitureChips();
+  buildExteriorChips();
+  wireCollapsiblePanes();
   buildSunStatics();
   buildPlanSelect();
   wireEvents();
@@ -913,6 +966,7 @@ function boot() {
   refreshPanels();
   syncSunPanel();
   recomputeDaylight();
+  markChips();
   editor.resize();
   editor.zoomFit();
   updateHint();

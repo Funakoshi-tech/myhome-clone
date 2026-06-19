@@ -79,3 +79,29 @@ export const OPENING_TYPES = [
 export function getOpeningType(id) {
   return OPENING_TYPES.find((o) => o.id === id) || OPENING_TYPES[0];
 }
+
+// ---- 住設（設備）------------------------------------------------------------
+export const PLUMBING_TYPES = [
+  { id: 'toilet', name: '便器', color: '#9a5b8a' },
+  { id: 'washbasin', name: '洗面台', color: '#5b8aa6' },
+  { id: 'unitbath', name: 'ユニットバス', color: '#2d7fa6' },
+  { id: 'kitchen', name: 'キッチン', color: '#4aa0a0' },
+  { id: 'waterheater', name: '給湯器', color: '#566573' },
+];
+
+export function getPlumbingType(id) {
+  return PLUMBING_TYPES.find((p) => p.id === id) || PLUMBING_TYPES[0];
+}
+
+// ---- 外構 -------------------------------------------------------------------
+export const EXTERIOR_TYPES = [
+  { id: 'parking', name: '駐車場', color: '#555a60' },
+  { id: 'gate', name: '門扉', color: '#6b5b4b' },
+  { id: 'fence', name: 'フェンス', color: '#7a6a55' },
+  { id: 'deck', name: 'デッキ', color: '#8a7340' },
+  { id: 'planting', name: '植栽', color: '#7a8b3a' },
+];
+
+export function getExteriorType(id) {
+  return EXTERIOR_TYPES.find((e) => e.id === id) || EXTERIOR_TYPES[0];
+}
