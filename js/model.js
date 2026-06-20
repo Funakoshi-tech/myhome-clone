@@ -67,10 +67,12 @@ export function tsuboCount(areaM2) {
 }
 
 /** 全フロアの部屋面積合計（延床面積） */
-export function planTotalAreaM2(plan) {
+export function planTotalAreaM2(plan, opts = {}) {
+  const excludeGarage = opts.excludeGarage === true;
   let total = 0;
   for (const floor of plan.floors) {
     for (const room of floor.rooms) {
+      if (excludeGarage && room.type === 'garage') continue;
       total += polygonAreaM2(room.polygon);
     }
   }
@@ -89,7 +91,8 @@ export function formatTotalAreaTriple(areaM2, tatamiM2 = 1.62) {
 /** プラン一覧カード用の統計 */
 export function planStats(plan) {
   const tatami = plan.meta.tatamiM2 || 1.62;
-  const areaM2 = planTotalAreaM2(plan);
+  const areaWithGarage = planTotalAreaM2(plan);
+  const areaExGarage = planTotalAreaM2(plan, { excludeGarage: true });
   let roomCount = 0;
   let floorsWithRooms = 0;
   let minX = Infinity;
@@ -113,13 +116,17 @@ export function planStats(plan) {
   const depthM = hasBounds ? (maxZ - minZ) / 1000 : 0;
   const floorCount = floorsWithRooms || plan.floors.length;
   return {
-    areaM2,
+    areaM2: areaWithGarage,
+    areaExGarageM2: areaExGarage,
     tatami,
     roomCount,
     floorCount,
     widthM,
     depthM,
-    areas: formatTotalAreaTriple(areaM2, tatami),
+    areasWithGarage: formatTotalAreaTriple(areaWithGarage, tatami),
+    areasExGarage: formatTotalAreaTriple(areaExGarage, tatami),
+    // 後方互換
+    areas: formatTotalAreaTriple(areaWithGarage, tatami),
   };
 }
 

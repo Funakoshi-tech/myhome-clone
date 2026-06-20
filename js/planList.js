@@ -1,7 +1,7 @@
 // planList.js — プラン一覧画面
 
 import * as M from './model.js';
-import { renderPlanThumbnail } from './planThumbnail.js';
+import { renderPlanThumbnail, renderPlanFloorThumbnails } from './planThumbnail.js';
 import { showPrompt, showConfirm } from './dialog.js';
 
 function formatRelativeTime(ts) {
@@ -42,6 +42,7 @@ export class PlanList {
     this.searchInput = document.getElementById('plan-list-search');
     this.sortSelect = document.getElementById('plan-list-sort');
     this.newBtn = document.getElementById('plan-list-new');
+    this.expandedFloorIds = new Set();
 
     this._wire();
     this.store.subscribe(() => this.render());
@@ -116,14 +117,47 @@ export class PlanList {
     }
 
     for (const id of ids) {
-      this.grid.appendChild(this._buildCard(id));
+      const card = this._buildCard(id);
+      this.grid.appendChild(card);
+      if (this.expandedFloorIds.has(id)) {
+        this._setFloorsExpanded(card, true);
+        requestAnimationFrame(() => {
+          renderPlanFloorThumbnails(this.store.plans[id], card);
+        });
+      }
     }
+  }
+
+  _areaBlockHtml(label, areas) {
+    return `
+      <div class="plan-card-area">
+        <span class="plan-card-area-label">${label}</span>
+        <span class="plan-card-area-values">
+          <b>${areas.m2}</b>㎡ /
+          <b>${areas.jo}</b>畳 /
+          <b>${areas.tsubo}</b>坪
+        </span>
+      </div>`;
+  }
+
+  _setFloorsExpanded(card, open) {
+    const body = card.querySelector('.plan-card-floors-body');
+    const head = card.querySelector('.plan-card-floors-head');
+    if (!body || !head) return;
+    card.classList.toggle('floors-open', open);
+    body.hidden = !open;
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  _renderFloorCanvases(card, plan) {
+    renderPlanFloorThumbnails(plan, card);
   }
 
   _buildCard(id) {
     const plan = this.store.plans[id];
     const stats = M.planStats(plan);
-    const areas = stats.areas;
+    const withGarage = stats.areasWithGarage;
+    const exGarage = stats.areasExGarage;
     const card = document.createElement('article');
     card.className = 'plan-card';
     card.dataset.id = id;
@@ -166,16 +200,49 @@ export class PlanList {
     meta.innerHTML = `
       <div class="plan-card-line">${stats.floorCount}階建 / ${stats.roomCount}部屋</div>
       ${sizeLine}
-      <div class="plan-card-area">
-        <span class="plan-card-area-label">延床面積</span>
-        <span class="plan-card-area-values">
-          <b>${areas.m2}</b>㎡ /
-          <b>${areas.jo}</b>畳 /
-          <b>${areas.tsubo}</b>坪
-        </span>
-      </div>
+      ${this._areaBlockHtml('延床面積（ガレージ込）', withGarage)}
+      ${this._areaBlockHtml('延床面積（ガレージ抜）', exGarage)}
     `;
     card.appendChild(meta);
+
+    const floorsFold = document.createElement('div');
+    floorsFold.className = 'plan-card-floors-fold';
+    floorsFold.innerHTML = `
+      <button type="button" class="plan-card-floors-head" aria-expanded="false">
+        <span>各階表示</span>
+        <span class="plan-card-floors-icon" aria-hidden="true"></span>
+      </button>
+      <div class="plan-card-floors-body" hidden>
+        <div class="plan-card-floor-grid">
+          <figure class="plan-card-floor-item">
+            <figcaption>1F</figcaption>
+            <canvas class="plan-card-floor-canvas" data-floor="1F"></canvas>
+          </figure>
+          <figure class="plan-card-floor-item">
+            <figcaption>2F</figcaption>
+            <canvas class="plan-card-floor-canvas" data-floor="2F"></canvas>
+          </figure>
+          <figure class="plan-card-floor-item">
+            <figcaption>3F</figcaption>
+            <canvas class="plan-card-floor-canvas" data-floor="3F"></canvas>
+          </figure>
+        </div>
+      </div>
+    `;
+    const floorsHead = floorsFold.querySelector('.plan-card-floors-head');
+    floorsHead.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = !card.classList.contains('floors-open');
+      if (open) {
+        this.expandedFloorIds.add(id);
+        this._setFloorsExpanded(card, true);
+        requestAnimationFrame(() => this._renderFloorCanvases(card, plan));
+      } else {
+        this.expandedFloorIds.delete(id);
+        this._setFloorsExpanded(card, false);
+      }
+    });
+    card.appendChild(floorsFold);
 
     const foot = document.createElement('div');
     foot.className = 'plan-card-foot';

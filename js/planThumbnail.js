@@ -11,24 +11,34 @@ function hexA(hex, a) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-function planBounds(plan) {
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  const expand = (pt) => {
-    minX = Math.min(minX, pt.x);
-    maxX = Math.max(maxX, pt.x);
-    minZ = Math.min(minZ, pt.z);
-    maxZ = Math.max(maxZ, pt.z);
+function expandBounds(bounds, pt) {
+  if (!bounds) {
+    return { minX: pt.x, maxX: pt.x, minZ: pt.z, maxZ: pt.z };
+  }
+  return {
+    minX: Math.min(bounds.minX, pt.x),
+    maxX: Math.max(bounds.maxX, pt.x),
+    minZ: Math.min(bounds.minZ, pt.z),
+    maxZ: Math.max(bounds.maxZ, pt.z),
   };
+}
+
+function planBounds(plan) {
+  let b = null;
   for (const floor of plan.floors) {
     for (const room of floor.rooms) {
-      for (const p of room.polygon) expand(p);
+      for (const p of room.polygon) b = expandBounds(b, p);
     }
   }
-  if (!Number.isFinite(minX)) return null;
-  return { minX, maxX, minZ, maxZ };
+  return b;
+}
+
+function floorBounds(floor) {
+  let b = null;
+  for (const room of floor.rooms) {
+    for (const p of room.polygon) b = expandBounds(b, p);
+  }
+  return b;
 }
 
 function pickPreviewFloor(plan) {
@@ -39,12 +49,59 @@ function pickPreviewFloor(plan) {
   return plan.floors[0] || M.getFloor(plan, '1F');
 }
 
+function drawFloorContent(ctx, floor, toScreen, opts = {}) {
+  const { showLabels = true, labelPrefix = '' } = opts;
+
+  for (const room of floor.rooms) {
+    const color = getRoomType(room.type).color;
+    ctx.beginPath();
+    room.polygon.forEach((p, i) => {
+      const s = toScreen(p.x, p.z);
+      if (i === 0) ctx.moveTo(s.x, s.y);
+      else ctx.lineTo(s.x, s.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = hexA(color, 0.45);
+    ctx.fill();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = hexA(color, 0.85);
+    ctx.stroke();
+  }
+
+  for (const wall of floor.walls) {
+    const a = toScreen(wall.start.x, wall.start.z);
+    const b = toScreen(wall.end.x, wall.end.z);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#5a6270';
+    ctx.lineCap = 'square';
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  if (!showLabels) return;
+
+  ctx.fillStyle = '#3d4654';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 10px system-ui, sans-serif';
+  for (const room of floor.rooms) {
+    if (room.labelVisible === false) continue;
+    const c = M.polygonCentroid(room.polygon);
+    const s = toScreen(c.x, c.z);
+    const name = room.name || getRoomType(room.type).name;
+    ctx.fillText(labelPrefix + name, s.x, s.y);
+  }
+}
+
 /**
  * プランの簡易間取り図を canvas に描画する。
  * @param {object} plan
  * @param {HTMLCanvasElement} canvas
+ * @param {{ floorId?: string, emptyLabel?: string }} [opts]
  */
-export function renderPlanThumbnail(plan, canvas) {
+export function renderPlanThumbnail(plan, canvas, opts = {}) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
@@ -58,18 +115,20 @@ export function renderPlanThumbnail(plan, canvas) {
   ctx.fillStyle = '#f3ebe0';
   ctx.fillRect(0, 0, cssW, cssH);
 
-  const bounds = planBounds(plan);
-  const floor = pickPreviewFloor(plan);
+  const floorId = opts.floorId;
+  const floor = floorId ? M.getFloor(plan, floorId) : pickPreviewFloor(plan);
+  const bounds = floorId ? floorBounds(floor) : planBounds(plan);
+
   if (!bounds || !floor.rooms.length) {
     ctx.fillStyle = '#9aa3b0';
     ctx.font = '500 13px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('間取り未作成', cssW / 2, cssH / 2);
+    ctx.fillText(opts.emptyLabel || '間取り未作成', cssW / 2, cssH / 2);
     return;
   }
 
-  const pad = 600;
+  const pad = floorId ? 400 : 600;
   const w = bounds.maxX - bounds.minX + pad * 2;
   const h = bounds.maxZ - bounds.minZ + pad * 2;
   const scale = Math.max(0.005, Math.min(cssW / w, cssH / h));
@@ -83,47 +142,13 @@ export function renderPlanThumbnail(plan, canvas) {
     y: z * scale + panY,
   });
 
-  const drawPoly = (polygon, fill, stroke, lw = 1) => {
-    ctx.beginPath();
-    polygon.forEach((p, i) => {
-      const s = toScreen(p.x, p.z);
-      if (i === 0) ctx.moveTo(s.x, s.y);
-      else ctx.lineTo(s.x, s.y);
-    });
-    ctx.closePath();
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.lineWidth = lw;
-    ctx.strokeStyle = stroke;
-    ctx.stroke();
-  };
+  drawFloorContent(ctx, floor, toScreen);
+}
 
-  for (const room of floor.rooms) {
-    const color = getRoomType(room.type).color;
-    drawPoly(room.polygon, hexA(color, 0.45), hexA(color, 0.85), 1.2);
-  }
-
-  for (const wall of floor.walls) {
-    const a = toScreen(wall.start.x, wall.start.z);
-    const b = toScreen(wall.end.x, wall.end.z);
-    ctx.lineWidth = Math.max(1.5, (wall.thicknessMM || 120) * scale * 0.5);
-    ctx.strokeStyle = '#5a6270';
-    ctx.lineCap = 'square';
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = '#3d4654';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = '600 10px system-ui, sans-serif';
-  for (const room of floor.rooms) {
-    if (room.labelVisible === false) continue;
-    const c = M.polygonCentroid(room.polygon);
-    const s = toScreen(c.x, c.z);
-    const name = room.name || getRoomType(room.type).name;
-    ctx.fillText(name, s.x, s.y);
+/** 1F / 2F / 3F の各 canvas に間取りを描画 */
+export function renderPlanFloorThumbnails(plan, container) {
+  for (const floorId of ['1F', '2F', '3F']) {
+    const canvas = container.querySelector(`canvas[data-floor="${floorId}"]`);
+    if (canvas) renderPlanThumbnail(plan, canvas, { floorId });
   }
 }
