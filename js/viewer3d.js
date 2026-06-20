@@ -228,14 +228,30 @@ export class Viewer3D {
     for (const floor of plan.floors) {
       if (!showAll && floor.id !== selectedId) continue;
       const hasContent = floor.rooms.length || floor.furniture.length || (floor.stairs || []).length;
-      if (!hasContent) continue;
+      const lower = M.getLowerFloor(plan, floor.id);
+      const hasLowerStairs = !showAll && floor.id === selectedId && (lower?.stairs?.length || 0) > 0;
+      if (!hasContent && !hasLowerStairs) continue;
       const baseY = showAll
         ? (floor.level || 0) * (floor.ceilingHeightMM || 2400) * MM
         : 0;
       const g = new THREE.Group();
       g.position.y = baseY;
       g.userData = { floorId: floor.id };
-      this._populateFloorGeometry(g, floor, 'visual');
+      this._populateFloorGeometry(g, floor, 'visual', plan);
+
+      // 単階表示: 下階の階段を上階まで突き抜けて表示
+      if (!showAll && lower?.stairs?.length) {
+        const riseMM = lower.ceilingHeightMM || 2400;
+        const upper = M.getUpperFloor(plan, floor.id);
+        for (const s of lower.stairs) {
+          const obj = this._buildStair(s, riseMM, lower, upper);
+          if (obj) {
+            obj.position.y = -riseMM * MM;
+            g.add(obj);
+          }
+        }
+      }
+
       this.root.add(g);
     }
 
@@ -262,10 +278,20 @@ export class Viewer3D {
     return !NO_CEILING_TYPES.has(room.type);
   }
 
-  // 部屋の底面（床）
-  _buildRoomFloor(room, yM, mat, opts = {}) {
+  // 部屋の底面（床）。下階階段の位置には穴を開ける。
+  _buildRoomFloor(room, yM, mat, floor, plan, opts = {}) {
     if (!this._roomHasFloor(room)) return null;
-    return this._buildRoomPolygonMesh(room, yM, mat, opts);
+    const shape = (floor && plan)
+      ? this._roomFloorShape(room, floor, plan)
+      : this._roomShape(room);
+    if (!shape) return null;
+    const geo = new THREE.ShapeGeometry(shape);
+    geo.rotateX(Math.PI / 2);
+    const useMat = mat || this._floorMaterial(opts.color || '#888');
+    const mesh = new THREE.Mesh(geo, useMat);
+    mesh.position.y = yM;
+    if (opts.receiveShadow) mesh.receiveShadow = true;
+    return mesh;
   }
 
   // 部屋の天井面（箱の上面。日射・3D 共用ジオメトリ）
@@ -284,15 +310,19 @@ export class Viewer3D {
    * 1フロア分の物理構造（床・壁・天井・階段・家具）をグループへ追加。
    * @param {'visual'|'occluder'} mode
    */
-  _populateFloorGeometry(fg, floor, mode) {
+  _populateFloorGeometry(fg, floor, mode, plan = null) {
+    const planData = plan || this.store.current();
     const ceilingY = (floor.ceilingHeightMM || 2400) * MM;
     const isOcc = mode === 'occluder';
+    const upper = planData ? M.getUpperFloor(planData, floor.id) : null;
 
     for (const room of floor.rooms) {
       const floorMesh = this._buildRoomFloor(
         room,
         isOcc ? 0 : 0.005,
         isOcc ? OCCLUDER_MAT : null,
+        floor,
+        planData,
         isOcc ? {} : { color: getRoomType(room.type).color, receiveShadow: true },
       );
       if (floorMesh) {
@@ -336,15 +366,16 @@ export class Viewer3D {
     }
 
     for (const s of (floor.stairs || [])) {
+      const riseMM = M.stairRiseHeightMM(floor, upper);
       if (isOcc) {
-        const geo = new THREE.BoxGeometry(s.widthMM * MM, ceilingY, s.depthMM * MM);
+        const geo = new THREE.BoxGeometry(s.widthMM * MM, riseMM * MM, s.depthMM * MM);
         const mesh = new THREE.Mesh(geo, OCCLUDER_MAT);
-        mesh.position.set(s.x * MM, ceilingY / 2, s.z * MM);
+        mesh.position.set(s.x * MM, (riseMM * MM) / 2, s.z * MM);
         mesh.rotation.y = -((s.rotationDeg || 0) * Math.PI) / 180;
         mesh.userData = { roomId: null, kind: 'stair' };
         fg.add(mesh);
       } else {
-        const obj = this._buildStair(s, floor.ceilingHeightMM || 2400);
+        const obj = this._buildStair(s, riseMM, floor, upper);
         if (obj) fg.add(obj);
       }
     }
@@ -391,33 +422,37 @@ export class Viewer3D {
     return shape;
   }
 
-  _stairFootprintCorners(stair) {
-    const rad = (stair.rotationDeg || 0) * Math.PI / 180;
-    const cos = Math.cos(rad), sin = Math.sin(rad);
-    const hw = stair.widthMM / 2, hd = stair.depthMM / 2;
-    return [
-      { x: -hw, z: -hd }, { x: hw, z: -hd }, { x: hw, z: hd }, { x: -hw, z: hd },
-    ].map((p) => ({
-      x: stair.x + p.x * cos - p.z * sin,
-      z: stair.z + p.x * sin + p.z * cos,
-    }));
+  _appendStairHoles(shape, stairs, room) {
+    if (!shape || !stairs?.length || !room?.polygon) return;
+    for (const stair of stairs) {
+      if (!M.pointInPolygon({ x: stair.x, z: stair.z }, room.polygon)) continue;
+      const corners = M.stairFootprintCorners(stair);
+      const hole = new THREE.Path();
+      corners.forEach((p, i) => {
+        const x = p.x * MM;
+        const z = p.z * MM;
+        if (i === 0) hole.moveTo(x, z);
+        else hole.lineTo(x, z);
+      });
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+  }
+
+  // 下階階段の位置に穴を開けた床用シェイプ
+  _roomFloorShape(room, floor, plan) {
+    const shape = this._roomShape(room);
+    if (!shape) return null;
+    const lower = M.getLowerFloor(plan, floor.id);
+    if (lower) this._appendStairHoles(shape, lower.stairs, room);
+    return shape;
   }
 
   // 階段配置箇所に穴を開けた天井用シェイプ
   _roomCeilingShape(room, floor) {
     const shape = this._roomShape(room);
     if (!shape) return null;
-    for (const stair of (floor.stairs || [])) {
-      if (!M.pointInPolygon({ x: stair.x, z: stair.z }, room.polygon)) continue;
-      const corners = this._stairFootprintCorners(stair);
-      const hole = new THREE.Path();
-      corners.forEach((p, i) => {
-        const x = p.x * MM, z = p.z * MM;
-        if (i === 0) hole.moveTo(x, z); else hole.lineTo(x, z);
-      });
-      hole.closePath();
-      shape.holes.push(hole);
-    }
+    this._appendStairHoles(shape, floor.stairs, room);
     return shape;
   }
 
@@ -707,16 +742,17 @@ export class Viewer3D {
     return mesh;
   }
 
-  // 階段の3D表示（直進はステップ状、その他は単純ボックス）
-  _buildStair(stair, ceilingHeightMM) {
+  // 階段の3D表示（1階分の高さまで上階へ突き抜け）
+  _buildStair(stair, riseMM, sourceFloor, upperFloor) {
     const w = stair.widthMM * MM;
     const d = stair.depthMM * MM;
-    const h = ceilingHeightMM * MM;
+    const h = riseMM * MM;
     const rot = -(stair.rotationDeg || 0) * Math.PI / 180;
 
     const group = new THREE.Group();
     group.position.set(stair.x * MM, 0, stair.z * MM);
     group.rotation.y = rot;
+    group.userData = { kind: 'stair', floorId: sourceFloor?.id || null };
 
     const nSteps = Math.max(4, Math.min(14, Math.round(stair.depthMM / 230)));
     const stepH = h / nSteps;
@@ -727,22 +763,38 @@ export class Viewer3D {
     });
 
     if (stair.type === 'straight') {
-      // 踏み板を1段ずつ積み上げる
       for (let i = 0; i < nSteps; i++) {
         const geo = new THREE.BoxGeometry(w, stepH * (i + 1), stepD);
         const step = new THREE.Mesh(geo, mat);
         step.position.set(0, stepH * (i + 1) / 2, -d / 2 + stepD * (i + 0.5));
-        step.castShadow = true; step.receiveShadow = true;
+        step.castShadow = true;
+        step.receiveShadow = true;
         group.add(step);
       }
     } else {
-      // その他: 半分の高さのボックスで表現
-      const geo = new THREE.BoxGeometry(w, h * 0.5, d);
+      const geo = new THREE.BoxGeometry(w, h * 0.85, d);
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(0, h * 0.25, 0);
-      mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.position.set(0, h * 0.425, 0);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       group.add(mesh);
     }
+
+    // 上階がある場合、踊り場側の縦板で上階床までつなぐ
+    if (upperFloor) {
+      const railMat = new THREE.MeshStandardMaterial({
+        color: 0xc4a880, roughness: 0.9, metalness: 0.0,
+      });
+      const sideT = Math.min(0.04, w * 0.08);
+      for (const sx of [-1, 1]) {
+        const geo = new THREE.BoxGeometry(sideT, h, sideT);
+        const rail = new THREE.Mesh(geo, railMat);
+        rail.position.set(sx * (w / 2 - sideT / 2), h / 2, d / 2 - sideT / 2);
+        rail.castShadow = true;
+        group.add(rail);
+      }
+    }
+
     return group;
   }
 

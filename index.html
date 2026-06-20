@@ -311,6 +311,40 @@
     </div>
   </div>
 
+  <!-- 共通ダイアログ（PWA standalone 向け） -->
+  <div id="app-prompt-modal" class="modal" hidden>
+    <div class="modal-box">
+      <h4 id="app-prompt-title"></h4>
+      <label class="modal-field">
+        <span id="app-prompt-label"></span>
+        <input type="text" id="app-prompt-input" autocomplete="off" />
+      </label>
+      <div class="btn-row">
+        <button id="app-prompt-cancel" class="btn" type="button">キャンセル</button>
+        <button id="app-prompt-ok" class="btn btn-primary" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="app-confirm-modal" class="modal" hidden>
+    <div class="modal-box">
+      <h4 id="app-confirm-title">確認</h4>
+      <p id="app-confirm-message" class="modal-message"></p>
+      <div class="btn-row">
+        <button id="app-confirm-cancel" class="btn" type="button">キャンセル</button>
+        <button id="app-confirm-ok" class="btn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="app-alert-modal" class="modal" hidden>
+    <div class="modal-box">
+      <h4 id="app-alert-title"></h4>
+      <p id="app-alert-message" class="modal-message"></p>
+      <button id="app-alert-ok" class="btn wide btn-primary" type="button">OK</button>
+    </div>
+  </div>
+
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

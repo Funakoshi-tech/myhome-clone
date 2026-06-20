@@ -2,6 +2,7 @@
 
 import * as M from './model.js';
 import { renderPlanThumbnail } from './planThumbnail.js';
+import { showPrompt, showConfirm } from './dialog.js';
 
 function formatRelativeTime(ts) {
   if (!ts) return '—';
@@ -48,10 +49,7 @@ export class PlanList {
 
   _wire() {
     this.newBtn?.addEventListener('click', () => {
-      const name = prompt('新しいプラン名', `マイプラン${this.store.order.length + 1}`);
-      if (name === null) return;
-      const id = this.store.newPlan(name || '無題');
-      this.onOpen(id);
+      this._createPlan();
     });
 
     this.searchInput?.addEventListener('input', () => {
@@ -228,7 +226,18 @@ export class PlanList {
     });
   }
 
-  _handleAction(act, id) {
+  async _createPlan() {
+    const name = await showPrompt({
+      title: 'プラン新規作成',
+      label: 'プラン名',
+      defaultValue: `マイプラン${this.store.order.length + 1}`,
+    });
+    if (name === null) return;
+    const id = this.store.newPlan(name.trim() || '無題');
+    this.onOpen(id);
+  }
+
+  async _handleAction(act, id) {
     const plan = this.store.plans[id];
     if (!plan) return;
     if (act === 'open') {
@@ -236,8 +245,14 @@ export class PlanList {
       return;
     }
     if (act === 'rename') {
-      const name = prompt('プラン名を変更', plan.meta.name || '');
-      if (name) this.store.renamePlan(name, id);
+      const name = await showPrompt({
+        title: 'プラン名を変更',
+        label: 'プラン名',
+        defaultValue: plan.meta.name || '',
+      });
+      if (name === null) return;
+      const trimmed = name.trim();
+      if (trimmed) this.store.renamePlan(trimmed, id);
       return;
     }
     if (act === 'copy') {
@@ -246,7 +261,13 @@ export class PlanList {
     }
     if (act === 'delete') {
       const label = plan.meta.name || 'このプラン';
-      if (!confirm(`「${label}」を削除しますか？`)) return;
+      const ok = await showConfirm({
+        title: 'プランを削除',
+        message: `「${label}」を削除しますか？`,
+        okText: '削除',
+        danger: true,
+      });
+      if (!ok) return;
       this.store.deletePlan(id);
     }
   }

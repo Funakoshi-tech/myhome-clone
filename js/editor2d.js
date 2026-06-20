@@ -401,10 +401,7 @@ export class Editor2D {
 
   // 1つ下の階のフロアを返す（フロア間連動用）
   _lowerFloor() {
-    const plan = this._plan();
-    const cur = plan.floors.find((f) => f.id === this.ui.floorId);
-    if (!cur) return null;
-    return plan.floors.find((f) => f.level === cur.level - 1) || null;
+    return M.getLowerFloor(this._plan(), this.ui.floorId);
   }
 
   // ---- 入力 -----------------------------------------------------------------
@@ -1506,6 +1503,14 @@ export class Editor2D {
       if (lower) this._drawLowerFloorReference(ctx, lower);
     }
 
+    // 下階の階段を上階でも同位置に表示（設置階→上階連動）
+    const lowerForStairs = this._lowerFloor();
+    if (lowerForStairs) {
+      for (const s of (lowerForStairs.stairs || [])) {
+        this._drawStair(ctx, s, false, { fromLowerFloor: lowerForStairs.id });
+      }
+    }
+
     for (const room of floor.rooms) this._drawRoom(ctx, room);
     for (const wall of floor.walls) this._drawWall(ctx, wall);
     for (const op of (floor.openings || [])) this._drawOpeningSymbol(ctx, op);
@@ -1751,7 +1756,6 @@ export class Editor2D {
     for (const room of floor.rooms) this._drawRoom(ctx, room, true);
     for (const wall of floor.walls) this._drawWall(ctx, wall, { floor, isRef: true });
     for (const op of (floor.openings || [])) this._drawOpeningSymbol(ctx, op, { floor, isRef: true });
-    for (const s of (floor.stairs || [])) this._drawStair(ctx, s, true);
     for (const f of floor.furniture) this._drawFurniture(ctx, f, true);
   }
 
@@ -2261,9 +2265,10 @@ export class Editor2D {
   /**
    * @param {CanvasRenderingContext2D} ctx
    * @param {object} stair
-   * @param {boolean} isRef  true = 下階参照の薄いゴースト表示
+   * @param {boolean} isRef  true = 薄いゴースト表示
+   * @param {{ fromLowerFloor?: string }} [opts]
    */
-  _drawStair(ctx, stair, isRef = false) {
+  _drawStair(ctx, stair, isRef = false, opts = {}) {
     const scl = this.cam.scale;
     const sc = this.worldToScreen(stair.x, stair.z);
     const hw = stair.widthMM * scl / 2;
@@ -2296,7 +2301,8 @@ export class Editor2D {
         ctx.fillStyle = 'rgba(70,50,25,0.85)';
         ctx.font = `${Math.max(8, Math.min(11, hw * 0.32))}px system-ui, sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-        ctx.fillText(def.name, 0, hd - 2);
+        const prefix = opts.fromLowerFloor ? `${opts.fromLowerFloor}↑ ` : '';
+        ctx.fillText(prefix + def.name, 0, hd - 2);
       }
     }
 

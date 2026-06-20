@@ -293,6 +293,46 @@ export function getFloor(plan, floorId) {
   return f;
 }
 
+export function getFloorByLevel(plan, level) {
+  return plan.floors.find((f) => f.level === level) || null;
+}
+
+/** 1つ下の階 */
+export function getLowerFloor(plan, floorId) {
+  const cur = plan.floors.find((f) => f.id === floorId);
+  if (!cur) return null;
+  return getFloorByLevel(plan, cur.level - 1);
+}
+
+/** 1つ上の階 */
+export function getUpperFloor(plan, floorId) {
+  const cur = plan.floors.find((f) => f.id === floorId);
+  if (!cur) return null;
+  return getFloorByLevel(plan, cur.level + 1);
+}
+
+/** 階段の回転矩形フットプリント（mm） */
+export function stairFootprintCorners(stair) {
+  const rad = (stair.rotationDeg || 0) * Math.PI / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const hw = stair.widthMM / 2;
+  const hd = stair.depthMM / 2;
+  return [
+    { x: -hw, z: -hd }, { x: hw, z: -hd }, { x: hw, z: hd }, { x: -hw, z: hd },
+  ].map((p) => ({
+    x: stair.x + p.x * cos - p.z * sin,
+    z: stair.z + p.x * sin + p.z * cos,
+  }));
+}
+
+/** 下階から上階へ突き抜ける階段の高さ（mm） */
+export function stairRiseHeightMM(sourceFloor, upperFloor) {
+  const rise = sourceFloor?.ceilingHeightMM || 2400;
+  if (!upperFloor) return rise;
+  return rise;
+}
+
 // 後付けのスキーマ補完（古いJSONを読み込んだとき用）
 export function normalizePlan(plan) {
   const base = createEmptyPlan(plan?.meta?.name || 'プラン');

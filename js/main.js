@@ -8,6 +8,7 @@ import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
 import { PlanList } from './planList.js';
+import { showAlert, showConfirm } from './dialog.js';
 
 // ---- 共有 UI 状態（永続化しない一時状態） ----------------------------------
 const ui = {
@@ -369,9 +370,9 @@ function syncBgPosLabel() {
     `X: ${Math.round(bg.offsetX ?? 0)} / Z: ${Math.round(bg.offsetZ ?? 0)} mm`;
 }
 
-ui.onBgCalibDone = (pxDist) => {
+ui.onBgCalibDone = async (pxDist) => {
   if (pxDist < 2) {
-    alert('2点が近すぎます。もう一度設定してください。');
+    await showAlert({ title: '基準線', message: '2点が近すぎます。もう一度設定してください。' });
     editor.startBgCalibration();
     updateHint();
     return;
@@ -408,7 +409,7 @@ function wireBgPanel() {
       syncBgPanel();
       updateHint();
     } catch (err) {
-      alert(err.message || '画像の読み込みに失敗しました');
+      await showAlert({ title: '画像読込', message: err.message || '画像の読み込みに失敗しました' });
     }
   });
 
@@ -419,9 +420,15 @@ function wireBgPanel() {
 
   $('#bg-position').addEventListener('click', () => showBgPosModal());
 
-  $('#bg-delete').addEventListener('click', () => {
+  $('#bg-delete').addEventListener('click', async () => {
     if (!store.current()?.site?.backgroundImage?.dataUrl) return;
-    if (!confirm('下絵を削除しますか？')) return;
+    const ok = await showConfirm({
+      title: '下絵を削除',
+      message: '下絵を削除しますか？',
+      okText: '削除',
+      danger: true,
+    });
+    if (!ok) return;
     store.update((plan) => {
       plan.site.backgroundImage = null;
     });
@@ -458,10 +465,10 @@ function wireBgPanel() {
     updateHint();
   });
 
-  $('#bg-scale-ok').addEventListener('click', () => {
+  $('#bg-scale-ok').addEventListener('click', async () => {
     const mm = Number($('#bg-scale-mm').value);
     if (!mm || mm <= 0) {
-      alert('0より大きい mm 数値を入力してください');
+      await showAlert({ title: '実寸入力', message: '0より大きい mm 数値を入力してください' });
       return;
     }
     const pxDist = _bgPendingPxDist;
@@ -940,7 +947,7 @@ function wireEvents() {
       store.importJSON(obj);
       openPlanEditor(store.currentId);
     } catch (err) {
-      alert('JSON の読み込みに失敗しました: ' + err.message);
+      await showAlert({ title: 'JSON読込', message: 'JSON の読み込みに失敗しました: ' + err.message });
     }
     e.target.value = '';
   });

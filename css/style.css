@@ -569,6 +569,15 @@ body.plan-list-mode { overflow: auto; }
   border-radius: 6px;
   font-size: 14px;
 }
+.modal-message {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+#app-confirm-ok.danger { color: var(--danger); border-color: #e6c3c2; }
+#app-confirm-ok.danger:hover { background: #fbecec; }
 .bg-pos-pad {
   display: flex;
   flex-direction: column;
