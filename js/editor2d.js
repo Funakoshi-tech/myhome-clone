@@ -1500,10 +1500,10 @@ export class Editor2D {
 
     const floor = this._floor();
 
-    // 下階の階段を薄いグレーで参照表示（上下階の位置関係把握用）
-    const lower = this._lowerFloor();
-    if (lower) {
-      for (const s of (lower.stairs || [])) this._drawStair(ctx, s, true);
+    // 下階の間取りを薄く参照表示
+    if (this.ui.showLowerFloorRef) {
+      const lower = this._lowerFloor();
+      if (lower) this._drawLowerFloorReference(ctx, lower);
     }
 
     for (const room of floor.rooms) this._drawRoom(ctx, room);
@@ -1747,7 +1747,38 @@ export class Editor2D {
     ctx.closePath();
   }
 
-  _drawRoom(ctx, room) {
+  _drawLowerFloorReference(ctx, floor) {
+    for (const room of floor.rooms) this._drawRoom(ctx, room, true);
+    for (const wall of floor.walls) this._drawWall(ctx, wall, { floor, isRef: true });
+    for (const op of (floor.openings || [])) this._drawOpeningSymbol(ctx, op, { floor, isRef: true });
+    for (const s of (floor.stairs || [])) this._drawStair(ctx, s, true);
+    for (const f of floor.furniture) this._drawFurniture(ctx, f, true);
+  }
+
+  _drawRoom(ctx, room, isRef = false) {
+    if (isRef) {
+      const color = getRoomType(room.type).color;
+      this._polyPath(ctx, room.polygon);
+      ctx.fillStyle = this._hexA(color, 0.10);
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(120,125,135,0.42)';
+      ctx.setLineDash([5, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (room.labelVisible !== false) {
+        const c = M.polygonCentroid(room.polygon);
+        const s = this.worldToScreen(c.x, c.z);
+        const lower = this._lowerFloor();
+        const prefix = lower ? `${lower.id} ` : '';
+        ctx.fillStyle = 'rgba(90,98,110,0.72)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '500 11px system-ui, sans-serif';
+        ctx.fillText(prefix + (room.name || getRoomType(room.type).name), s.x, s.y);
+      }
+      return;
+    }
     const color = getRoomType(room.type).color;
     this._polyPath(ctx, room.polygon);
     ctx.fillStyle = this._hexA(color, 0.35);
@@ -1780,8 +1811,9 @@ export class Editor2D {
     }
   }
 
-  _drawWall(ctx, wall) {
-    const floor = this._floor();
+  _drawWall(ctx, wall, opts = {}) {
+    const floor = opts.floor || this._floor();
+    const isRef = !!opts.isRef;
     const ops = (floor.openings || [])
       .filter((o) => o.wallId === wall.id)
       .sort((a, b) => a.offsetMM - b.offsetMM);
@@ -1793,10 +1825,10 @@ export class Editor2D {
     if (lenMM < 1) return;
     const ux = dx / lenMM, uz = dz / lenMM;
 
-    const px = Math.max(2, wall.thicknessMM * this.cam.scale);
+    const px = Math.max(isRef ? 1 : 2, wall.thicknessMM * this.cam.scale);
     ctx.lineCap = 'square';
     ctx.lineWidth = px;
-    ctx.strokeStyle = '#4a5260';
+    ctx.strokeStyle = isRef ? 'rgba(130,130,135,0.38)' : '#4a5260';
 
     const seg = (fromMM, toMM) => {
       if (toMM - fromMM < 1) return;
@@ -1894,8 +1926,9 @@ export class Editor2D {
   }
 
   // 建具記号（壁の隙間に上書き）
-  _drawOpeningSymbol(ctx, opening) {
-    const floor = this._floor();
+  _drawOpeningSymbol(ctx, opening, opts = {}) {
+    const floor = opts.floor || this._floor();
+    const isRef = !!opts.isRef;
     const wall = floor.walls.find((w) => w.id === opening.wallId);
     if (!wall) return;
     const pts = this._openingWorldPoints(wall, opening);
@@ -1906,10 +1939,19 @@ export class Editor2D {
     const lenMM = Math.hypot(dx, dz);
     if (lenMM < 1) return;
     const ux = dx / lenMM, uz = dz / lenMM;
-    const nx = -uz, nz = ux;                     // 壁の法線
+    const nx = -uz, nz = ux;
     const halfT = (wall.thicknessMM || 120) / 2;
     const oStart = opening.offsetMM - opening.widthMM / 2;
     const oEnd   = opening.offsetMM + opening.widthMM / 2;
+
+    if (isRef) {
+      ctx.strokeStyle = 'rgba(130,135,145,0.35)';
+      ctx.lineWidth = 1;
+      const p1 = this.worldToScreen(ax + ux * oStart + nx * halfT * 0.5, az + uz * oStart + nz * halfT * 0.5);
+      const p2 = this.worldToScreen(ax + ux * oEnd + nx * halfT * 0.5, az + uz * oEnd + nz * halfT * 0.5);
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      return;
+    }
 
     if (opening.type === 'door') {
       this._drawDoorSymbol(ctx, wall, opening);
@@ -1956,9 +1998,17 @@ export class Editor2D {
     }));
   }
 
-  _drawFurniture(ctx, f) {
+  _drawFurniture(ctx, f, isRef = false) {
     const corners = this._furnitureCorners(f);
     this._polyPath(ctx, corners);
+    if (isRef) {
+      ctx.fillStyle = 'rgba(150,150,155,0.14)';
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(130,130,135,0.32)';
+      ctx.stroke();
+      return;
+    }
     ctx.fillStyle = this._hexA(f.color || '#888', 0.85);
     ctx.fill();
     ctx.lineWidth = 1.2; ctx.strokeStyle = '#2c3444'; ctx.stroke();

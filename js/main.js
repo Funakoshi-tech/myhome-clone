@@ -22,6 +22,7 @@ const ui = {
   selection: null,       // { kind:'room'|'furniture'|'stair'|'opening', id }
   showGrid: true,
   showDimensions: false,
+  showLowerFloorRef: true,
   view3dAllFloors: false, // 3D: true=全階積み上げ表示, false=選択階のみ
   // 日射シミュレーション（フェーズB）
   sun: { doy: 172, hour: 12, playing: false },
@@ -254,6 +255,7 @@ function refreshPanels() {
   buildProps();
   buildFloorInfo();
   syncSnapButtons();
+  syncLowerFloorRefToggle();
   syncBgPanel();
   if (ui.view === '2d') editor.draw();
   if (ui.view === '3d') viewer.rebuild();
@@ -711,6 +713,17 @@ function buildFloorInfo() {
   `;
 }
 
+function syncLowerFloorRefToggle() {
+  const row = $('#lower-floor-ref-row');
+  const el = $('#lower-floor-ref-toggle');
+  if (!row || !el) return;
+  const plan = store.current();
+  const cur = M.getFloor(plan, ui.floorId);
+  const hasLower = plan.floors.some((f) => f.level === cur.level - 1);
+  row.hidden = !hasLower;
+  el.checked = !!ui.showLowerFloorRef;
+}
+
 function syncSnapButtons() {
   const div = store.current().meta.snapDivisions || 4;
   document.querySelectorAll('#snap-group .seg-btn').forEach((b) =>
@@ -880,6 +893,11 @@ function wireEvents() {
 
   $('#dim-toggle').addEventListener('change', (e) => {
     ui.showDimensions = e.target.checked;
+    editor.draw();
+  });
+
+  $('#lower-floor-ref-toggle').addEventListener('change', (e) => {
+    ui.showLowerFloorRef = e.target.checked;
     editor.draw();
   });
 
