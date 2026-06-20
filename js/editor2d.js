@@ -87,6 +87,7 @@ export class Editor2D {
     this._bgImgCache = null;
     this._bgImgUrl = null;
     this._bgCalib = null; // { step: 1|2, p1?: {px,py}, p2?: {px,py} }
+    this._clipboard = null;
     this._bind();
     this._initContextMenu();
   }
@@ -1199,6 +1200,118 @@ export class Editor2D {
     });
     this.ui.selection = null;
     this.onUI();
+  }
+
+  /** Cmd+C: 選択中の部屋・家具・階段・建具をクリップボードへ */
+  copySelection() {
+    const sel = this.ui.selection;
+    if (!sel) return false;
+    const floor = this._floor();
+    if (sel.kind === 'room') {
+      const r = floor.rooms.find((x) => x.id === sel.id);
+      if (!r) return false;
+      this._clipboard = { kind: 'room', data: JSON.parse(JSON.stringify(r)) };
+    } else if (sel.kind === 'furniture') {
+      const f = floor.furniture.find((x) => x.id === sel.id);
+      if (!f) return false;
+      this._clipboard = { kind: 'furniture', data: JSON.parse(JSON.stringify(f)) };
+    } else if (sel.kind === 'stair') {
+      const s = (floor.stairs || []).find((x) => x.id === sel.id);
+      if (!s) return false;
+      this._clipboard = { kind: 'stair', data: JSON.parse(JSON.stringify(s)) };
+    } else if (sel.kind === 'opening') {
+      const op = (floor.openings || []).find((x) => x.id === sel.id);
+      const wall = floor.walls.find((w) => w.id === op?.wallId);
+      if (!op || !wall) return false;
+      const data = JSON.parse(JSON.stringify(op));
+      data._wallStart = { x: wall.start.x, z: wall.start.z };
+      data._wallEnd = { x: wall.end.x, z: wall.end.z };
+      this._clipboard = { kind: 'opening', data };
+    } else {
+      return false;
+    }
+    return true;
+  }
+
+  _findWallForOpeningPaste(floor, opData, dx, dz) {
+    const ws = { x: opData._wallStart.x + dx, z: opData._wallStart.z + dz };
+    const we = { x: opData._wallEnd.x + dx, z: opData._wallEnd.z + dz };
+    const targetKey = _edgeKey(ws, we);
+    for (const w of floor.walls) {
+      if (_edgeKey(w.start, w.end) === targetKey) return w;
+    }
+    const len = Math.hypot(we.x - ws.x, we.z - ws.z);
+    const mid = { x: (ws.x + we.x) / 2, z: (ws.z + we.z) / 2 };
+    let best = null;
+    let bestScore = Infinity;
+    for (const w of floor.walls) {
+      const wlen = Math.hypot(w.end.x - w.start.x, w.end.z - w.start.z);
+      if (Math.abs(wlen - len) > 30) continue;
+      const wmid = { x: (w.start.x + w.end.x) / 2, z: (w.start.z + w.end.z) / 2 };
+      const d = Math.hypot(wmid.x - mid.x, wmid.z - mid.z);
+      if (d < bestScore) { bestScore = d; best = w; }
+    }
+    return bestScore < 100 ? best : null;
+  }
+
+  /** Cmd+V: クリップボードの内容をオフセットして貼り付け */
+  pasteSelection() {
+    if (!this._clipboard) return false;
+    const { kind } = this._clipboard;
+    const data = JSON.parse(JSON.stringify(this._clipboard.data));
+    const snap = this._snapDiv();
+    const dx = M.P_MM;
+    const dz = 0;
+
+    if (kind === 'opening') {
+      const floor = this._floor();
+      if (!this._findWallForOpeningPaste(floor, data, dx, dz)) return false;
+    }
+
+    let pasted = false;
+    this.store.update((plan) => {
+      const floor = M.getFloor(plan, this.ui.floorId);
+      if (kind === 'room') {
+        data.id = M.uid('room');
+        data.polygon = M.translatePolygon(data.polygon, dx, dz);
+        floor.rooms.push(data);
+        M.rebuildFloorWalls(floor);
+        this.ui.selection = { kind: 'room', id: data.id };
+        pasted = true;
+      } else if (kind === 'furniture') {
+        data.id = M.uid('f');
+        data.x = M.snap((data.x ?? 0) + dx, snap);
+        data.z = M.snap((data.z ?? 0) + dz, snap);
+        floor.furniture.push(data);
+        this.ui.selection = { kind: 'furniture', id: data.id };
+        pasted = true;
+      } else if (kind === 'stair') {
+        data.id = M.uid('st');
+        data.x = M.snap((data.x ?? 0) + dx, snap);
+        data.z = M.snap((data.z ?? 0) + dz, snap);
+        if (!floor.stairs) floor.stairs = [];
+        floor.stairs.push(data);
+        this.ui.selection = { kind: 'stair', id: data.id };
+        pasted = true;
+      } else if (kind === 'opening') {
+        const wall = this._findWallForOpeningPaste(floor, data, dx, dz);
+        if (!wall) return;
+        data.id = M.uid('op');
+        data.wallId = wall.id;
+        delete data._wallStart;
+        delete data._wallEnd;
+        if (!floor.openings) floor.openings = [];
+        floor.openings.push(data);
+        this.ui.selection = { kind: 'opening', id: data.id };
+        pasted = true;
+      }
+    });
+
+    if (pasted) {
+      this.onUI();
+      this.draw();
+    }
+    return pasted;
   }
 
   rotateSelectedFurniture(deg) {

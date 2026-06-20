@@ -770,6 +770,37 @@ function syncSnapButtons() {
   if (dimEl) dimEl.checked = !!ui.showDimensions;
 }
 
+function reconcileSelection(sel) {
+  if (!sel) return null;
+  const floor = M.getFloor(store.current(), ui.floorId);
+  if (sel.kind === 'room') {
+    return floor.rooms.some((r) => r.id === sel.id) ? sel : null;
+  }
+  if (sel.kind === 'furniture') {
+    return floor.furniture.some((f) => f.id === sel.id) ? sel : null;
+  }
+  if (sel.kind === 'stair') {
+    return (floor.stairs || []).some((s) => s.id === sel.id) ? sel : null;
+  }
+  if (sel.kind === 'opening') {
+    return (floor.openings || []).some((o) => o.id === sel.id) ? sel : null;
+  }
+  return null;
+}
+
+function afterHistoryChange() {
+  ui.selection = reconcileSelection(ui.selection);
+  refreshPanels();
+  recomputeDaylight();
+  if (ui.view === '2d') editor.draw();
+  if (ui.view === '3d') viewer.rebuild();
+}
+
+function isEditorTypingTarget(e) {
+  const tag = e.target?.tagName || '';
+  return /^(INPUT|SELECT|TEXTAREA)$/.test(tag) || e.target?.isContentEditable;
+}
+
 function updateHint() {
   const hint = $('#hint');
   if (ui.view === '3d') {
@@ -783,7 +814,7 @@ function updateHint() {
     return;
   }
   const map = {
-    select: '選択：クリックで選択/ドラッグで移動。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。階段・ドアは緑丸で90°回転。短クリック/右クリック→操作メニュー',
+    select: '選択：クリックで選択/ドラッグで移動。⌘C/V/Z でコピー/貼付/元に戻す。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。階段・ドアは緑丸で90°回転。短クリック/右クリック→操作メニュー',
     room: 'ドラッグで部屋を矩形作成（スナップ適用）。完了後は自動で選択モードへ',
     furniture: 'クリックで家具を配置。完了後は自動で選択モードへ',
     stair: 'クリックで階段を配置。完了後は自動で選択モードへ。辺ドラッグでサイズ変更 / 緑丸ドラッグで90°回転',
@@ -967,6 +998,35 @@ function wireEvents() {
   window.addEventListener('resize', () => {
     if (screen !== 'editor' || ui.view !== '2d') return;
     editor.resize();
+  });
+
+  // 編集ショートカット（⌘/Ctrl+C V Z）
+  window.addEventListener('keydown', (e) => {
+    if (screen !== 'editor' || isEditorTypingTarget(e)) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+
+    const key = e.key.toLowerCase();
+    if (key === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (store.redo()) afterHistoryChange();
+      } else if (store.undo()) {
+        afterHistoryChange();
+      }
+      return;
+    }
+    if (key === 'y') {
+      e.preventDefault();
+      if (store.redo()) afterHistoryChange();
+      return;
+    }
+    if (ui.view !== '2d' || !editor.active) return;
+    if (key === 'c') {
+      if (editor.copySelection()) e.preventDefault();
+    } else if (key === 'v') {
+      if (editor.pasteSelection()) e.preventDefault();
+    }
   });
 }
 

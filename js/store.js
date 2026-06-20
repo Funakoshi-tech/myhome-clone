@@ -5,6 +5,7 @@
 import { createEmptyPlan, normalizePlan, uid } from './model.js';
 
 const LS_KEY = 'myhome-clone:v1';
+const UNDO_LIMIT = 50;
 
 // LocalStorage に保存する全体構造:
 // { plans: { [id]: plan }, order: [id,...], currentId }
@@ -26,6 +27,9 @@ export class Store {
     this.plans = {};   // id -> plan
     this.order = [];   // 表示順
     this.currentId = null;
+    this._undo = {};   // planId -> string[]
+    this._redo = {};   // planId -> string[]
+    this._applyingHistory = false;
     this._init();
   }
 
@@ -73,8 +77,68 @@ export class Store {
     if (plan?.meta) plan.meta.updatedAt = Date.now();
   }
 
+  _pushUndoSnapshot() {
+    const id = this.currentId;
+    const plan = this.current();
+    if (!id || !plan) return;
+    if (!this._undo[id]) this._undo[id] = [];
+    if (!this._redo[id]) this._redo[id] = [];
+    this._undo[id].push(JSON.stringify(plan));
+    if (this._undo[id].length > UNDO_LIMIT) this._undo[id].shift();
+    this._redo[id] = [];
+  }
+
+  _applyPlanSnapshot(json) {
+    const id = this.currentId;
+    if (!id || !json) return false;
+    this.plans[id] = normalizePlan(JSON.parse(json));
+    this._persist();
+    this.notify();
+    return true;
+  }
+
+  canUndo() {
+    return (this._undo[this.currentId]?.length || 0) > 0;
+  }
+
+  canRedo() {
+    return (this._redo[this.currentId]?.length || 0) > 0;
+  }
+
+  undo() {
+    const id = this.currentId;
+    const stack = this._undo[id];
+    if (!stack?.length) return false;
+    const cur = this.plans[id];
+    if (cur) {
+      if (!this._redo[id]) this._redo[id] = [];
+      this._redo[id].push(JSON.stringify(cur));
+    }
+    this._applyingHistory = true;
+    const ok = this._applyPlanSnapshot(stack.pop());
+    this._applyingHistory = false;
+    return ok;
+  }
+
+  redo() {
+    const id = this.currentId;
+    const stack = this._redo[id];
+    if (!stack?.length) return false;
+    const cur = this.plans[id];
+    if (cur) {
+      if (!this._undo[id]) this._undo[id] = [];
+      this._undo[id].push(JSON.stringify(cur));
+    }
+    this._applyingHistory = true;
+    const ok = this._applyPlanSnapshot(stack.pop());
+    this._applyingHistory = false;
+    return ok;
+  }
+
   // 変更を加えて保存＋通知（mutator は current plan を受け取る）
-  update(mutator) {
+  update(mutator, opts = {}) {
+    const { skipHistory = false } = opts;
+    if (!skipHistory && !this._applyingHistory) this._pushUndoSnapshot();
     const plan = this.current();
     if (plan) {
       mutator(plan);
