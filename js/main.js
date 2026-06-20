@@ -66,6 +66,17 @@ function openPlanEditor(id) {
   $('#editor-screen')?.removeAttribute('hidden');
   syncEditorPlanName();
   afterPlanChange();
+  scheduleEditorLayout();
+}
+
+/** 編集画面表示後にレイアウト確定してから 2D/3D を有効化（非表示中の resize 回避） */
+function scheduleEditorLayout() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      setView(ui.view);
+      if (ui.view === '2d') editor.zoomFit();
+    });
+  });
 }
 
 function returnToPlanList() {
@@ -952,8 +963,11 @@ function wireEvents() {
     e.target.value = '';
   });
 
-  // リサイズ
-  window.addEventListener('resize', () => { if (ui.view === '2d') editor.resize(); });
+  // リサイズ（編集画面が非表示のときはスキップ — 0px で上書きされるのを防ぐ）
+  window.addEventListener('resize', () => {
+    if (screen !== 'editor' || ui.view !== '2d') return;
+    editor.resize();
+  });
 }
 
 function afterPlanChange() {
@@ -966,7 +980,6 @@ function afterPlanChange() {
   refreshPanels();
   syncSunPanel();
   recomputeDaylight();
-  if (ui.view === '2d') editor.zoomFit();
 }
 
 // ---- store 購読: データ変更時に各所を更新 ----------------------------------

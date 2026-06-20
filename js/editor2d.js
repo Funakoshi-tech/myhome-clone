@@ -342,9 +342,10 @@ export class Editor2D {
 
   resize() {
     const r = this.canvas.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return;
     this.dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
-    this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
+    this.canvas.width = Math.round(r.width * this.dpr);
+    this.canvas.height = Math.round(r.height * this.dpr);
     this.cssW = r.width;
     this.cssH = r.height;
     if (this.active) this.draw();
