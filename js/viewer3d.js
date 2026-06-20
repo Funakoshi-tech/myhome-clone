@@ -743,58 +743,251 @@ export class Viewer3D {
   }
 
   // 階段の3D表示（1階分の高さまで上階へ突き抜け）
+  _addWallPanel(group, cx, cy, cz, w, h, d, mat) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cx, cy, cz);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+
+  _addStairTread(group, x, y, z, w, d, mat, treadThick = 0.04) {
+    const geo = new THREE.BoxGeometry(w, treadThick, d);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+
+  _addStairRiser(group, x, y, z, w, h, d, mat) {
+    if (h < 0.008) return;
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    group.add(mesh);
+  }
+
+  _buildStraightStair3D(group, w, d, h, mat, riserMat) {
+    const nSteps = Math.max(4, Math.min(16, Math.round(d / 0.23)));
+    const stepH = h / nSteps;
+    const stepD = d / nSteps;
+    const treadThick = 0.04;
+    const treadW = w * 0.96;
+
+    for (let i = 0; i < nSteps; i++) {
+      const y = stepH * (i + 1) - treadThick / 2;
+      const z = d / 2 - stepD * (i + 0.5);
+      this._addStairTread(group, 0, y, z, treadW, stepD * 0.92, mat, treadThick);
+      if (i > 0) {
+        const ry = stepH * i + stepH / 2;
+        const rz = d / 2 - stepD * i;
+        this._addStairRiser(group, 0, ry, rz, treadW, stepH, 0.012, riserMat);
+      }
+    }
+    // 上階床面と同じ高さの最上段
+    this._addStairTread(group, 0, h - treadThick / 2, -d / 2 + stepD * 0.46, treadW, stepD * 0.88, mat, treadThick);
+  }
+
+  _buildLStair3D(group, w, d, h, mat, riserMat) {
+    const nSteps = Math.max(6, Math.min(16, Math.round((d + w) / 0.28)));
+    const nV = Math.max(3, Math.round(nSteps * 0.6));
+    const nH = Math.max(2, nSteps - nV);
+    const stepH = h / nSteps;
+    const treadThick = 0.04;
+    const runW = w * 0.48;
+    const run1D = d * 0.5;
+    const stepD1 = run1D / nV;
+    const stepW2 = w / nH;
+
+    for (let i = 0; i < nV; i++) {
+      const y = stepH * (i + 1) - treadThick / 2;
+      const z = d / 2 - stepD1 * (i + 0.5);
+      this._addStairTread(group, -w / 4, y, z, runW, stepD1 * 0.92, mat, treadThick);
+    }
+
+    const landY = stepH * nV - treadThick / 2;
+    this._addStairTread(group, -w / 4, landY, 0, runW, runW * 0.95, mat, treadThick);
+
+    for (let i = 0; i < nH; i++) {
+      const stepIdx = nV + i + 1;
+      const y = stepH * stepIdx - treadThick / 2;
+      const x = -stepW2 * (i + 0.5);
+      this._addStairTread(group, x, y, 0, stepW2 * 0.92, runW * 0.92, mat, treadThick);
+    }
+    // 上階接続の最上段（出口側）
+    this._addStairTread(group, -w / 2 + stepW2 * 0.46, h - treadThick / 2, 0, stepW2 * 0.88, runW * 0.88, mat, treadThick);
+  }
+
+  _buildUStair3D(group, w, d, h, mat, riserMat) {
+    const nSteps = Math.max(6, Math.min(18, Math.round(d * 2 / 0.23)));
+    const nHalf = Math.max(3, Math.round(nSteps / 2));
+    const stepH = h / nSteps;
+    const treadThick = 0.04;
+    const runW = w * 0.46;
+    const landZ = -d * 0.325;
+    const runDepth = (d / 2 - landZ) / nHalf;
+
+    for (let i = 0; i < nHalf; i++) {
+      const y = stepH * (i + 1) - treadThick / 2;
+      const z = d / 2 - runDepth * (i + 0.5);
+      this._addStairTread(group, -w / 4, y, z, runW, runDepth * 0.92, mat, treadThick);
+    }
+
+    const landY = stepH * nHalf - treadThick / 2;
+    this._addStairTread(group, 0, landY, landZ, w * 0.92, w * 0.35, mat, treadThick);
+
+    for (let i = 0; i < nHalf; i++) {
+      const stepIdx = nHalf + i + 1;
+      const y = stepH * stepIdx - treadThick / 2;
+      const z = landZ + runDepth * (i + 0.5);
+      this._addStairTread(group, w / 4, y, z, runW, runDepth * 0.92, mat, treadThick);
+    }
+    this._addStairTread(group, w / 4, h - treadThick / 2, -d / 2 + runDepth * 0.46, runW, runDepth * 0.88, mat, treadThick);
+  }
+
+  _buildWindingStair3D(group, w, d, h, mat) {
+    const nSteps = Math.max(8, Math.min(14, Math.round((w + d) / 0.25)));
+    const stepH = h / nSteps;
+    const treadThick = 0.04;
+    const fanX = -w / 2;
+    const fanZ = d / 2;
+    const fanR = Math.min(w * 0.75, d * 0.55);
+    const nFan = Math.max(4, Math.round(nSteps * 0.55));
+
+    for (let i = 0; i < nFan; i++) {
+      const ang = (Math.PI * 0.07) + (Math.PI * 0.43 * (i + 0.5)) / nFan;
+      const y = stepH * (i + 1) - treadThick / 2;
+      const cx = fanX + fanR * 0.7 * Math.cos(ang);
+      const cz = fanZ - fanR * 0.7 * Math.sin(ang);
+      const tw = fanR * 0.28;
+      const td = fanR * 0.22;
+      this._addStairTread(group, cx, y, cz, tw, td, mat, treadThick);
+    }
+
+    const nStraight = nSteps - nFan;
+    const stepD = (d * 0.45) / Math.max(1, nStraight);
+    for (let i = 0; i < nStraight; i++) {
+      const stepIdx = nFan + i + 1;
+      const y = stepH * stepIdx - treadThick / 2;
+      const z = d / 2 - stepD * (i + 0.5);
+      this._addStairTread(group, w * 0.15, y, z, w * 0.7, stepD * 0.92, mat, treadThick);
+    }
+    this._addStairTread(group, w * 0.15, h - treadThick / 2, -d / 2 + stepD * 0.46, w * 0.7, stepD * 0.88, mat, treadThick);
+  }
+
+  _buildSpiralStair3D(group, w, d, h, mat) {
+    const r = Math.min(w, d) * 0.42;
+    const nSteps = Math.max(8, Math.min(16, Math.round(h / 0.18)));
+    const stepH = h / nSteps;
+    const treadThick = 0.04;
+    const treadLen = r * 0.78;
+
+    for (let i = 0; i < nSteps; i++) {
+      const ang = (Math.PI * 2 * i) / nSteps;
+      const y = stepH * (i + 1) - treadThick / 2;
+      const cx = Math.cos(ang) * r * 0.55;
+      const cz = Math.sin(ang) * r * 0.55;
+      const geo = new THREE.BoxGeometry(treadLen, treadThick, r * 0.32);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(cx, y, cz);
+      mesh.rotation.y = -ang;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xb8956a, roughness: 0.85 });
+    const postGeo = new THREE.CylinderGeometry(r * 0.12, r * 0.12, h * 0.98, 12);
+    const post = new THREE.Mesh(postGeo, postMat);
+    post.position.set(0, h / 2, 0);
+    post.castShadow = true;
+    group.add(post);
+  }
+
+  /** 登り口・降り口以外を壁で囲む */
+  _addStairEnclosureWalls(group, w, d, h, stairType, wallMat) {
+    const t = 0.12;
+    const wh = h;
+
+    if (stairType === 'straight') {
+      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, 0, t, wh, d, wallMat);
+      this._addWallPanel(group, w / 2 + t / 2, wh / 2, 0, t, wh, d, wallMat);
+      return;
+    }
+
+    if (stairType === 'l_shape') {
+      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, 0, t, wh, d, wallMat);
+      this._addWallPanel(group, w / 2 + t / 2, wh / 2, d / 4, t, wh, d / 2, wallMat);
+      this._addWallPanel(group, -w / 4, wh / 2, d / 2 + t / 2, w / 2, wh, t, wallMat);
+      this._addWallPanel(group, -w / 4, wh / 2, -d / 2 - t / 2, w / 2, wh, t, wallMat);
+      return;
+    }
+
+    if (stairType === 'u_shape') {
+      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, 0, t, wh, d, wallMat);
+      this._addWallPanel(group, w / 2 + t / 2, wh / 2, 0, t, wh, d, wallMat);
+      this._addWallPanel(group, 0, wh / 2, -d / 2 - t / 2, w, wh, t, wallMat);
+      return;
+    }
+
+    if (stairType === 'winding') {
+      this._addWallPanel(group, w / 2 + t / 2, wh / 2, 0, t, wh, d, wallMat);
+      this._addWallPanel(group, -w / 4, wh / 2, d / 2 + t / 2, w * 0.75, wh, t, wallMat);
+      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, -d / 4, t, wh, d * 0.75, wallMat);
+      return;
+    }
+
+    // spiral: 外周を円弧近似（4分割）
+    const r = Math.min(w, d) * 0.48;
+    for (const [cx, cz] of [[-r / 2, 0], [r / 2, 0], [0, -r / 2]]) {
+      this._addWallPanel(group, cx, wh / 2, cz, t, wh, r * 0.55, wallMat);
+    }
+  }
+
   _buildStair(stair, riseMM, sourceFloor, upperFloor) {
     const w = stair.widthMM * MM;
     const d = stair.depthMM * MM;
     const h = riseMM * MM;
     const rot = -(stair.rotationDeg || 0) * Math.PI / 180;
+    const stairType = stair.type || 'straight';
 
     const group = new THREE.Group();
     group.position.set(stair.x * MM, 0, stair.z * MM);
     group.rotation.y = rot;
     group.userData = { kind: 'stair', floorId: sourceFloor?.id || null };
 
-    const nSteps = Math.max(4, Math.min(14, Math.round(stair.depthMM / 230)));
-    const stepH = h / nSteps;
-    const stepD = d / nSteps;
-
     const mat = new THREE.MeshStandardMaterial({
-      color: 0xd4b896, roughness: 0.88, metalness: 0.0,
+      color: 0xd4b896, roughness: 0.82, metalness: 0.0,
+    });
+    const riserMat = new THREE.MeshStandardMaterial({
+      color: 0xc9ad88, roughness: 0.88, metalness: 0.0,
+    });
+    const wallMat = this._materials?.wall || new THREE.MeshStandardMaterial({
+      color: 0xd8dce2, roughness: 0.92, metalness: 0.0,
     });
 
-    if (stair.type === 'straight') {
-      for (let i = 0; i < nSteps; i++) {
-        const geo = new THREE.BoxGeometry(w, stepH * (i + 1), stepD);
-        const step = new THREE.Mesh(geo, mat);
-        step.position.set(0, stepH * (i + 1) / 2, -d / 2 + stepD * (i + 0.5));
-        step.castShadow = true;
-        step.receiveShadow = true;
-        group.add(step);
-      }
-    } else {
-      const geo = new THREE.BoxGeometry(w, h * 0.85, d);
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(0, h * 0.425, 0);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
+    switch (stairType) {
+      case 'l_shape':
+        this._buildLStair3D(group, w, d, h, mat, riserMat);
+        break;
+      case 'u_shape':
+        this._buildUStair3D(group, w, d, h, mat, riserMat);
+        break;
+      case 'winding':
+        this._buildWindingStair3D(group, w, d, h, mat);
+        break;
+      case 'spiral':
+        this._buildSpiralStair3D(group, w, d, h, mat);
+        break;
+      default:
+        this._buildStraightStair3D(group, w, d, h, mat, riserMat);
+        break;
     }
 
-    // 上階がある場合、踊り場側の縦板で上階床までつなぐ
-    if (upperFloor) {
-      const railMat = new THREE.MeshStandardMaterial({
-        color: 0xc4a880, roughness: 0.9, metalness: 0.0,
-      });
-      const sideT = Math.min(0.04, w * 0.08);
-      for (const sx of [-1, 1]) {
-        const geo = new THREE.BoxGeometry(sideT, h, sideT);
-        const rail = new THREE.Mesh(geo, railMat);
-        rail.position.set(sx * (w / 2 - sideT / 2), h / 2, d / 2 - sideT / 2);
-        rail.castShadow = true;
-        group.add(rail);
-      }
-    }
-
+    this._addStairEnclosureWalls(group, w, d, h, stairType, wallMat);
     return group;
   }
 

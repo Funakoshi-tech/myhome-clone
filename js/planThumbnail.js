@@ -2,6 +2,7 @@
 
 import * as M from './model.js';
 import { getRoomType } from './catalog.js';
+import { drawStair2d } from './stairDraw2d.js';
 
 function hexA(hex, a) {
   const h = hex.replace('#', '');
@@ -23,12 +24,21 @@ function expandBounds(bounds, pt) {
   };
 }
 
+function appendStairBounds(bounds, floor) {
+  let b = bounds;
+  for (const s of floor.stairs || []) {
+    for (const c of M.stairFootprintCorners(s)) b = expandBounds(b, c);
+  }
+  return b;
+}
+
 function planBounds(plan) {
   let b = null;
   for (const floor of plan.floors) {
     for (const room of floor.rooms) {
       for (const p of room.polygon) b = expandBounds(b, p);
     }
+    b = appendStairBounds(b, floor);
   }
   return b;
 }
@@ -38,7 +48,7 @@ function floorBounds(floor) {
   for (const room of floor.rooms) {
     for (const p of room.polygon) b = expandBounds(b, p);
   }
-  return b;
+  return appendStairBounds(b, floor);
 }
 
 function pickPreviewFloor(plan) {
@@ -49,8 +59,16 @@ function pickPreviewFloor(plan) {
   return plan.floors[0] || M.getFloor(plan, '1F');
 }
 
-function drawFloorContent(ctx, floor, toScreen, opts = {}) {
-  const { showLabels = true, labelPrefix = '' } = opts;
+function drawFloorContent(ctx, floor, toScreen, scale, opts = {}) {
+  const { showLabels = true, labelPrefix = '', plan = null } = opts;
+
+  const lower = plan ? M.getLowerFloor(plan, floor.id) : null;
+  if (lower) {
+    for (const s of lower.stairs || []) {
+      const sc = toScreen(s.x, s.z);
+      drawStair2d(ctx, s, sc.x, sc.y, scale, { fromLowerFloor: lower.id, showLabel: false });
+    }
+  }
 
   for (const room of floor.rooms) {
     const color = getRoomType(room.type).color;
@@ -78,6 +96,11 @@ function drawFloorContent(ctx, floor, toScreen, opts = {}) {
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
+  }
+
+  for (const s of floor.stairs || []) {
+    const sc = toScreen(s.x, s.z);
+    drawStair2d(ctx, s, sc.x, sc.y, scale, { showLabel: false });
   }
 
   if (!showLabels) return;
@@ -119,7 +142,8 @@ export function renderPlanThumbnail(plan, canvas, opts = {}) {
   const floor = floorId ? M.getFloor(plan, floorId) : pickPreviewFloor(plan);
   const bounds = floorId ? floorBounds(floor) : planBounds(plan);
 
-  if (!bounds || !floor.rooms.length) {
+  const hasContent = floor.rooms.length || (floor.stairs || []).length;
+  if (!bounds || !hasContent) {
     ctx.fillStyle = '#9aa3b0';
     ctx.font = '500 13px system-ui, sans-serif';
     ctx.textAlign = 'center';
@@ -142,7 +166,7 @@ export function renderPlanThumbnail(plan, canvas, opts = {}) {
     y: z * scale + panY,
   });
 
-  drawFloorContent(ctx, floor, toScreen);
+  drawFloorContent(ctx, floor, toScreen, scale, { plan, showLabels: !floorId });
 }
 
 /** 1F / 2F / 3F の各 canvas に間取りを描画 */

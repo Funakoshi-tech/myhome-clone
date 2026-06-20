@@ -66,7 +66,19 @@ export function tsuboCount(areaM2) {
   return areaM2 / TSUBO_M2;
 }
 
-/** 全フロアの部屋面積合計（延床面積） */
+/** 階段フットプリント面積（m²） */
+export function stairFootprintAreaM2(stair) {
+  return mm2ToM2((stair.widthMM || 0) * (stair.depthMM || 0));
+}
+
+/** 階段中心が部屋ポリゴン内にあるか */
+export function stairInsideRoom(stair, floor) {
+  return (floor.rooms || []).some(
+    (room) => room.polygon && pointInPolygon({ x: stair.x, z: stair.z }, room.polygon),
+  );
+}
+
+/** 全フロアの部屋面積合計（延床面積）。部屋に含まれない独立階段のフットプリントも加算。 */
 export function planTotalAreaM2(plan, opts = {}) {
   const excludeGarage = opts.excludeGarage === true;
   let total = 0;
@@ -74,6 +86,11 @@ export function planTotalAreaM2(plan, opts = {}) {
     for (const room of floor.rooms) {
       if (excludeGarage && room.type === 'garage') continue;
       total += polygonAreaM2(room.polygon);
+    }
+    for (const stair of floor.stairs || []) {
+      if (!stairInsideRoom(stair, floor)) {
+        total += stairFootprintAreaM2(stair);
+      }
     }
   }
   return total;
