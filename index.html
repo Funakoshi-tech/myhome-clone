@@ -24,11 +24,46 @@
   </script>
 </head>
 <body>
+  <!-- ===== プラン一覧 ===== -->
+  <div id="plan-list-screen">
+    <header class="plan-list-header">
+      <div class="plan-list-brand" id="plan-list-brand">
+        <span class="logo">🏠</span>
+        <span class="title">My Home Clone</span>
+      </div>
+    </header>
+    <main class="plan-list-main">
+      <div class="plan-list-title-row">
+        <h1>マイプラン一覧</h1>
+        <button id="plan-list-new" class="btn btn-primary" type="button">+ プラン新規作成</button>
+      </div>
+      <div class="plan-list-toolbar">
+        <span id="plan-list-count" class="plan-list-count">全 0 件</span>
+        <div class="plan-list-toolbar-right">
+          <label class="plan-list-search-wrap">
+            <span class="plan-list-search-icon" aria-hidden="true">🔍</span>
+            <input id="plan-list-search" type="search" placeholder="プラン名で検索" autocomplete="off" />
+          </label>
+          <select id="plan-list-sort" class="plan-list-sort" title="並び替え">
+            <option value="updated-desc">更新日（新しい順）</option>
+            <option value="updated-asc">更新日（古い順）</option>
+            <option value="name-asc">名前（昇順）</option>
+            <option value="name-desc">名前（降順）</option>
+          </select>
+        </div>
+      </div>
+      <div id="plan-list-grid" class="plan-list-grid"></div>
+    </main>
+  </div>
+
+  <!-- ===== 編集画面 ===== -->
+  <div id="editor-screen" hidden>
   <!-- ===== 上部バー ===== -->
   <header id="topbar">
+    <button id="back-to-list" class="btn" type="button" title="プラン一覧に戻る">← プラン一覧</button>
     <div class="brand">
       <span class="logo">🏠</span>
-      <span class="title">My Home Clone</span>
+      <span id="editor-plan-name" class="title editor-plan-name"></span>
     </div>
 
     <!-- 2D / 3D 切替 -->
@@ -47,15 +82,6 @@
     <button id="view3d-all-floors" class="btn" type="button" hidden title="全フロアを積み上げて表示">全階表示</button>
 
     <div class="spacer"></div>
-
-    <!-- プラン管理 -->
-    <div class="plan-bar">
-      <select id="plan-select" title="プラン選択"></select>
-      <button id="plan-new" class="btn" title="新規プラン">新規</button>
-      <button id="plan-dup" class="btn" title="プランを複製">複製</button>
-      <button id="plan-del" class="btn danger" title="プランを削除">削除</button>
-      <button id="plan-rename" class="btn" title="名前変更">名前</button>
-    </div>
 
     <!-- JSON入出力 -->
     <div class="io-bar">
@@ -249,6 +275,7 @@
       </div>
     </section>
   </main>
+  </div><!-- /#editor-screen -->
 
   <!-- 敷地写真：実寸入力 -->
   <div id="bg-scale-modal" class="modal" hidden>

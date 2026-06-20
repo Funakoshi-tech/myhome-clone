@@ -69,10 +69,17 @@ export class Store {
     }
   }
 
+  _touchUpdated(plan) {
+    if (plan?.meta) plan.meta.updatedAt = Date.now();
+  }
+
   // 変更を加えて保存＋通知（mutator は current plan を受け取る）
   update(mutator) {
     const plan = this.current();
-    if (plan) mutator(plan);
+    if (plan) {
+      mutator(plan);
+      this._touchUpdated(plan);
+    }
     this._persist();
     this.notify();
   }
@@ -115,6 +122,7 @@ export class Store {
     if (!src) return null;
     const copy = JSON.parse(JSON.stringify(src));
     copy.meta.name = `${src.meta.name} のコピー`;
+    this._touchUpdated(copy);
     const newId = uid('plan');
     this.plans[newId] = copy;
     const idx = this.order.indexOf(id);
@@ -146,9 +154,26 @@ export class Store {
   renamePlan(name, id = this.currentId) {
     if (this.plans[id]) {
       this.plans[id].meta.name = name;
+      this._touchUpdated(this.plans[id]);
       this._persist();
       this.notify();
     }
+  }
+
+  /** 一覧から複製（編集中プランを切り替えない） */
+  duplicatePlanAt(id) {
+    const src = this.plans[id];
+    if (!src) return null;
+    const copy = JSON.parse(JSON.stringify(src));
+    copy.meta.name = `${src.meta.name} のコピー`;
+    this._touchUpdated(copy);
+    const newId = uid('plan');
+    this.plans[newId] = copy;
+    const idx = this.order.indexOf(id);
+    this.order.splice(idx + 1, 0, newId);
+    this._persist();
+    this.notify();
+    return newId;
   }
 
   // ---- JSON 入出力 ----------------------------------------------------------

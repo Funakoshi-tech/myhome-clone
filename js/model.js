@@ -59,6 +59,70 @@ export function formatAreaLabel(areaM2, tatamiM2 = 1.62) {
   return `${jo}畳（${m2}㎡）`;
 }
 
+// 1坪 = 3.305785… m²（日本の法制）
+export const TSUBO_M2 = 3.30578578298473;
+
+export function tsuboCount(areaM2) {
+  return areaM2 / TSUBO_M2;
+}
+
+/** 全フロアの部屋面積合計（延床面積） */
+export function planTotalAreaM2(plan) {
+  let total = 0;
+  for (const floor of plan.floors) {
+    for (const room of floor.rooms) {
+      total += polygonAreaM2(room.polygon);
+    }
+  }
+  return total;
+}
+
+/** プラン一覧用の ㎡ / 畳 / 坪 表示 */
+export function formatTotalAreaTriple(areaM2, tatamiM2 = 1.62) {
+  return {
+    m2: areaM2.toFixed(2),
+    jo: tatamiCount(areaM2, tatamiM2).toFixed(1),
+    tsubo: tsuboCount(areaM2).toFixed(2),
+  };
+}
+
+/** プラン一覧カード用の統計 */
+export function planStats(plan) {
+  const tatami = plan.meta.tatamiM2 || 1.62;
+  const areaM2 = planTotalAreaM2(plan);
+  let roomCount = 0;
+  let floorsWithRooms = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const floor of plan.floors) {
+    if (floor.rooms.length) floorsWithRooms += 1;
+    roomCount += floor.rooms.length;
+    for (const room of floor.rooms) {
+      for (const p of room.polygon) {
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minZ = Math.min(minZ, p.z);
+        maxZ = Math.max(maxZ, p.z);
+      }
+    }
+  }
+  const hasBounds = Number.isFinite(minX);
+  const widthM = hasBounds ? (maxX - minX) / 1000 : 0;
+  const depthM = hasBounds ? (maxZ - minZ) / 1000 : 0;
+  const floorCount = floorsWithRooms || plan.floors.length;
+  return {
+    areaM2,
+    tatami,
+    roomCount,
+    floorCount,
+    widthM,
+    depthM,
+    areas: formatTotalAreaTriple(areaM2, tatami),
+  };
+}
+
 // ---- 幾何 -------------------------------------------------------------------
 // 矩形ポリゴン（時計回り）を 2点から作る。
 export function rectPolygon(x1, z1, x2, z2) {
@@ -190,6 +254,7 @@ export function defaultFloor(id, level) {
 }
 
 export function createEmptyPlan(name = '新しいプラン') {
+  const now = Date.now();
   return {
     meta: {
       name,
@@ -197,6 +262,8 @@ export function createEmptyPlan(name = '新しいプラン') {
       unitMM: 910,
       snapDivisions: 4,
       tatamiM2: 1.62,
+      createdAt: now,
+      updatedAt: now,
       // 日射計算用の緯度経度（既定: 板橋区赤塚）。将来変更可能。
       lat: 35.775,
       lng: 139.679,
@@ -241,6 +308,8 @@ export function normalizePlan(plan) {
     floors: Array.isArray(plan.floors) && plan.floors.length ? plan.floors : base.floors,
     exterior: Array.isArray(plan.exterior) ? plan.exterior : [],
   };
+  if (!out.meta.createdAt) out.meta.createdAt = Date.now();
+  if (!out.meta.updatedAt) out.meta.updatedAt = out.meta.createdAt;
   out.floors = out.floors.map((f) => ({
     id: f.id,
     level: f.level ?? 0,

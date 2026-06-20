@@ -7,6 +7,7 @@ import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTE
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
+import { PlanList } from './planList.js';
 
 // ---- 共有 UI 状態（永続化しない一時状態） ----------------------------------
 const ui = {
@@ -38,6 +39,38 @@ const viewer3dEl = $('#viewer3d');
 
 const editor = new Editor2D(canvas, store, ui, refreshPanels);
 const viewer = new Viewer3D(viewer3dEl, store, ui);
+
+let planList = null;
+let screen = 'list'; // 'list' | 'editor'
+
+// ---- 画面切替 ---------------------------------------------------------------
+function syncEditorPlanName() {
+  const el = $('#editor-plan-name');
+  if (el) el.textContent = store.current()?.meta?.name || '無題';
+}
+
+function showPlanList() {
+  screen = 'list';
+  stopSunAnimation();
+  editor.setActive(false);
+  viewer.setActive(false);
+  $('#editor-screen')?.setAttribute('hidden', '');
+  planList?.show();
+}
+
+function openPlanEditor(id) {
+  if (id && store.plans[id]) store.select(id);
+  screen = 'editor';
+  planList?.hide();
+  $('#editor-screen')?.removeAttribute('hidden');
+  syncEditorPlanName();
+  afterPlanChange();
+}
+
+function returnToPlanList() {
+  store.save();
+  showPlanList();
+}
 
 // ---- ビュー切替 -------------------------------------------------------------
 function setView(view) {
@@ -235,22 +268,9 @@ function wireCollapsiblePanes() {
   });
 }
 
-// ---- プラン選択 -------------------------------------------------------------
-function buildPlanSelect() {
-  const sel = $('#plan-select');
-  sel.innerHTML = '';
-  for (const p of store.list()) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.name;
-    if (p.id === store.currentId) opt.selected = true;
-    sel.appendChild(opt);
-  }
-}
-
 // ---- プロパティ & 情報 ------------------------------------------------------
 function refreshPanels() {
-  buildPlanSelect();
+  syncEditorPlanName();
   markChips();
   buildProps();
   buildFloorInfo();
@@ -906,21 +926,7 @@ function wireEvents() {
     else viewer.resetView();
   });
 
-  // プラン操作
-  $('#plan-select').addEventListener('change', (e) => store.select(e.target.value));
-  $('#plan-new').addEventListener('click', () => {
-    const name = prompt('新しいプラン名', `マイプラン${store.order.length + 1}`);
-    if (name !== null) { store.newPlan(name || '無題'); afterPlanChange(); }
-  });
-  $('#plan-dup').addEventListener('click', () => { store.duplicatePlan(); afterPlanChange(); });
-  $('#plan-del').addEventListener('click', () => {
-    if (confirm('現在のプランを削除しますか？')) { store.deletePlan(); afterPlanChange(); }
-  });
-  $('#plan-rename').addEventListener('click', () => {
-    const cur = store.current();
-    const name = prompt('プラン名を変更', cur.meta.name);
-    if (name) store.renamePlan(name);
-  });
+  $('#back-to-list').addEventListener('click', () => returnToPlanList());
 
   // JSON 入出力
   $('#json-export').addEventListener('click', () => store.exportCurrentJSON());
@@ -932,7 +938,7 @@ function wireEvents() {
       const text = await file.text();
       const obj = JSON.parse(text);
       store.importJSON(obj);
-      afterPlanChange();
+      openPlanEditor(store.currentId);
     } catch (err) {
       alert('JSON の読み込みに失敗しました: ' + err.message);
     }
@@ -958,9 +964,11 @@ function afterPlanChange() {
 
 // ---- store 購読: データ変更時に各所を更新 ----------------------------------
 store.subscribe(() => {
-  refreshPanels();
-  recomputeDaylight();
-  if (ui.view === '3d') updateSunInfo();
+  if (screen === 'editor') {
+    refreshPanels();
+    recomputeDaylight();
+    if (ui.view === '3d') updateSunInfo();
+  }
 });
 
 // ---- 起動 -------------------------------------------------------------------
@@ -973,21 +981,19 @@ function boot() {
   buildExteriorChips();
   wireCollapsiblePanes();
   buildSunStatics();
-  buildPlanSelect();
   wireEvents();
   wireSunPanel();
   wireBgPanel();
 
+  planList = new PlanList(store, {
+    onOpen: (id) => openPlanEditor(id),
+  });
+
   setTool('select');
   setFloor('1F');
   setView('2d');
-  refreshPanels();
-  syncSunPanel();
-  recomputeDaylight();
   markChips();
-  editor.resize();
-  editor.zoomFit();
-  updateHint();
+  showPlanList();
 }
 
 boot();
