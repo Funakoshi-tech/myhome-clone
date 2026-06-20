@@ -150,13 +150,41 @@ body.plan-list-mode { overflow: auto; }
   gap: 8px;
   padding: 12px 14px 8px;
 }
+.plan-card-drag-handle {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: grab;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: -2px;
+  color: var(--text-dim);
+  padding: 0;
+}
+.plan-card-drag-handle:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+.plan-card-drag-handle:disabled { opacity: 0.35; cursor: not-allowed; }
+.plan-card-drag-handle:active:not(:disabled) { cursor: grabbing; }
 .plan-card-title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 15px;
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.plan-card-dragging {
+  opacity: 0.88;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  z-index: 5;
+  position: relative;
+}
+.plan-card-drop-before {
+  box-shadow: inset 0 3px 0 var(--accent);
 }
 .plan-card-menu-btn {
   flex-shrink: 0;

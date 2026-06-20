@@ -160,6 +160,15 @@ export class Store {
     }
   }
 
+  /** プラン一覧の表示順を更新（id の配列） */
+  setOrder(ids) {
+    const valid = ids.filter((id) => this.plans[id]);
+    const rest = this.order.filter((id) => !valid.includes(id));
+    this.order = [...valid, ...rest];
+    this._persist();
+    this.notify();
+  }
+
   /** 一覧から複製（編集中プランを切り替えない） */
   duplicatePlanAt(id) {
     const src = this.plans[id];

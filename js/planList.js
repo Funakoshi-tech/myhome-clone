@@ -34,7 +34,8 @@ export class PlanList {
     this.store = store;
     this.onOpen = callbacks.onOpen;
     this.searchQuery = '';
-    this.sortKey = 'updated-desc';
+    this.sortKey = 'order-manual';
+    this._drag = null;
 
     this.root = document.getElementById('plan-list-screen');
     this.grid = document.getElementById('plan-list-grid');
@@ -45,7 +46,11 @@ export class PlanList {
     this.expandedFloorIds = new Set();
 
     this._wire();
-    this.store.subscribe(() => this.render());
+    this._wireDrag();
+    this.store.subscribe(() => {
+      if (this._drag) return;
+      this.render();
+    });
   }
 
   _wire() {
@@ -77,6 +82,8 @@ export class PlanList {
     const filtered = q
       ? ids.filter((id) => (this.store.plans[id]?.meta?.name || '').toLowerCase().includes(q))
       : ids;
+
+    if (this.sortKey === 'order-manual') return filtered;
 
     filtered.sort((a, b) => {
       const pa = this.store.plans[a];
@@ -164,6 +171,18 @@ export class PlanList {
 
     const head = document.createElement('div');
     head.className = 'plan-card-head';
+
+    const dragHandle = document.createElement('button');
+    dragHandle.type = 'button';
+    dragHandle.className = 'plan-card-drag-handle';
+    dragHandle.title = this._canReorder()
+      ? 'ドラッグで並び替え'
+      : '並び順（ドラッグ）表示時のみ並び替え可能';
+    dragHandle.textContent = '⋮⋮';
+    dragHandle.disabled = !this._canReorder();
+    dragHandle.addEventListener('pointerdown', (e) => this._onDragStart(e, card, id));
+    head.appendChild(dragHandle);
+
     const title = document.createElement('h3');
     title.className = 'plan-card-title';
     title.textContent = plan.meta.name || '無題';
@@ -291,6 +310,67 @@ export class PlanList {
       c.classList.remove('menu-open');
       if (c._actions) c._actions.hidden = true;
     });
+  }
+
+  _canReorder() {
+    return this.sortKey === 'order-manual' && !this.searchQuery;
+  }
+
+  _wireDrag() {
+    window.addEventListener('pointermove', (e) => this._onDragMove(e));
+    window.addEventListener('pointerup', (e) => this._onDragEnd(e));
+    window.addEventListener('pointercancel', (e) => this._onDragEnd(e));
+  }
+
+  _onDragStart(e, card, id) {
+    if (!this._canReorder() || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this._closeMenus();
+    card.setPointerCapture(e.pointerId);
+    this._drag = { id, card, pointerId: e.pointerId };
+    card.classList.add('plan-card-dragging');
+  }
+
+  _findInsertBefore(clientX, clientY, dragCard) {
+    const cards = [...this.grid.querySelectorAll('.plan-card')].filter((c) => c !== dragCard);
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (clientY < midY) return card;
+      if (clientY <= rect.bottom && clientX < rect.left + rect.width / 2) return card;
+    }
+    return null;
+  }
+
+  _onDragMove(e) {
+    const d = this._drag;
+    if (!d || e.pointerId !== d.pointerId) return;
+    e.preventDefault();
+    const before = this._findInsertBefore(e.clientX, e.clientY, d.card);
+    document.querySelectorAll('.plan-card-drop-before').forEach((el) => {
+      el.classList.remove('plan-card-drop-before');
+    });
+    if (before) before.classList.add('plan-card-drop-before');
+    if (before) {
+      this.grid.insertBefore(d.card, before);
+    } else if (d.card.parentElement === this.grid) {
+      this.grid.appendChild(d.card);
+    }
+  }
+
+  _onDragEnd(e) {
+    const d = this._drag;
+    if (!d || e.pointerId !== d.pointerId) return;
+    d.card.classList.remove('plan-card-dragging');
+    d.card.releasePointerCapture?.(e.pointerId);
+    document.querySelectorAll('.plan-card-drop-before').forEach((el) => {
+      el.classList.remove('plan-card-drop-before');
+    });
+
+    const ids = [...this.grid.querySelectorAll('.plan-card')].map((c) => c.dataset.id);
+    this._drag = null;
+    this.store.setOrder(ids);
   }
 
   async _createPlan() {
