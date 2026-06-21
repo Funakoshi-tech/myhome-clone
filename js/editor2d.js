@@ -107,20 +107,27 @@ function _axisOverlap1D(mid, halfLen, ptA, ptB, ux, uz) {
   return Math.max(0, Math.min(hi1, hi2) - Math.max(lo1, lo2));
 }
 
-function _collectWallInnerFaces(floor) {
+function _collectWallInnerFaces(floor, furniturePos = null) {
   const faces = [];
   for (const wall of floor.walls) {
     const room = floor.rooms.find((r) => r.id === (wall.roomId || M.inferWallRoomId(wall)));
     if (!room?.polygon) continue;
-    const wn = _resolveOutwardNormal(wall, room, floor);
+    const wn = _wallExteriorNormal(wall, room);
     if (!wn) continue;
-    const halfT = (wall.thicknessMM || 120) / 2;
     const { nx, nz, ux, uz } = wn;
-    const inNx = -nx, inNz = -nz;
-    const a = { x: wall.start.x + inNx * halfT, z: wall.start.z + inNz * halfT };
-    const b = { x: wall.end.x + inNx * halfT, z: wall.end.z + inNz * halfT };
+    const halfT = (wall.thicknessMM || 120) / 2;
+    const mid = { x: (wall.start.x + wall.end.x) / 2, z: (wall.start.z + wall.end.z) / 2 };
+
+    // 家具がある場合：この壁の部屋内側に家具がある面のみ（壁芯ではなく内側面）
+    if (furniturePos) {
+      const side = nx * (furniturePos.x - mid.x) + nz * (furniturePos.z - mid.z);
+      if (side > 0) continue;
+    }
+
+    const a = { x: wall.start.x - nx * halfT, z: wall.start.z - nz * halfT };
+    const b = { x: wall.end.x - nx * halfT, z: wall.end.z - nz * halfT };
     faces.push({
-      a, b, outNx: nx, outNz: nz, ux, uz,
+      a, b, outNx: nx, outNz: nz, ux, uz, roomId: room.id,
     });
   }
   return faces;
@@ -157,7 +164,7 @@ function _edgeToFurnitureGap(edge, otherEdge) {
 function _snapFurnitureToWalls(x, z, f, floor) {
   const tmp = { ...f, x, z };
   let dx = 0, dz = 0;
-  const faces = _collectWallInnerFaces(floor);
+  const faces = _collectWallInnerFaces(floor, { x, z });
   for (const edge of _furnitureEdgesFrom(tmp)) {
     let best = null;
     for (const face of faces) {
@@ -2245,7 +2252,7 @@ export class Editor2D {
 
   _drawFurnitureDistanceGuides(ctx, f, floor) {
     const edges = _furnitureEdgesFrom(f);
-    const wallFaces = _collectWallInnerFaces(floor);
+    const wallFaces = _collectWallInnerFaces(floor, { x: f.x, z: f.z });
     const others = floor.furniture.filter((x) => x.id !== f.id);
 
     ctx.save();
@@ -2334,7 +2341,8 @@ export class Editor2D {
     const modelPath = cat?.model3d;
 
     if (modelPath) {
-      const icon = getFurnitureIcon(modelPath);
+      const dims = { wMM: f.wMM, dMM: f.dMM, hMM: f.hMM };
+      const icon = getFurnitureIcon(modelPath, dims);
       if (icon) {
         ctx.save();
         ctx.translate(sc.x, sc.y);
@@ -2342,7 +2350,7 @@ export class Editor2D {
         ctx.drawImage(icon, -hw, -hd, hw * 2, hd * 2);
         ctx.restore();
       } else if (icon === undefined) {
-        requestFurnitureIcon(modelPath, () => this.draw());
+        requestFurnitureIcon(modelPath, dims, () => this.draw());
         this._drawFurnitureFallbackRect(ctx, f, sc, hw, hd);
       } else {
         this._drawFurnitureFallbackRect(ctx, f, sc, hw, hd);

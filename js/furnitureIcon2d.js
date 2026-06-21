@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 
+const MM = 0.001;
 const ICON_PX = 256;
 
 const _modelCache = new Map();
@@ -18,6 +19,13 @@ let _mtlLoader = null;
 
 function modelUrl(path) {
   return encodeURI(path);
+}
+
+function iconCacheKey(modelPath, dims = {}) {
+  const w = Math.round(dims.wMM ?? 500);
+  const d = Math.round(dims.dMM ?? 500);
+  const h = Math.round(dims.hMM ?? 500);
+  return `${modelPath}|${w}|${d}|${h}`;
 }
 
 function getRenderer() {
@@ -77,17 +85,22 @@ async function loadModelTemplate(path) {
   return task;
 }
 
-/** カタログ既定寸法相当（1m 立方）に正規化して床面に配置 */
-function fitModelForTopView(template) {
+/** 3D 表示と同じ w/d/h フットプリント（mm）に非等倍フィットして床面に配置 */
+function fitModelToFootprint(template, dims) {
   const model = template.clone(true);
+  const targetW = (dims.wMM || 500) * MM;
+  const targetH = (dims.hMM || 500) * MM;
+  const targetD = (dims.dMM || 500) * MM;
+
   const box = new THREE.Box3().setFromObject(model);
   const size = box.getSize(new THREE.Vector3());
   model.scale.set(
-    size.x > 1e-6 ? 1 / size.x : 1,
-    size.y > 1e-6 ? 1 / size.y : 1,
-    size.z > 1e-6 ? 1 / size.z : 1,
+    size.x > 1e-6 ? targetW / size.x : 1,
+    size.y > 1e-6 ? targetH / size.y : 1,
+    size.z > 1e-6 ? targetD / size.z : 1,
   );
   model.updateMatrixWorld(true);
+
   const fitted = new THREE.Box3().setFromObject(model);
   model.position.x -= (fitted.min.x + fitted.max.x) / 2;
   model.position.y -= fitted.min.y;
@@ -95,14 +108,14 @@ function fitModelForTopView(template) {
   return model;
 }
 
-function renderTopDownIcon(template) {
-  const model = fitModelForTopView(template);
+function renderTopDownIcon(template, dims) {
+  const model = fitModelToFootprint(template, dims);
+  const targetW = (dims.wMM || 500) * MM;
+  const targetD = (dims.dMM || 500) * MM;
+  const halfW = targetW / 2;
+  const halfD = targetD / 2;
   const box = new THREE.Box3().setFromObject(model);
-  const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
-  const pad = 1.1;
-  const halfW = Math.max(size.x * pad * 0.5, 0.05);
-  const halfD = Math.max(size.z * pad * 0.5, 0.05);
 
   const aspect = halfW / halfD;
   let pxW = ICON_PX;
@@ -118,7 +131,7 @@ function renderTopDownIcon(template) {
   scene.add(model);
 
   const cam = new THREE.OrthographicCamera(-halfW, halfW, halfD, -halfD, 0.01, 100);
-  cam.position.set(center.x, box.max.y + Math.max(size.y, 0.5) + 2, center.z);
+  cam.position.set(center.x, box.max.y + 2, center.z);
   cam.up.set(0, 0, -1);
   cam.lookAt(center.x, center.y, center.z);
 
@@ -133,34 +146,40 @@ function renderTopDownIcon(template) {
   return out;
 }
 
-async function buildIcon(path) {
-  const template = await loadModelTemplate(path);
-  return renderTopDownIcon(template);
+async function buildIcon(modelPath, dims) {
+  const template = await loadModelTemplate(modelPath);
+  return renderTopDownIcon(template, dims);
 }
 
-function notifyListeners(path, canvas) {
-  const set = _pendingListeners.get(path);
+function notifyListeners(cacheKey, canvas) {
+  const set = _pendingListeners.get(cacheKey);
   if (!set) return;
   for (const cb of set) cb(canvas);
-  _pendingListeners.delete(path);
+  _pendingListeners.delete(cacheKey);
 }
 
-/** キャッシュ済みアイコン canvas（未生成なら null） */
-export function getFurnitureIcon(modelPath) {
-  const entry = _iconCache.get(modelPath);
+/** キャッシュ済みアイコン canvas（未生成なら undefined、失敗 null） */
+export function getFurnitureIcon(modelPath, dims = {}) {
+  const key = iconCacheKey(modelPath, dims);
+  const entry = _iconCache.get(key);
   if (entry instanceof HTMLCanvasElement) return entry;
   if (entry === null) return null;
   return undefined;
 }
 
 /** アイコン生成を開始。完了時に onReady(canvas|null) を呼ぶ */
-export function requestFurnitureIcon(modelPath, onReady) {
+export function requestFurnitureIcon(modelPath, dims, onReady) {
+  if (typeof dims === 'function') {
+    onReady = dims;
+    dims = {};
+  }
   if (!modelPath) {
     onReady(null);
     return;
   }
 
-  const cached = _iconCache.get(modelPath);
+  const key = iconCacheKey(modelPath, dims);
+  const cached = _iconCache.get(key);
   if (cached instanceof HTMLCanvasElement) {
     onReady(cached);
     return;
@@ -170,22 +189,22 @@ export function requestFurnitureIcon(modelPath, onReady) {
     return;
   }
 
-  if (!_pendingListeners.has(modelPath)) _pendingListeners.set(modelPath, new Set());
-  _pendingListeners.get(modelPath).add(onReady);
+  if (!_pendingListeners.has(key)) _pendingListeners.set(key, new Set());
+  _pendingListeners.get(key).add(onReady);
 
   if (cached instanceof Promise) return;
 
-  const task = buildIcon(modelPath)
+  const task = buildIcon(modelPath, dims)
     .then((canvas) => {
-      _iconCache.set(modelPath, canvas);
-      notifyListeners(modelPath, canvas);
+      _iconCache.set(key, canvas);
+      notifyListeners(key, canvas);
       return canvas;
     })
     .catch((err) => {
       console.warn('[furnitureIcon2d] icon render failed:', modelPath, err);
-      _iconCache.set(modelPath, null);
-      notifyListeners(modelPath, null);
+      _iconCache.set(key, null);
+      notifyListeners(key, null);
       return null;
     });
-  _iconCache.set(modelPath, task);
+  _iconCache.set(key, task);
 }
