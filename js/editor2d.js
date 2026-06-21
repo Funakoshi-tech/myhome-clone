@@ -5,6 +5,7 @@
 import * as M from './model.js';
 import { getRoomType, getFurniture, getStairType, getOpeningType } from './catalog.js';
 import { drawStair2d } from './stairDraw2d.js';
+import { getFurnitureIcon, requestFurnitureIcon } from './furnitureIcon2d.js';
 
 // ---- モジュールレベルのヘルパー（純粋関数） --------------------------------
 
@@ -2117,10 +2118,28 @@ export class Editor2D {
     }));
   }
 
+  _drawFurnitureFallbackRect(ctx, f, sc, hw, hd) {
+    ctx.save();
+    ctx.translate(sc.x, sc.y);
+    ctx.rotate((f.rotationDeg || 0) * Math.PI / 180);
+    ctx.beginPath();
+    ctx.rect(-hw, -hd, hw * 2, hd * 2);
+    ctx.fillStyle = this._hexA(f.color || '#888', 0.85);
+    ctx.fill();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = '#2c3444';
+    ctx.stroke();
+    ctx.restore();
+  }
+
   _drawFurniture(ctx, f, isRef = false) {
-    const corners = this._furnitureCorners(f);
-    this._polyPath(ctx, corners);
+    const sc = this.worldToScreen(f.x, f.z);
+    const hw = f.wMM * this.cam.scale / 2;
+    const hd = f.dMM * this.cam.scale / 2;
+
     if (isRef) {
+      const corners = this._furnitureCorners(f);
+      this._polyPath(ctx, corners);
       ctx.fillStyle = 'rgba(150,150,155,0.14)';
       ctx.fill();
       ctx.lineWidth = 1;
@@ -2128,16 +2147,39 @@ export class Editor2D {
       ctx.stroke();
       return;
     }
-    ctx.fillStyle = this._hexA(f.color || '#888', 0.85);
-    ctx.fill();
-    ctx.lineWidth = 1.2; ctx.strokeStyle = '#2c3444'; ctx.stroke();
+
     const cat = getFurniture(f.catalogId);
+    const modelPath = cat?.model3d;
+
+    if (modelPath) {
+      const icon = getFurnitureIcon(modelPath);
+      if (icon) {
+        ctx.save();
+        ctx.translate(sc.x, sc.y);
+        ctx.rotate((f.rotationDeg || 0) * Math.PI / 180);
+        ctx.drawImage(icon, -hw, -hd, hw * 2, hd * 2);
+        ctx.restore();
+      } else if (icon === undefined) {
+        requestFurnitureIcon(modelPath, () => this.draw());
+        this._drawFurnitureFallbackRect(ctx, f, sc, hw, hd);
+      } else {
+        this._drawFurnitureFallbackRect(ctx, f, sc, hw, hd);
+      }
+    } else {
+      this._drawFurnitureFallbackRect(ctx, f, sc, hw, hd);
+    }
+
     if (this.cam.scale * f.wMM > 28) {
-      const c = this.worldToScreen(f.x, f.z);
+      const name = cat.name;
+      ctx.save();
+      ctx.translate(sc.x, sc.y);
+      ctx.rotate((f.rotationDeg || 0) * Math.PI / 180);
       ctx.fillStyle = '#1f2733';
-      ctx.font = '10px system-ui, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(cat.name, c.x, c.y);
+      ctx.font = `${Math.max(8, Math.min(11, hw * 0.32))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(name, 0, hd + 2);
+      ctx.restore();
     }
   }
 
