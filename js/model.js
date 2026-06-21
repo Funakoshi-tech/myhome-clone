@@ -25,6 +25,130 @@ export function snapPoint(pt, snapDivisions) {
   return { x: snap(pt.x, snapDivisions), z: snap(pt.z, snapDivisions) };
 }
 
+// ---- 構造モード・壁厚プリセット --------------------------------------------
+export const CONSTRUCTION_METHODS = {
+  post_and_beam: {
+    id: 'post_and_beam',
+    label: '木造軸組',
+    exteriorMM: 180,
+    interiorMM: 120,
+  },
+  two_by_six: {
+    id: 'two_by_six',
+    label: '2×6',
+    exteriorMM: 140,
+    interiorMM: 89,
+  },
+};
+
+export function getConstructionMethod(plan) {
+  const m = plan?.meta?.constructionMethod;
+  return m === 'post_and_beam' ? 'post_and_beam' : 'two_by_six';
+}
+
+export function wallThicknessPreset(plan, exterior) {
+  const method = getConstructionMethod(plan);
+  const preset = CONSTRUCTION_METHODS[method];
+  return exterior ? preset.exteriorMM : preset.interiorMM;
+}
+
+function _wallEdgeKey(a, b) {
+  const r = (v) => Math.round(v);
+  const p1 = `${r(a.x)},${r(a.z)}`;
+  const p2 = `${r(b.x)},${r(b.z)}`;
+  return p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
+}
+
+function _pointToSegmentDist(p, a, b) {
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const len2 = dx * dx + dz * dz;
+  if (len2 < 1e-6) return Math.hypot(p.x - a.x, p.z - a.z);
+  let t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - a.x - t * dx, p.z - a.z - t * dz);
+}
+
+function _segmentsParallel(a1, a2, b1, b2, angEps = 0.05) {
+  const dax = a2.x - a1.x, daz = a2.z - a1.z;
+  const dbx = b2.x - b1.x, dbz = b2.z - b1.z;
+  const la = Math.hypot(dax, daz), lb = Math.hypot(dbx, dbz);
+  if (la < 1 || lb < 1) return false;
+  const dot = Math.abs((dax / la) * (dbx / lb) + (daz / la) * (dbz / lb));
+  return dot > 1 - angEps;
+}
+
+function _wallTouchesSiteBoundary(wall, boundary, eps = 25) {
+  if (!Array.isArray(boundary) || boundary.length < 2) return false;
+  for (let i = 0; i < boundary.length; i++) {
+    const ba = boundary[i];
+    const bb = boundary[(i + 1) % boundary.length];
+    if (!_segmentsParallel(wall.start, wall.end, ba, bb)) continue;
+    const mid = {
+      x: (wall.start.x + wall.end.x) / 2,
+      z: (wall.start.z + wall.end.z) / 2,
+    };
+    const d1 = _pointToSegmentDist(wall.start, ba, bb);
+    const d2 = _pointToSegmentDist(wall.end, ba, bb);
+    const dm = _pointToSegmentDist(mid, ba, bb);
+    if (Math.min(d1, d2, dm) > eps) continue;
+    const len = Math.hypot(bb.x - ba.x, bb.z - ba.z);
+    if (len < 1) continue;
+    const ux = (bb.x - ba.x) / len, uz = (bb.z - ba.z) / len;
+    const t = (p) => p.x * ux + p.z * uz;
+    const wLo = Math.min(t(wall.start), t(wall.end));
+    const wHi = Math.max(t(wall.start), t(wall.end));
+    const bLo = Math.min(t(ba), t(bb));
+    const bHi = Math.max(t(ba), t(bb));
+    if (Math.max(0, Math.min(wHi, bHi) - Math.max(wLo, bLo)) > eps) return true;
+  }
+  return false;
+}
+
+function _isBuildingPerimeterWall(wall, walls) {
+  const key = _wallEdgeKey(wall.start, wall.end);
+  let count = 0;
+  for (const w of walls) {
+    if (_wallEdgeKey(w.start, w.end) === key) count++;
+  }
+  return count === 1;
+}
+
+/** 外壁判定：敷地境界に接する、または建物外周（部屋共有なし） */
+export function isExteriorWall(wall, floor, plan) {
+  if (_wallTouchesSiteBoundary(wall, plan?.site?.boundary)) return true;
+  return _isBuildingPerimeterWall(wall, floor.walls || []);
+}
+
+function _matchWallGeometry(a, b) {
+  const same = (p, q) => Math.abs(p.x - q.x) < 0.5 && Math.abs(p.z - q.z) < 0.5;
+  return (same(a.start, b.start) && same(a.end, b.end))
+    || (same(a.start, b.end) && same(a.end, b.start));
+}
+
+function _findMatchingOldWall(oldWalls, newWall) {
+  const rid = inferWallRoomId(newWall);
+  return oldWalls.find((ow) => _matchWallGeometry(ow, newWall) && inferWallRoomId(ow) === rid);
+}
+
+/** 全壁の外壁フラグ（wall.id → boolean） */
+export function classifyExteriorWalls(floor, plan) {
+  const map = new Map();
+  for (const wall of floor.walls || []) {
+    map.set(wall.id, isExteriorWall(wall, floor, plan));
+  }
+  return map;
+}
+
+/** 構造モードのプリセットを全壁に一括適用 */
+export function applyConstructionWallThickness(plan) {
+  for (const floor of plan.floors || []) {
+    const exterior = classifyExteriorWalls(floor, plan);
+    for (const wall of floor.walls || []) {
+      wall.thicknessMM = wallThicknessPreset(plan, exterior.get(wall.id));
+    }
+  }
+}
+
 // ---- 面積・畳 ---------------------------------------------------------------
 // シューレース公式。polygon: [{x,z}, ...]（mm）。戻り値は mm²。
 export function shoelaceAreaMM2(polygon) {
@@ -238,7 +362,8 @@ export function wallsFromPolygon(polygon, { thicknessMM = 120, heightMM = 2400 }
 // フロアの壁を全部屋ポリゴンから作り直す。
 // 壁IDは "w_${roomId}_${edgeIndex}" と決定論的に付与するため
 // openings の wallId が再生成後も有効であり続ける。
-export function rebuildFloorWalls(floor) {
+export function rebuildFloorWalls(floor, plan = null) {
+  const oldWalls = (floor.walls || []).slice();
   const walls = [];
   for (const room of floor.rooms) {
     const poly = room.polygon;
@@ -247,12 +372,23 @@ export function rebuildFloorWalls(floor) {
       const b = poly[(i + 1) % poly.length];
       walls.push({
         id: `w_${room.id}_${i}`,
-        roomId: room.id,          // opening 紐付け用（スキーマ拡張）
+        roomId: room.id,
         start: { x: a.x, z: a.z },
         end: { x: b.x, z: b.z },
         thicknessMM: 120,
         heightMM: floor.ceilingHeightMM,
       });
+    }
+  }
+
+  const tmpFloor = { ...floor, walls };
+  const exterior = classifyExteriorWalls(tmpFloor, plan);
+  for (const wall of walls) {
+    const matched = _findMatchingOldWall(oldWalls, wall);
+    if (matched && typeof matched.thicknessMM === 'number') {
+      wall.thicknessMM = matched.thicknessMM;
+    } else {
+      wall.thicknessMM = wallThicknessPreset(plan, exterior.get(wall.id));
     }
   }
   floor.walls = walls;
@@ -291,6 +427,7 @@ export function createEmptyPlan(name = '新しいプラン') {
       // 日射計算用の緯度経度（既定: 板橋区赤塚）。将来変更可能。
       lat: 35.775,
       lng: 139.679,
+      constructionMethod: 'two_by_six',
     },
     site: {
       boundary: [],
@@ -374,6 +511,9 @@ export function normalizePlan(plan) {
   };
   if (!out.meta.createdAt) out.meta.createdAt = Date.now();
   if (!out.meta.updatedAt) out.meta.updatedAt = out.meta.createdAt;
+  if (out.meta.constructionMethod !== 'post_and_beam') {
+    out.meta.constructionMethod = 'two_by_six';
+  }
   out.floors = out.floors.map((f) => ({
     id: f.id,
     level: f.level ?? 0,
@@ -393,7 +533,7 @@ export function normalizePlan(plan) {
     );
     if (!missingRoomId && !wrongCount) continue;
     const oldWalls = floor.walls.slice();
-    rebuildFloorWalls(floor);
+    rebuildFloorWalls(floor, out);
     for (const op of floor.openings) {
       const ow = oldWalls.find((w) => w.id === op.wallId);
       if (!ow) continue;

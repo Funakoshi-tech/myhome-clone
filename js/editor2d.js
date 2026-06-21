@@ -601,7 +601,7 @@ export class Editor2D {
             if (ei >= 0) {
               const snapped = M.snapPoint(w, this._snapDiv());
               room.polygon.splice(ei + 1, 0, { ...snapped, userAdded: true });
-              M.rebuildFloorWalls(this._floor());
+              M.rebuildFloorWalls(this._floor(), this._plan());
               this.store.update(() => {});
               this.draw();
               return;
@@ -805,7 +805,7 @@ export class Editor2D {
       if (room && room.polygon[d.index]) {
         const pt = room.polygon[d.index];
         room.polygon[d.index] = { ...M.snapPoint(w, this._snapDiv()), userAdded: pt.userAdded };
-        M.rebuildFloorWalls(floor);
+        M.rebuildFloorWalls(floor, this._plan());
         this.draw();
       }
       return;
@@ -819,7 +819,7 @@ export class Editor2D {
         const dz = M.snap(w.z - d.startW.z, this._snapDiv());
         room.polygon[d.idxA] = { x: d.origA.x + dx, z: d.origA.z + dz, userAdded: d.origA.userAdded };
         room.polygon[d.idxB] = { x: d.origB.x + dx, z: d.origB.z + dz, userAdded: d.origB.userAdded };
-        M.rebuildFloorWalls(floor);
+        M.rebuildFloorWalls(floor, this._plan());
         this.draw();
       }
       return;
@@ -936,7 +936,7 @@ export class Editor2D {
         if (dx !== (d.lastDx || 0) || dz !== (d.lastDz || 0)) {
           room.polygon = M.translatePolygon(room.polygon, dx - (d.lastDx || 0), dz - (d.lastDz || 0));
           d.lastDx = dx; d.lastDz = dz;
-          M.rebuildFloorWalls(floor);
+          M.rebuildFloorWalls(floor, this._plan());
           this.draw();
         }
       }
@@ -1109,7 +1109,7 @@ export class Editor2D {
   _deleteRoomVertex(room, index) {
     if (!this._canDeleteVertex(room, index)) return;
     room.polygon.splice(index, 1);
-    M.rebuildFloorWalls(this._floor());
+    M.rebuildFloorWalls(this._floor(), this._plan());
     this.store.update(() => {});
     this.hoverVertex = null;
     this.draw();
@@ -1218,7 +1218,7 @@ export class Editor2D {
         labelVisible: true,
       };
       floor.rooms.push(room);
-      M.rebuildFloorWalls(floor);
+      M.rebuildFloorWalls(floor, plan);
       this.ui.selection = { kind: 'room', id: room.id };
     });
     this._afterPlace();
@@ -1312,7 +1312,7 @@ export class Editor2D {
         floor.furniture = floor.furniture.filter((f) => f.id !== sel.id);
       } else if (sel.kind === 'room') {
         floor.rooms = floor.rooms.filter((r) => r.id !== sel.id);
-        M.rebuildFloorWalls(floor);
+        M.rebuildFloorWalls(floor, this._plan());
       } else if (sel.kind === 'stair') {
         floor.stairs = (floor.stairs || []).filter((s) => s.id !== sel.id);
       } else if (sel.kind === 'opening') {
@@ -1396,7 +1396,7 @@ export class Editor2D {
         data.id = M.uid('room');
         data.polygon = M.translatePolygon(data.polygon, dx, dz);
         floor.rooms.push(data);
-        M.rebuildFloorWalls(floor);
+        M.rebuildFloorWalls(floor, this._plan());
         this.ui.selection = { kind: 'room', id: data.id };
         pasted = true;
       } else if (kind === 'furniture') {
@@ -1464,7 +1464,7 @@ export class Editor2D {
       const floor = M.getFloor(plan, this.ui.floorId);
       if (sel.kind === 'room') {
         const r = floor.rooms.find((x) => x.id === sel.id);
-        if (r) { mutator(r); M.rebuildFloorWalls(floor); }
+        if (r) { mutator(r); M.rebuildFloorWalls(floor, plan); }
       } else if (sel.kind === 'furniture') {
         const f = floor.furniture.find((x) => x.id === sel.id);
         if (f) mutator(f);

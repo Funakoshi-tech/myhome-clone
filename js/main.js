@@ -340,6 +340,7 @@ function refreshPanels() {
   buildProps();
   buildFloorInfo();
   syncSnapButtons();
+  syncConstructionButtons();
   syncLowerFloorRefToggle();
   syncBgPanel();
   if (ui.view === '2d') editor.draw();
@@ -716,6 +717,20 @@ function buildProps() {
     body.appendChild(readonlyRow('種類', def.name));
     if (wallLen > 0) body.appendChild(readonlyRow('壁長さ', `${wallLen}mm`));
 
+    if (wall) {
+      const ext = M.isExteriorWall(wall, floor, store.current());
+      body.appendChild(readonlyRow('壁区分', ext ? '外壁' : '内壁（間仕切り）'));
+      body.appendChild(field('壁厚 (mm)', inputNumber(wall.thicknessMM ?? 120, (v) => {
+        store.update((plan) => {
+          const fl = M.getFloor(plan, ui.floorId);
+          const w = fl.walls.find((x) => x.id === wall.id);
+          if (w) w.thicknessMM = Math.max(50, Math.round(v));
+        });
+        editor.draw();
+        if (ui.view === '3d') viewer.rebuild();
+      })));
+    }
+
     if (op.type === 'door') {
       // ドア：開き方反転のみ（サイズ変更なし）
       const flipWrap = document.createElement('div');
@@ -853,6 +868,12 @@ function syncSnapButtons() {
   if (dimEl) dimEl.checked = !!ui.showDimensions;
   const magnetEl = $('#furniture-magnet-toggle');
   if (magnetEl) magnetEl.checked = ui.furnitureWallMagnet !== false;
+}
+
+function syncConstructionButtons() {
+  const method = M.getConstructionMethod(store.current());
+  document.querySelectorAll('#construction-group .seg-btn').forEach((b) =>
+    b.classList.toggle('active', b.dataset.method === method));
 }
 
 function reconcileSelection(sel) {
@@ -1038,6 +1059,29 @@ function wireEvents() {
     b.addEventListener('click', () => {
       const div = Number(b.dataset.snap);
       store.update((plan) => { plan.meta.snapDivisions = div; });
+    }));
+
+  document.querySelectorAll('#construction-group .seg-btn').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const method = b.dataset.method;
+      const current = M.getConstructionMethod(store.current());
+      if (method === current) return;
+
+      const applyAll = await showConfirm({
+        title: '構造モードの変更',
+        message: '構造モードを変更します。すべての壁の厚みに新しいプリセット値を適用しますか？',
+        okText: 'はい、適用する',
+        cancelText: 'いいえ、モードのみ変更',
+      });
+
+      store.update((plan) => {
+        plan.meta.constructionMethod = method;
+        if (applyAll) M.applyConstructionWallThickness(plan);
+      });
+      syncConstructionButtons();
+      editor.draw();
+      if (ui.view === '3d') viewer.rebuild();
+      refreshPanels();
     }));
 
   $('#grid-toggle').addEventListener('change', (e) => {
