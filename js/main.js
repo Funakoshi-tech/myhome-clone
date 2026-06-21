@@ -103,7 +103,59 @@ function setView(view) {
     editor.resize(); editor.draw();
   }
   syncView3dAllFloorsButton();
+  syncDisplayBar();
   updateHint();
+}
+
+function syncDisplayBar() {
+  const bar = $('#display-bar');
+  if (!bar) return;
+  const is2d = ui.view === '2d';
+  bar.hidden = !is2d;
+  const floorPanel = $('#floor-info-panel');
+  if (floorPanel) floorPanel.hidden = !is2d;
+  if (!is2d) closeFloatingPanels();
+}
+
+function closeFloatingPanels() {
+  const floorPop = $('#floor-info-popover');
+  const floorBtn = $('#floor-info-toggle');
+  if (floorPop && !floorPop.hidden) {
+    floorPop.hidden = true;
+    floorBtn?.setAttribute('aria-expanded', 'false');
+  }
+  const bgMenu = $('#bg-menu');
+  const bgBtn = $('#bg-menu-btn');
+  if (bgMenu && !bgMenu.hidden) {
+    bgMenu.hidden = true;
+    bgBtn?.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function wireFloatingPanels() {
+  const floorBtn = $('#floor-info-toggle');
+  const floorPop = $('#floor-info-popover');
+  floorBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = floorPop.hidden;
+    closeFloatingPanels();
+    floorPop.hidden = !open;
+    floorBtn.setAttribute('aria-expanded', String(open));
+  });
+
+  const bgBtn = $('#bg-menu-btn');
+  const bgMenu = $('#bg-menu');
+  bgBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = bgMenu.hidden;
+    closeFloatingPanels();
+    bgMenu.hidden = !open;
+    bgBtn.setAttribute('aria-expanded', String(open));
+  });
+
+  document.addEventListener('click', () => closeFloatingPanels());
+  floorPop?.addEventListener('click', (e) => e.stopPropagation());
+  bgMenu?.addEventListener('click', (e) => e.stopPropagation());
 }
 
 function syncView3dAllFloorsButton() {
@@ -819,7 +871,7 @@ function updateHint() {
     furniture: 'クリックで家具を配置。完了後は自動で選択モードへ',
     stair: 'クリックで階段を配置。完了後は自動で選択モードへ。辺ドラッグでサイズ変更 / 緑丸ドラッグで90°回転',
     opening: '壁をクリックで建具を配置。ドア選択時は緑丸ドラッグで90°刻みの開き方向変更。短クリック/右クリック→操作メニュー',
-    pan: 'ドラッグで画面移動。ホイールでズーム',
+    pan: 'ドラッグで画面操作。ホイールでズーム',
   };
   hint.textContent = map[ui.tool] || '';
 }
@@ -1064,6 +1116,7 @@ function boot() {
   wireEvents();
   wireSunPanel();
   wireBgPanel();
+  wireFloatingPanels();
 
   planList = new PlanList(store, {
     onOpen: (id) => openPlanEditor(id),

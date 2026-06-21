@@ -61,6 +61,7 @@
   <div id="editor-screen" hidden>
   <!-- ===== 上部バー ===== -->
   <header id="topbar">
+    <div class="topbar-main">
     <button id="back-to-list" class="btn" type="button" title="プラン一覧に戻る">← プラン一覧</button>
     <div class="brand">
       <span class="logo">🏠</span>
@@ -81,6 +82,7 @@
     </div>
 
     <button id="view3d-all-floors" class="btn" type="button" hidden title="全フロアを積み上げて表示">全階表示</button>
+    <button id="zoom-fit" class="btn btn-compact" type="button" title="全体表示にズーム">全体</button>
 
     <div class="spacer"></div>
 
@@ -90,6 +92,49 @@
       <button id="json-import" class="btn">JSON読込</button>
       <input id="json-file" type="file" accept="application/json,.json" hidden />
     </div>
+    </div>
+
+    <!-- 表示設定（2D 作図向け） -->
+    <div class="topbar-display" id="display-bar">
+      <span class="display-bar-label">表示</span>
+      <div class="seg seg-compact" id="snap-group" role="group" aria-label="スナップ">
+        <button data-snap="2" class="seg-btn" type="button">0.5P</button>
+        <button data-snap="4" class="seg-btn active" type="button">0.25P</button>
+      </div>
+      <label class="display-toggle" title="グリッドを表示">
+        <input type="checkbox" id="grid-toggle" checked />
+        <span>グリッド</span>
+      </label>
+      <label class="display-toggle" title="寸法線を表示">
+        <input type="checkbox" id="dim-toggle" />
+        <span>寸法線</span>
+      </label>
+      <label class="display-toggle" id="lower-floor-ref-row" title="下階の間取りを薄く表示">
+        <input type="checkbox" id="lower-floor-ref-toggle" checked />
+        <span>下階</span>
+      </label>
+
+      <div class="display-dropdown" id="bg-menu-wrap">
+        <button id="bg-menu-btn" class="btn btn-compact display-dropdown-btn" type="button" aria-expanded="false">下絵 ▾</button>
+        <div id="bg-menu" class="display-dropdown-panel" hidden>
+          <button id="bg-load" class="btn wide" type="button">下絵を読込</button>
+          <input id="bg-file" type="file" accept="image/*" hidden />
+          <button id="bg-recalib" class="btn wide" type="button" hidden>基準線を再設定</button>
+          <button id="bg-position" class="btn wide" type="button" hidden>位置を調整</button>
+          <button id="bg-delete" class="btn danger wide" type="button" hidden>下絵を削除</button>
+          <label class="row check">
+            <input type="checkbox" id="bg-visible" checked />
+            <span>下絵を表示</span>
+          </label>
+          <div class="row">
+            <span class="lbl">透過率</span>
+            <input type="range" id="bg-opacity" min="0" max="100" value="50" />
+            <span id="bg-opacity-label" class="lbl-val">50%</span>
+          </div>
+          <p id="bg-status" class="pane-hint">JPEG/PNG を読み込んで実寸合わせ</p>
+        </div>
+      </div>
+    </div>
   </header>
 
   <!-- ===== 本体 ===== -->
@@ -97,15 +142,16 @@
     <!-- 左: コントロールパネル -->
     <aside id="panel">
       <!-- ツール -->
-      <section class="pane">
-        <h3>ツール</h3>
-        <div class="seg vertical" id="tool-group">
-          <button data-tool="select" class="seg-btn active">選択 / 移動</button>
-          <button data-tool="room" class="seg-btn">部屋を描く</button>
-          <button data-tool="furniture" class="seg-btn">家具を置く</button>
-          <button data-tool="stair" class="seg-btn">階段を置く</button>
-          <button data-tool="opening" class="seg-btn">建具を置く</button>
-          <button data-tool="pan" class="seg-btn">画面移動</button>
+      <section class="pane pane-fold" id="tool-pane" data-fold-id="tool">
+        <button type="button" class="pane-fold-head" aria-expanded="true">
+          <span>ツール</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <div class="seg vertical" id="tool-group">
+            <button data-tool="select" class="seg-btn active" type="button">選択 / 移動</button>
+            <button data-tool="pan" class="seg-btn" type="button">画面操作</button>
+          </div>
         </div>
       </section>
 
@@ -178,64 +224,12 @@
         </div>
       </section>
 
-      <!-- スナップ・グリッド -->
-      <section class="pane">
-        <h3>グリッド / スナップ</h3>
-        <div class="row">
-          <span class="lbl">スナップ</span>
-          <div class="seg" id="snap-group">
-            <button data-snap="2" class="seg-btn">0.5P</button>
-            <button data-snap="4" class="seg-btn active">0.25P</button>
-          </div>
-        </div>
-        <label class="row check">
-          <input type="checkbox" id="grid-toggle" checked />
-          <span>グリッドを表示</span>
-        </label>
-        <label class="row check">
-          <input type="checkbox" id="dim-toggle" />
-          <span>寸法線を表示</span>
-        </label>
-        <label class="row check" id="lower-floor-ref-row">
-          <input type="checkbox" id="lower-floor-ref-toggle" checked />
-          <span>下階の間取りを薄く表示</span>
-        </label>
-        <div class="row">
-          <button id="zoom-fit" class="btn wide">全体表示にズーム</button>
-        </div>
-      </section>
-
-      <!-- 敷地写真（下絵） -->
-      <section class="pane" id="site-photo-pane">
-        <h3>敷地写真</h3>
-        <button id="bg-load" class="btn wide" type="button">下絵を読込</button>
-        <input id="bg-file" type="file" accept="image/*" hidden />
-        <button id="bg-recalib" class="btn wide" type="button" hidden>基準線を再設定</button>
-        <button id="bg-position" class="btn wide" type="button" hidden>位置を調整</button>
-        <button id="bg-delete" class="btn danger wide" type="button" hidden>下絵を削除</button>
-        <label class="row check">
-          <input type="checkbox" id="bg-visible" checked />
-          <span>下絵を表示</span>
-        </label>
-        <div class="row">
-          <span class="lbl">透過率</span>
-          <input type="range" id="bg-opacity" min="0" max="100" value="50" />
-          <span id="bg-opacity-label" class="lbl-val">50%</span>
-        </div>
-        <p id="bg-status" class="pane-hint">JPEG/PNG を読み込んで実寸合わせ</p>
-      </section>
-
       <!-- 選択中プロパティ -->
       <section class="pane" id="props-pane">
         <h3>プロパティ</h3>
         <div id="props-body" class="props-empty">未選択</div>
       </section>
 
-      <!-- 情報 -->
-      <section class="pane">
-        <h3>このフロアの情報</h3>
-        <div id="floor-info" class="info"></div>
-      </section>
     </aside>
 
     <!-- 右: 作図 / 3D -->
@@ -243,6 +237,17 @@
       <canvas id="canvas2d"></canvas>
       <div id="viewer3d" hidden></div>
       <div id="hint"></div>
+
+      <!-- フロア情報（2D・右上・クリックで開閉） -->
+      <div id="floor-info-panel" class="stage-float-panel">
+        <button id="floor-info-toggle" class="stage-float-btn" type="button" aria-expanded="false" aria-controls="floor-info-popover">
+          フロア情報
+        </button>
+        <div id="floor-info-popover" class="stage-float-popover" hidden>
+          <h4 class="stage-float-title">このフロアの情報</h4>
+          <div id="floor-info" class="info"></div>
+        </div>
+      </div>
 
       <!-- 日射シミュレーション パネル（3D表示中のみ） -->
       <div id="sun-panel" hidden>

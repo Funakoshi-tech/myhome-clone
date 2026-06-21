@@ -337,12 +337,76 @@ body.plan-list-mode { overflow: auto; }
 /* ===== 上部バー ===== */
 #topbar {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 52px;
-  padding: 0 14px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 14px 8px;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
+}
+.topbar-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+}
+.topbar-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.topbar-display[hidden] { display: none !important; }
+.display-bar-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+.seg-compact .seg-btn { padding: 5px 9px; font-size: 12px; }
+.display-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.display-toggle:hover { background: #e7ebf0; color: var(--text); }
+.display-toggle input { margin: 0; accent-color: var(--accent); }
+.display-toggle[hidden] { display: none !important; }
+.btn-compact { padding: 5px 10px; font-size: 12px; }
+
+.display-dropdown { position: relative; }
+.display-dropdown-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1200;
+  width: 240px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.display-dropdown-panel[hidden] { display: none !important; }
+.display-dropdown-panel .row { margin: 6px 0; }
+.display-dropdown-panel .pane-hint { margin: 8px 0 0; font-size: 11px; }
+.display-dropdown-btn[aria-expanded="true"] {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand .logo { font-size: 20px; }
@@ -395,8 +459,8 @@ body.plan-list-mode { overflow: auto; }
 .btn-row .btn { flex: 1; }
 
 /* ===== レイアウト ===== */
-#editor-screen #layout { display: flex; flex: 1; min-height: 0; height: auto; }
-#layout { display: flex; height: calc(100% - 52px); }
+#editor-screen #layout { display: flex; flex: 1; min-height: 0; }
+#layout { display: flex; flex: 1; min-height: 0; }
 
 #panel {
   width: 280px;
@@ -522,6 +586,51 @@ body.plan-list-mode { overflow: auto; }
   font-size: 12px;
   pointer-events: none;
   max-width: 70%;
+}
+
+/* ステージ右上フローティング（フロア情報など） */
+.stage-float-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1100;
+}
+.stage-float-panel[hidden] { display: none !important; }
+.stage-float-btn {
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.stage-float-btn:hover { background: #fff; }
+.stage-float-btn[aria-expanded="true"] {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.stage-float-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 260px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+.stage-float-popover[hidden] { display: none !important; }
+.stage-float-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
 }
 
 /* ===== 日射シミュレーション パネル ===== */
