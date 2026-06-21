@@ -4,8 +4,11 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import * as M from './model.js';
-import { getRoomType } from './catalog.js';
+import { getRoomType, getFurniture } from './catalog.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
 
 const MM = 0.001; // mm → m
@@ -116,6 +119,12 @@ export class Viewer3D {
       }),
     };
 
+    this._modelCache = new Map();
+    this._gltfLoader = new GLTFLoader();
+    this._objLoader = new OBJLoader();
+    this._mtlLoader = new MTLLoader();
+    this._furnitureLoadGen = 0;
+
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
   }
@@ -188,9 +197,11 @@ export class Viewer3D {
   }
 
   _clearRoot() {
+    this._furnitureLoadGen = (this._furnitureLoadGen || 0) + 1;
     for (let i = this.root.children.length - 1; i >= 0; i--) {
       const obj = this.root.children[i];
       obj.traverse((o) => {
+        if (o.userData?.fromModelCache) return;
         if (o.geometry) o.geometry.dispose();
         if (o.material && o.material._disposable) o.material.dispose();
       });
@@ -725,7 +736,7 @@ export class Viewer3D {
     return this._materials.frame;
   }
 
-  _buildFurniture(f) {
+  _buildFurnitureBox(f) {
     const w = (f.wMM || 500) * MM;
     const d = (f.dMM || 500) * MM;
     const h = (f.hMM || 500) * MM;
@@ -735,11 +746,119 @@ export class Viewer3D {
     });
     mat._disposable = true;
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(f.x * MM, (f.y || 0) * MM + h / 2, f.z * MM);
-    mesh.rotation.y = -((f.rotationDeg || 0) * Math.PI) / 180;
+    mesh.position.y = h / 2;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     return mesh;
+  }
+
+  _modelUrl(path) {
+    return encodeURI(path);
+  }
+
+  _prepareLoadedModel(root) {
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = true;
+      o.receiveShadow = true;
+      if (Array.isArray(o.material)) {
+        o.material.forEach((m) => { m.side = THREE.DoubleSide; });
+      } else if (o.material) {
+        o.material.side = THREE.DoubleSide;
+      }
+    });
+    return root;
+  }
+
+  async _loadModelTemplate(path) {
+    if (this._modelCache.has(path)) return this._modelCache.get(path);
+    const task = this._loadModelTemplateOnce(path);
+    this._modelCache.set(path, task);
+    return task;
+  }
+
+  async _loadModelTemplateOnce(path) {
+    const url = this._modelUrl(path);
+    const lower = path.toLowerCase();
+    if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+      const gltf = await this._gltfLoader.loadAsync(url);
+      return this._prepareLoadedModel(gltf.scene);
+    }
+    if (lower.endsWith('.obj')) {
+      const mtlPath = path.replace(/\.obj$/i, '.mtl');
+      try {
+        const materials = await this._mtlLoader.loadAsync(this._modelUrl(mtlPath));
+        materials.preload();
+        const obj = await this._objLoader.setMaterials(materials).loadAsync(url);
+        return this._prepareLoadedModel(obj);
+      } catch {
+        const obj = await this._objLoader.loadAsync(url);
+        return this._prepareLoadedModel(obj);
+      }
+    }
+    throw new Error(`Unsupported model format: ${path}`);
+  }
+
+  _fitModelToFootprint(template, f) {
+    const model = template.clone(true);
+    model.traverse((o) => {
+      if (o.isMesh) o.userData.fromModelCache = true;
+    });
+
+    const targetW = (f.wMM || 500) * MM;
+    const targetH = (f.hMM || 500) * MM;
+    const targetD = (f.dMM || 500) * MM;
+
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    model.scale.set(
+      size.x > 1e-6 ? targetW / size.x : 1,
+      size.y > 1e-6 ? targetH / size.y : 1,
+      size.z > 1e-6 ? targetD / size.z : 1,
+    );
+    model.updateMatrixWorld(true);
+
+    const fitted = new THREE.Box3().setFromObject(model);
+    model.position.x -= (fitted.min.x + fitted.max.x) / 2;
+    model.position.y -= fitted.min.y;
+    model.position.z -= (fitted.min.z + fitted.max.z) / 2;
+    return model;
+  }
+
+  _attachFurnitureModel(group, f, modelPath) {
+    const gen = this._furnitureLoadGen;
+    const placeholder = this._buildFurnitureBox(f);
+    group.add(placeholder);
+
+    this._loadModelTemplate(modelPath)
+      .then((template) => {
+        if (gen !== this._furnitureLoadGen || !group.parent) return;
+        group.remove(placeholder);
+        placeholder.geometry?.dispose();
+        if (placeholder.material?._disposable) placeholder.material.dispose();
+        const model = this._fitModelToFootprint(template, f);
+        group.add(model);
+      })
+      .catch((err) => {
+        console.warn('[Viewer3D] model load failed:', modelPath, err);
+      });
+  }
+
+  _buildFurniture(f) {
+    const cat = getFurniture(f.catalogId);
+    const modelPath = cat?.model3d;
+    const group = new THREE.Group();
+    group.position.set(f.x * MM, (f.y || 0) * MM, f.z * MM);
+    group.rotation.y = -((f.rotationDeg || 0) * Math.PI) / 180;
+    group.userData = { kind: 'furniture', roomId: null };
+
+    if (modelPath) {
+      this._attachFurnitureModel(group, f, modelPath);
+      return group;
+    }
+
+    group.add(this._buildFurnitureBox(f));
+    return group;
   }
 
   // 階段の3D表示（1階分の高さまで上階へ突き抜け）

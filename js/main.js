@@ -571,6 +571,17 @@ function wireBgPanel() {
   $('#bg-pos-ok').addEventListener('click', () => hideBgPosModal());
 }
 
+function updateFurnitureDimension(key, value) {
+  const sel = ui.selection;
+  if (!sel || sel.kind !== 'furniture') return;
+  store.update((plan) => {
+    const f = M.getFloor(plan, ui.floorId).furniture.find((x) => x.id === sel.id);
+    if (f) f[key] = Math.max(100, Math.round(value));
+  });
+  editor.draw();
+  if (ui.view === '3d') viewer.rebuild();
+}
+
 function buildProps() {
   const body = $('#props-body');
   const sel = ui.selection;
@@ -623,7 +634,15 @@ function buildProps() {
     const cat = getFurniture(f.catalogId);
 
     body.appendChild(readonlyRow('種類', cat.name));
-    body.appendChild(readonlyRow('サイズ', `${f.wMM}×${f.dMM}×${f.hMM}mm`));
+    body.appendChild(field('幅 (mm)', inputNumberLive(f.wMM, (v) => {
+      updateFurnitureDimension('wMM', v);
+    })));
+    body.appendChild(field('奥行 (mm)', inputNumberLive(f.dMM, (v) => {
+      updateFurnitureDimension('dMM', v);
+    })));
+    body.appendChild(field('高さ (mm)', inputNumberLive(f.hMM, (v) => {
+      updateFurnitureDimension('hMM', v);
+    })));
 
     // 回転
     const rotWrap = document.createElement('div');
@@ -760,6 +779,17 @@ function inputNumber(value, onChange) {
   const i = document.createElement('input');
   i.type = 'number'; i.value = value; i.step = '10'; i.min = '0';
   i.addEventListener('change', () => { const v = Number(i.value); if (!Number.isNaN(v)) onChange(v); });
+  return i;
+}
+function inputNumberLive(value, onChange) {
+  const i = document.createElement('input');
+  i.type = 'number'; i.value = value; i.step = '10'; i.min = '100';
+  const fire = () => {
+    const v = Number(i.value);
+    if (!Number.isNaN(v)) onChange(v);
+  };
+  i.addEventListener('change', fire);
+  i.addEventListener('input', fire);
   return i;
 }
 function inputColor(value, onChange) {

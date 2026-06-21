@@ -31,21 +31,34 @@ export function getRoomType(id) {
   return ROOM_TYPES.find((r) => r.id === id) || ROOM_TYPES[0];
 }
 
-// ---- 家具（最小限。箱で表現） ----------------------------------------------
-// w=間口(X), d=奥行(Z), h=高さ(Y)（mm）。
+// ---- 家具 -------------------------------------------------------------------
+// w=間口(X), d=奥行(Z), h=高さ(Y)（mm）。model3d は 3D 表示用（Kenney Furniture Kit）。
+const KENNEY_GLB = 'assets/kenney-furniture/Models/GLTF format';
+
 export const FURNITURE = [
-  { id: 'sofa', name: 'ソファ', wMM: 1800, dMM: 800, hMM: 700, color: '#c0392b' },
-  { id: 'sofa1', name: '1人ソファ', wMM: 800, dMM: 800, hMM: 700, color: '#a93226' },
-  { id: 'table', name: 'テーブル', wMM: 1200, dMM: 800, hMM: 700, color: '#b9770e' },
-  { id: 'lowtable', name: 'ローテーブル', wMM: 1000, dMM: 500, hMM: 380, color: '#8e6310' },
-  { id: 'bed', name: 'ベッド', wMM: 1000, dMM: 2000, hMM: 450, color: '#2471a3' },
-  { id: 'beddouble', name: 'ダブルベッド', wMM: 1400, dMM: 2000, hMM: 450, color: '#1f618d' },
-  { id: 'chair', name: '椅子', wMM: 450, dMM: 450, hMM: 850, color: '#7d6608' },
-  { id: 'desk', name: 'デスク', wMM: 1200, dMM: 600, hMM: 720, color: '#9c640c' },
-  { id: 'shelf', name: '本棚', wMM: 900, dMM: 300, hMM: 1800, color: '#6e2c00' },
-  { id: 'fridge', name: '冷蔵庫', wMM: 700, dMM: 700, hMM: 1800, color: '#566573' },
-  { id: 'tvboard', name: 'TVボード', wMM: 1500, dMM: 400, hMM: 450, color: '#515a5a' },
-  { id: 'dining', name: 'ダイニングセット', wMM: 1500, dMM: 900, hMM: 720, color: '#9a7d0a' },
+  { id: 'kitchen', name: 'キッチン', wMM: 2580, dMM: 970, hMM: 850, color: '#4aa0a0', model3d: `${KENNEY_GLB}/kitchenBar.glb` },
+  { id: 'cupboard', name: 'カップボード', wMM: 1800, dMM: 450, hMM: 900, color: '#4aa0a0', model3d: `${KENNEY_GLB}/kitchenCabinetUpperDouble.glb` },
+  { id: 'table', name: 'ダイニングテーブル', wMM: 1600, dMM: 850, hMM: 700, color: '#b9770e', model3d: `${KENNEY_GLB}/table.glb` },
+  { id: 'sofaL', name: 'L字ソファ', wMM: 2400, dMM: 1800, hMM: 800, color: '#c0392b', model3d: `${KENNEY_GLB}/loungeSofaCorner.glb` },
+  { id: 'tv', name: 'TV', wMM: 1300, dMM: 400, hMM: 700, color: '#333333', model3d: `${KENNEY_GLB}/televisionModern.glb` },
+  { id: 'bed', name: 'シングルベッド', wMM: 1000, dMM: 2000, hMM: 450, color: '#2471a3', model3d: `${KENNEY_GLB}/bedSingle.glb` },
+  { id: 'bedsemi', name: 'セミダブルベッド', wMM: 1200, dMM: 2000, hMM: 450, color: '#1f618d', model3d: `${KENNEY_GLB}/bedDouble.glb` },
+  { id: 'desk', name: '勉強デスク', wMM: 1100, dMM: 600, hMM: 700, color: '#9c640c', model3d: `${KENNEY_GLB}/desk.glb` },
+  { id: 'chair', name: '椅子', wMM: 900, dMM: 500, hMM: 800, color: '#7d6608', model3d: `${KENNEY_GLB}/chair.glb` },
+  { id: 'vanity', name: '洗面化粧台', wMM: 1200, dMM: 450, hMM: 1800, color: '#5b8aa6', model3d: `${KENNEY_GLB}/bathroomCabinetDrawer.glb` },
+  { id: 'tansu', name: 'タンス', wMM: 900, dMM: 500, hMM: 800, color: '#6e2c00', model3d: `${KENNEY_GLB}/sideTableDrawers.glb` },
+  { id: 'washer', name: '洗濯機', wMM: 600, dMM: 600, hMM: 1000, color: '#566573', model3d: `${KENNEY_GLB}/washer.glb` },
+  { id: 'carSuv', name: '車（SUV）', wMM: 1840, dMM: 4650, hMM: 1700, color: '#4a5568', kind: 'vehicle' },
+  { id: 'carKei', name: '車（軽自動車）', wMM: 1475, dMM: 3395, hMM: 1525, color: '#5a6270', kind: 'vehicle' },
+  // その他
+  { id: 'beddouble', name: 'ダブルベッド', wMM: 1400, dMM: 2000, hMM: 450, color: '#1a5276', model3d: `${KENNEY_GLB}/bedDouble.glb` },
+  { id: 'sofa', name: 'ソファ', wMM: 1800, dMM: 800, hMM: 700, color: '#c0392b', model3d: `${KENNEY_GLB}/loungeSofa.glb` },
+  { id: 'sofa1', name: '1人ソファ', wMM: 800, dMM: 800, hMM: 700, color: '#a93226', model3d: `${KENNEY_GLB}/loungeChair.glb` },
+  { id: 'lowtable', name: 'ローテーブル', wMM: 1000, dMM: 500, hMM: 380, color: '#8e6310', model3d: `${KENNEY_GLB}/tableCoffee.glb` },
+  { id: 'shelf', name: '本棚', wMM: 900, dMM: 300, hMM: 1800, color: '#6e2c00', model3d: `${KENNEY_GLB}/bookcaseClosedDoors.glb` },
+  { id: 'fridge', name: '冷蔵庫', wMM: 700, dMM: 700, hMM: 1800, color: '#566573', model3d: `${KENNEY_GLB}/kitchenFridge.glb` },
+  { id: 'tvboard', name: 'TVボード', wMM: 1500, dMM: 400, hMM: 450, color: '#515a5a', model3d: `${KENNEY_GLB}/cabinetTelevision.glb` },
+  { id: 'dining', name: 'ダイニングセット', wMM: 1500, dMM: 900, hMM: 720, color: '#9a7d0a', model3d: `${KENNEY_GLB}/tableCross.glb` },
 ];
 
 export function getFurniture(id) {
