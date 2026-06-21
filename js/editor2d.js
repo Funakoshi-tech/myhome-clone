@@ -59,6 +59,120 @@ function _formatDimMm(mm) {
   return `${Math.round(mm).toLocaleString('ja-JP')}mm`;
 }
 
+const FURNITURE_MAGNET_MM = 60;
+const FURNITURE_DIST_SHOW_MAX_MM = 4500;
+const FURNITURE_EDGE_PARALLEL = 0.992;
+const FURNITURE_EDGE_FACE = 0.88;
+const FURNITURE_EDGE_OVERLAP_MIN_MM = 80;
+
+function _furnitureCornersFrom(f) {
+  const rad = ((f.rotationDeg || 0) * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const hw = f.wMM / 2, hd = f.dMM / 2;
+  return [
+    { x: -hw, z: -hd }, { x: hw, z: -hd }, { x: hw, z: hd }, { x: -hw, z: hd },
+  ].map((p) => ({
+    x: f.x + p.x * cos - p.z * sin,
+    z: f.z + p.x * sin + p.z * cos,
+  }));
+}
+
+function _furnitureEdgesFrom(f) {
+  const corners = _furnitureCornersFrom(f);
+  const edges = [];
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i], b = corners[(i + 1) % 4];
+    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+    const tx = b.x - a.x, tz = b.z - a.z;
+    const len = Math.hypot(tx, tz);
+    if (len < 1e-6) continue;
+    const ux = tx / len, uz = tz / len;
+    let nx = -uz, nz = ux;
+    const vx = mx - f.x, vz = mz - f.z;
+    if (nx * vx + nz * vz < 0) { nx = -nx; nz = -nz; }
+    edges.push({
+      a, b,
+      mid: { x: mx, z: mz },
+      nx, nz, ux, uz,
+      halfLen: len / 2,
+    });
+  }
+  return edges;
+}
+
+function _axisOverlap1D(mid, halfLen, ptA, ptB, ux, uz) {
+  const t = (p) => p.x * ux + p.z * uz;
+  const lo1 = t(mid) - halfLen, hi1 = t(mid) + halfLen;
+  const lo2 = Math.min(t(ptA), t(ptB)), hi2 = Math.max(t(ptA), t(ptB));
+  return Math.max(0, Math.min(hi1, hi2) - Math.max(lo1, lo2));
+}
+
+function _collectWallInnerFaces(floor) {
+  const faces = [];
+  for (const wall of floor.walls) {
+    const room = floor.rooms.find((r) => r.id === (wall.roomId || M.inferWallRoomId(wall)));
+    if (!room?.polygon) continue;
+    const wn = _resolveOutwardNormal(wall, room, floor);
+    if (!wn) continue;
+    const halfT = (wall.thicknessMM || 120) / 2;
+    const { nx, nz, ux, uz } = wn;
+    const inNx = -nx, inNz = -nz;
+    const a = { x: wall.start.x + inNx * halfT, z: wall.start.z + inNz * halfT };
+    const b = { x: wall.end.x + inNx * halfT, z: wall.end.z + inNz * halfT };
+    faces.push({
+      a, b, outNx: nx, outNz: nz, ux, uz,
+    });
+  }
+  return faces;
+}
+
+/** 家具辺と壁内面（平行・向き合い）の隙間 mm。吸着・距離表示共通 */
+function _edgeToWallInnerGap(edge, face) {
+  const parallel = Math.abs(edge.ux * face.ux + edge.uz * face.uz);
+  if (parallel < FURNITURE_EDGE_PARALLEL) return null;
+  const facing = edge.nx * face.outNx + edge.nz * face.outNz;
+  if (facing < FURNITURE_EDGE_FACE) return null;
+  const overlap = _axisOverlap1D(edge.mid, edge.halfLen, face.a, face.b, face.ux, face.uz);
+  if (overlap < FURNITURE_EDGE_OVERLAP_MIN_MM) return null;
+  const gap = edge.nx * (face.a.x - edge.mid.x) + edge.nz * (face.a.z - edge.mid.z);
+  if (gap < 0) return null;
+  const target = { x: edge.mid.x + edge.nx * gap, z: edge.mid.z + edge.nz * gap };
+  return { gap, target, kind: 'wall' };
+}
+
+function _edgeToFurnitureGap(edge, otherEdge) {
+  const parallel = Math.abs(edge.ux * otherEdge.ux + edge.uz * otherEdge.uz);
+  if (parallel < FURNITURE_EDGE_PARALLEL) return null;
+  const facing = edge.nx * otherEdge.nx + edge.nz * otherEdge.nz;
+  if (facing > -FURNITURE_EDGE_FACE) return null;
+  const overlap = _axisOverlap1D(edge.mid, edge.halfLen, otherEdge.a, otherEdge.b, edge.ux, edge.uz);
+  if (overlap < FURNITURE_EDGE_OVERLAP_MIN_MM) return null;
+  const gap = edge.nx * (otherEdge.mid.x - edge.mid.x) + edge.nz * (otherEdge.mid.z - edge.mid.z);
+  if (gap < 0) return null;
+  const target = { x: edge.mid.x + edge.nx * gap, z: edge.mid.z + edge.nz * gap };
+  return { gap, target, kind: 'furniture' };
+}
+
+/** 壁内面への平行移動スナップ（回転補正なし・辺が壁と平行な場合のみ） */
+function _snapFurnitureToWalls(x, z, f, floor) {
+  const tmp = { ...f, x, z };
+  let dx = 0, dz = 0;
+  const faces = _collectWallInnerFaces(floor);
+  for (const edge of _furnitureEdgesFrom(tmp)) {
+    let best = null;
+    for (const face of faces) {
+      const hit = _edgeToWallInnerGap(edge, face);
+      if (!hit || hit.gap > FURNITURE_MAGNET_MM) continue;
+      if (!best || hit.gap < best.gap) best = hit;
+    }
+    if (best) {
+      dx -= best.gap * edge.nx;
+      dz -= best.gap * edge.nz;
+    }
+  }
+  return { x: x + dx, z: z + dz };
+}
+
 // ============================================================================
 export class Editor2D {
   /**
@@ -725,8 +839,13 @@ export class Editor2D {
     if (d.kind === 'move-furniture') {
       const f = this._floor().furniture.find((x) => x.id === d.id);
       if (f) {
-        f.x = M.snap(d.ox + (w.x - d.startW.x), this._snapDiv());
-        f.z = M.snap(d.oz + (w.z - d.startW.z), this._snapDiv());
+        let nx = d.ox + (w.x - d.startW.x);
+        let nz = d.oz + (w.z - d.startW.z);
+        if (this.ui.furnitureWallMagnet !== false) {
+          ({ x: nx, z: nz } = _snapFurnitureToWalls(nx, nz, f, this._floor()));
+        }
+        f.x = nx;
+        f.z = nz;
         this.draw();
       }
       return;
@@ -1633,6 +1752,8 @@ export class Editor2D {
     for (const s of (floor.stairs || [])) this._drawStair(ctx, s, false);
     for (const f of floor.furniture) this._drawFurniture(ctx, f);
     this._drawSelection(ctx);
+    const guideF = this._activeFurnitureForGuides();
+    if (guideF) this._drawFurnitureDistanceGuides(ctx, guideF, floor);
     this._drawRoomHandles(ctx);
     this._drawStairHandles(ctx);
     if (this.drag?.kind === 'room') this._drawRoomPreview(ctx, this.drag);
@@ -2107,15 +2228,76 @@ export class Editor2D {
   }
 
   _furnitureCorners(f) {
-    const rad = ((f.rotationDeg || 0) * Math.PI) / 180;
-    const cos = Math.cos(rad), sin = Math.sin(rad);
-    const hw = f.wMM / 2, hd = f.dMM / 2;
-    return [
-      { x: -hw, z: -hd }, { x: hw, z: -hd }, { x: hw, z: hd }, { x: -hw, z: hd },
-    ].map((p) => ({
-      x: f.x + p.x * cos - p.z * sin,
-      z: f.z + p.x * sin + p.z * cos,
-    }));
+    return _furnitureCornersFrom(f);
+  }
+
+  _activeFurnitureForGuides() {
+    const floor = this._floor();
+    if (this.drag?.kind === 'move-furniture') {
+      return floor.furniture.find((x) => x.id === this.drag.id) || null;
+    }
+    const sel = this.ui.selection;
+    if (sel?.kind === 'furniture') {
+      return floor.furniture.find((x) => x.id === sel.id) || null;
+    }
+    return null;
+  }
+
+  _drawFurnitureDistanceGuides(ctx, f, floor) {
+    const edges = _furnitureEdgesFrom(f);
+    const wallFaces = _collectWallInnerFaces(floor);
+    const others = floor.furniture.filter((x) => x.id !== f.id);
+
+    ctx.save();
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1;
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (const edge of edges) {
+      let wallHit = null;
+      for (const face of wallFaces) {
+        const hit = _edgeToWallInnerGap(edge, face);
+        if (!hit || hit.gap > FURNITURE_DIST_SHOW_MAX_MM) continue;
+        if (!wallHit || hit.gap < wallHit.gap) wallHit = hit;
+      }
+      if (wallHit) this._drawFurnitureDistGuide(ctx, edge.mid, wallHit.target, wallHit.gap, '#2c5080');
+
+      let furnHit = null;
+      for (const other of others) {
+        for (const oe of _furnitureEdgesFrom(other)) {
+          const hit = _edgeToFurnitureGap(edge, oe);
+          if (!hit || hit.gap > FURNITURE_DIST_SHOW_MAX_MM) continue;
+          if (!furnHit || hit.gap < furnHit.gap) furnHit = hit;
+        }
+      }
+      if (furnHit) this._drawFurnitureDistGuide(ctx, edge.mid, furnHit.target, furnHit.gap, '#9a6530');
+    }
+    ctx.restore();
+  }
+
+  _drawFurnitureDistGuide(ctx, fromW, toW, distMM, color) {
+    const sa = this.worldToScreen(fromW.x, fromW.z);
+    const sb = this.worldToScreen(toW.x, toW.z);
+    if (Math.hypot(sb.x - sa.x, sb.y - sa.y) < 6) return;
+
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(sa.x, sa.y);
+    ctx.lineTo(sb.x, sb.y);
+    ctx.stroke();
+
+    const label = `${Math.round(distMM)}mm`;
+    const mx = (sa.x + sb.x) / 2;
+    const my = (sa.y + sb.y) / 2;
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.strokeText(label, mx, my);
+    ctx.lineWidth = 1;
+    ctx.fillStyle = color;
+    ctx.fillText(label, mx, my);
   }
 
   _drawFurnitureFallbackRect(ctx, f, sc, hw, hd) {

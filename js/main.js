@@ -25,6 +25,7 @@ const ui = {
   showGrid: true,
   showDimensions: false,
   showLowerFloorRef: true,
+  furnitureWallMagnet: true,
   view3dAllFloors: false, // 3D: true=全階積み上げ表示, false=選択階のみ
   // 日射シミュレーション（フェーズB）
   sun: { doy: 172, hour: 12, playing: false },
@@ -850,6 +851,8 @@ function syncSnapButtons() {
     b.classList.toggle('active', Number(b.dataset.snap) === div));
   const dimEl = $('#dim-toggle');
   if (dimEl) dimEl.checked = !!ui.showDimensions;
+  const magnetEl = $('#furniture-magnet-toggle');
+  if (magnetEl) magnetEl.checked = ui.furnitureWallMagnet !== false;
 }
 
 function reconcileSelection(sel) {
@@ -1044,6 +1047,11 @@ function wireEvents() {
 
   $('#dim-toggle').addEventListener('change', (e) => {
     ui.showDimensions = e.target.checked;
+    editor.draw();
+  });
+
+  $('#furniture-magnet-toggle').addEventListener('change', (e) => {
+    ui.furnitureWallMagnet = e.target.checked;
     editor.draw();
   });
 
