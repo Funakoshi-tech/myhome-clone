@@ -447,6 +447,12 @@ export class Editor2D {
     } else if (d.kind === 'rotate-stair') {
       const s = (floor.stairs || []).find((x) => x.id === d.id);
       if (s) s.rotationDeg = d.origRotationDeg;
+    } else if (d.kind === 'rotate-furniture') {
+      const f = floor.furniture.find((x) => x.id === d.id);
+      if (f) f.rotationDeg = d.origRotationDeg;
+    } else if (d.kind === 'rotate-opening') {
+      const op = (floor.openings || []).find((o) => o.id === d.id);
+      if (op) op.wallFaceSign = d.origWallFaceSign;
     } else if (d.kind === 'rotate-door') {
       const op = (floor.openings || []).find((o) => o.id === d.id);
       if (op) {
@@ -666,6 +672,17 @@ export class Editor2D {
           }
         }
         if (wall && op.type !== 'door') {
+          if (this._openingRotateHandleHit(op, wall, sx, sy)) {
+            const g = this._openingRotateLayout(wall, op);
+            this.drag = {
+              kind: 'rotate-opening',
+              id: op.id,
+              wallId: wall.id,
+              centerW: g ? { ...g.centerW } : null,
+              origWallFaceSign: op.wallFaceSign ?? 1,
+            };
+            return;
+          }
           const handle = this._openingHandleAt(op, wall, sx, sy);
           if (handle) {
             const lenMM = Math.hypot(wall.end.x - wall.start.x, wall.end.z - wall.start.z);
@@ -693,6 +710,29 @@ export class Editor2D {
             };
             return;
           }
+        }
+      }
+    }
+
+    // 家具選択中 → 回転ハンドル → 移動ドラッグ
+    if (this.ui.selection?.kind === 'furniture') {
+      const f = (this._floor().furniture || []).find((x) => x.id === this.ui.selection.id);
+      if (f) {
+        if (this._furnitureRotateHandleHit(f, sx, sy)) {
+          this.drag = {
+            kind: 'rotate-furniture',
+            id: f.id,
+            centerW: { x: f.x, z: f.z },
+            origRotationDeg: f.rotationDeg || 0,
+          };
+          return;
+        }
+        if (M.pointInOrientedRect(w, f.x, f.z, f.wMM, f.dMM, f.rotationDeg || 0)) {
+          this.drag = {
+            kind: 'move-furniture', id: f.id, startW: w, ox: f.x, oz: f.z,
+            ...this._clickMenuMeta(e, sx, sy),
+          };
+          return;
         }
       }
     }
@@ -863,6 +903,28 @@ export class Editor2D {
       this.draw();
       return;
     }
+    if (d.kind === 'rotate-furniture') {
+      const f = this._floor().furniture.find((x) => x.id === d.id);
+      if (f) {
+        f.rotationDeg = this._snapOrientedRotationDeg(d.centerW, w);
+        const g = this._furnitureRotateLayout(f);
+        d.tempHandleW = g ? { ...g.handleW } : null;
+        this.draw();
+      }
+      return;
+    }
+    if (d.kind === 'rotate-opening') {
+      const floor = this._floor();
+      const op = (floor.openings || []).find((x) => x.id === d.id);
+      const wall = floor.walls.find((wl) => wl.id === d.wallId);
+      if (op && wall) {
+        this._applyOpeningWallFaceSnap(op, wall, d.centerW, w);
+        const g = this._openingRotateLayout(wall, op);
+        d.tempHandleW = g ? { ...g.handleW } : null;
+        this.draw();
+      }
+      return;
+    }
     if (d.kind === 'rotate-stair') {
       const s = (this._floor().stairs || []).find((x) => x.id === d.id);
       if (s) {
@@ -976,7 +1038,7 @@ export class Editor2D {
       }
       return;
     }
-    const persistKinds = ['move-furniture', 'move-stair', 'move-stair-edge', 'rotate-stair', 'move-room', 'vertex', 'move-edge', 'move-opening', 'resize-opening', 'rotate-door'];
+    const persistKinds = ['move-furniture', 'move-stair', 'move-stair-edge', 'rotate-furniture', 'rotate-stair', 'rotate-opening', 'move-room', 'vertex', 'move-edge', 'move-opening', 'resize-opening', 'rotate-door'];
     if (persistKinds.includes(d.kind)) {
       this.store.update((plan) => {
         if (d.kind === 'rotate-door') {
@@ -1165,6 +1227,17 @@ export class Editor2D {
       } else {
         this.canvas.style.cursor = '';
       }
+    } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'furniture') {
+      const f = (this._floor().furniture || []).find((x) => x.id === this.ui.selection.id);
+      if (f) {
+        if (this._furnitureRotateHandleHit(f, sx, sy)) {
+          this.canvas.style.cursor = 'grab';
+        } else {
+          this.canvas.style.cursor = '';
+        }
+      } else {
+        this.canvas.style.cursor = '';
+      }
     } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'stair') {
       const s = (this._floor().stairs || []).find((x) => x.id === this.ui.selection.id);
       if (s) {
@@ -1185,13 +1258,11 @@ export class Editor2D {
       }
     } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'opening') {
       const op = (this._floor().openings || []).find((o) => o.id === this.ui.selection.id);
-      if (op?.type === 'door') {
-        const wall = this._floor().walls.find((w) => w.id === op.wallId);
-        if (wall && this._doorRotateHandleHit(op, wall, sx, sy)) {
-          this.canvas.style.cursor = 'grab';
-        } else {
-          this.canvas.style.cursor = '';
-        }
+      const wall = op ? this._floor().walls.find((w) => w.id === op.wallId) : null;
+      if (op?.type === 'door' && wall && this._doorRotateHandleHit(op, wall, sx, sy)) {
+        this.canvas.style.cursor = 'grab';
+      } else if (op && op.type !== 'door' && wall && this._openingRotateHandleHit(op, wall, sx, sy)) {
+        this.canvas.style.cursor = 'grab';
       } else {
         this.canvas.style.cursor = '';
       }
@@ -1291,6 +1362,13 @@ export class Editor2D {
         sillMM: def.sillMM,
         heightMM: def.heightMM,
       };
+      if (def.id !== 'door') {
+        const ux = dx / lenMM, uz = dz / lenMM;
+        const nx = -uz, nz = ux;
+        const onWall = { x: wall.start.x + ux * offsetMM, z: wall.start.z + uz * offsetMM };
+        const side = nx * (w.x - onWall.x) + nz * (w.z - onWall.z);
+        op.wallFaceSign = side > 0 ? 1 : -1;
+      }
       if (def.id === 'door') {
         op.doorFlipV2 = true;
         op.flipLR = false;
@@ -1762,6 +1840,7 @@ export class Editor2D {
     const guideF = this._activeFurnitureForGuides();
     if (guideF) this._drawFurnitureDistanceGuides(ctx, guideF, floor);
     this._drawRoomHandles(ctx);
+    this._drawFurnitureHandles(ctx);
     this._drawStairHandles(ctx);
     if (this.drag?.kind === 'room') this._drawRoomPreview(ctx, this.drag);
     if (this.ui.showDimensions) this._drawWallDimensions(ctx, floor);
@@ -2151,25 +2230,7 @@ export class Editor2D {
       ctx.stroke();
 
       // 回転ハンドル（開口中心から垂直な青線＋緑丸）
-      const centerS = this.worldToScreen(g.centerW.x, g.centerW.z);
-      const handleS = this.worldToScreen(g.handleW.x, g.handleW.z);
-      ctx.strokeStyle = '#2c7be5';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(centerS.x, centerS.y);
-      ctx.lineTo(handleS.x, handleS.y);
-      ctx.stroke();
-      ctx.fillStyle = '#ffffff';
-      ctx.strokeStyle = '#27ae60';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(handleS.x, handleS.y, 7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#27ae60';
-      ctx.beginPath();
-      ctx.arc(handleS.x, handleS.y, 3, 0, Math.PI * 2);
-      ctx.fill();
+      this._drawGreenRotateHandle(ctx, g.centerW, g.handleW);
     }
   }
 
@@ -2211,16 +2272,20 @@ export class Editor2D {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
 
-    // 壁厚の±60% に平行線2本
-    const ratio = 0.58;
-    for (const sign of [-1, 1]) {
+    const faceSign = opening.wallFaceSign ?? 1;
+    const isSelected = this.ui.selection?.kind === 'opening'
+      && this.ui.selection.id === opening.id
+      && this.ui.tool === 'select';
+
+    // 壁厚の片側に平行線2本
+    for (const offset of [0.45, 0.58]) {
       const p1 = this.worldToScreen(
-        ax + ux * oStart + nx * halfT * ratio * sign,
-        az + uz * oStart + nz * halfT * ratio * sign,
+        ax + ux * oStart + nx * halfT * offset * faceSign,
+        az + uz * oStart + nz * halfT * offset * faceSign,
       );
       const p2 = this.worldToScreen(
-        ax + ux * oEnd   + nx * halfT * ratio * sign,
-        az + uz * oEnd   + nz * halfT * ratio * sign,
+        ax + ux * oEnd + nx * halfT * offset * faceSign,
+        az + uz * oEnd + nz * halfT * offset * faceSign,
       );
       ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
     }
@@ -2231,6 +2296,13 @@ export class Editor2D {
       const pA = this.worldToScreen(ax + ux * offMM + nx * halfT, az + uz * offMM + nz * halfT);
       const pB = this.worldToScreen(ax + ux * offMM - nx * halfT, az + uz * offMM - nz * halfT);
       ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke();
+    }
+
+    if (isSelected) {
+      const handleOverride = (this.drag?.kind === 'rotate-opening' && this.drag.id === opening.id)
+        ? this.drag.tempHandleW : null;
+      const g = this._openingRotateLayout(wall, opening, handleOverride);
+      if (g) this._drawGreenRotateHandle(ctx, g.centerW, g.handleW);
     }
   }
 
@@ -2433,16 +2505,37 @@ export class Editor2D {
     });
   }
 
-  // 階段の回転ハンドル位置（中心から上り方向へ青線＋緑丸）
-  _stairRotateLayout(stair, handleOverrideW = null) {
-    const centerW = { x: stair.x, z: stair.z };
-    const rad = (stair.rotationDeg || 0) * Math.PI / 180;
-    const stemLenMM = Math.max(stair.widthMM, stair.depthMM) * 0.55 + 280;
+  _drawGreenRotateHandle(ctx, centerW, handleW) {
+    const centerS = this.worldToScreen(centerW.x, centerW.z);
+    const handleS = this.worldToScreen(handleW.x, handleW.z);
+    ctx.strokeStyle = '#2c7be5';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(centerS.x, centerS.y);
+    ctx.lineTo(handleS.x, handleS.y);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#27ae60';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(handleS.x, handleS.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#27ae60';
+    ctx.beginPath();
+    ctx.arc(handleS.x, handleS.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 回転矩形（家具・階段）の回転ハンドル位置
+  _orientedRotateLayout(x, z, widthMM, depthMM, rotationDeg, handleOverrideW = null) {
+    const centerW = { x, z };
+    const rad = (rotationDeg || 0) * Math.PI / 180;
+    const stemLenMM = Math.max(widthMM, depthMM) * 0.55 + 280;
     let handleW;
     if (handleOverrideW) {
       handleW = { x: handleOverrideW.x, z: handleOverrideW.z };
     } else {
-      // ローカル −Z（上り方向）をワールドへ
       handleW = {
         x: centerW.x + Math.sin(rad) * stemLenMM,
         z: centerW.z - Math.cos(rad) * stemLenMM,
@@ -2451,10 +2544,109 @@ export class Editor2D {
     return { centerW, handleW };
   }
 
-  _snapStairRotationDeg(centerW, w) {
+  _snapOrientedRotationDeg(centerW, w) {
     const snappedRad = this._snapRadialRad(centerW, w);
     const snappedDeg = snappedRad * 180 / Math.PI;
     return ((snappedDeg + 90) % 360 + 360) % 360;
+  }
+
+  _orientedRotateHandleHit(centerW, widthMM, depthMM, rotationDeg, dragKind, dragId, itemId, sx, sy) {
+    const override = this.drag?.kind === dragKind && this.drag.id === itemId
+      ? this.drag.tempHandleW : null;
+    const g = this._orientedRotateLayout(
+      centerW.x, centerW.z, widthMM, depthMM, rotationDeg, override,
+    );
+    if (!g) return false;
+    const hs = this.worldToScreen(g.handleW.x, g.handleW.z);
+    return Math.hypot(sx - hs.x, sy - hs.y) <= 10;
+  }
+
+  _furnitureRotateLayout(f, handleOverrideW = null) {
+    return this._orientedRotateLayout(
+      f.x, f.z, f.wMM, f.dMM, f.rotationDeg || 0, handleOverrideW,
+    );
+  }
+
+  _furnitureRotateHandleHit(f, sx, sy) {
+    return this._orientedRotateHandleHit(
+      { x: f.x, z: f.z }, f.wMM, f.dMM, f.rotationDeg || 0,
+      'rotate-furniture', f.id, f.id, sx, sy,
+    );
+  }
+
+  _openingInwardNormal(wall) {
+    const room = this._floor().rooms.find((r) => r.id === (wall.roomId || M.inferWallRoomId(wall)));
+    if (!room?.polygon) return null;
+    const wn = _wallExteriorNormal(wall, room);
+    if (!wn) return null;
+    return { nx: -wn.nx, nz: -wn.nz };
+  }
+
+  _openingRotateLayout(wall, opening, handleOverrideW = null) {
+    const ax = wall.start.x, az = wall.start.z;
+    const dx = wall.end.x - ax, dz = wall.end.z - az;
+    const lenMM = Math.hypot(dx, dz);
+    if (lenMM < 1) return null;
+    const ux = dx / lenMM, uz = dz / lenMM;
+    const inward = this._openingInwardNormal(wall);
+    const nx = inward?.nx ?? -uz;
+    const nz = inward?.nz ?? ux;
+    const centerW = { x: ax + ux * opening.offsetMM, z: az + uz * opening.offsetMM };
+    const sign = opening.wallFaceSign ?? 1;
+    const stemLenMM = Math.max(opening.widthMM, (wall.thicknessMM || 120)) * 0.55 + 280;
+    let handleW;
+    if (handleOverrideW) {
+      handleW = { x: handleOverrideW.x, z: handleOverrideW.z };
+    } else {
+      handleW = {
+        x: centerW.x + nx * sign * stemLenMM,
+        z: centerW.z + nz * sign * stemLenMM,
+      };
+    }
+    return { centerW, handleW, inwardNx: nx, inwardNz: nz };
+  }
+
+  _openingRotateHandleHit(opening, wall, sx, sy) {
+    const override = this.drag?.kind === 'rotate-opening' && this.drag.id === opening.id
+      ? this.drag.tempHandleW : null;
+    const g = this._openingRotateLayout(wall, opening, override);
+    if (!g) return false;
+    const hs = this.worldToScreen(g.handleW.x, g.handleW.z);
+    return Math.hypot(sx - hs.x, sy - hs.y) <= 10;
+  }
+
+  _applyOpeningWallFaceSnap(opening, wall, centerW, w) {
+    const layout = this._openingRotateLayout(wall, opening);
+    if (!layout) return;
+    const snappedRad = this._snapRadialRad(centerW, w);
+    const hx = Math.cos(snappedRad);
+    const hz = Math.sin(snappedRad);
+    const dot = hx * layout.inwardNx + hz * layout.inwardNz;
+    opening.wallFaceSign = dot >= 0 ? 1 : -1;
+  }
+
+  _drawFurnitureHandles(ctx) {
+    if (this.ui.tool !== 'select') return;
+    const sel = this.ui.selection;
+    if (!sel || sel.kind !== 'furniture') return;
+    const f = (this._floor().furniture || []).find((x) => x.id === sel.id);
+    if (!f) return;
+
+    const handleOverride = (this.drag?.kind === 'rotate-furniture' && this.drag.id === f.id)
+      ? this.drag.tempHandleW : null;
+    const g = this._furnitureRotateLayout(f, handleOverride);
+    this._drawGreenRotateHandle(ctx, g.centerW, g.handleW);
+  }
+
+  // 階段の回転ハンドル位置（中心から上り方向へ青線＋緑丸）
+  _stairRotateLayout(stair, handleOverrideW = null) {
+    return this._orientedRotateLayout(
+      stair.x, stair.z, stair.widthMM, stair.depthMM, stair.rotationDeg || 0, handleOverrideW,
+    );
+  }
+
+  _snapStairRotationDeg(centerW, w) {
+    return this._snapOrientedRotationDeg(centerW, w);
   }
 
   _stairRotateHandleHit(stair, sx, sy) {
@@ -2535,25 +2727,7 @@ export class Editor2D {
     const handleOverride = (this.drag?.kind === 'rotate-stair' && this.drag.id === stair.id)
       ? this.drag.tempHandleW : null;
     const g = this._stairRotateLayout(stair, handleOverride);
-    const centerS = this.worldToScreen(g.centerW.x, g.centerW.z);
-    const handleS = this.worldToScreen(g.handleW.x, g.handleW.z);
-    ctx.strokeStyle = '#2c7be5';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(centerS.x, centerS.y);
-    ctx.lineTo(handleS.x, handleS.y);
-    ctx.stroke();
-    ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = '#27ae60';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(handleS.x, handleS.y, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = '#27ae60';
-    ctx.beginPath();
-    ctx.arc(handleS.x, handleS.y, 3, 0, Math.PI * 2);
-    ctx.fill();
+    this._drawGreenRotateHandle(ctx, g.centerW, g.handleW);
   }
 
   _drawRoomHandles(ctx) {
