@@ -14,6 +14,7 @@ import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_L
 const MM = 0.001; // mm → m
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const CEILING_SLAB_M = 0.05; // 天井板厚（レイキャスト安定用）
+const ROOF_SLAB_M = 0.08; // 平板屋根の板厚
 const OCCLUDER_MAT = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
 
 // 床板なし（上下貫通）: 吹抜け
@@ -116,6 +117,12 @@ export class Viewer3D {
         side: THREE.DoubleSide,
         depthWrite: true,
         colorWrite: false,
+      }),
+      roof: new THREE.MeshStandardMaterial({
+        color: 0x7a828c,
+        roughness: 0.88,
+        metalness: 0.04,
+        side: THREE.DoubleSide,
       }),
     };
 
@@ -289,7 +296,33 @@ export class Viewer3D {
     return !NO_CEILING_TYPES.has(room.type);
   }
 
-  // 部屋の底面（床）。下階階段の位置には穴を開ける。
+  _roomNeedsRoof(room, floor, plan) {
+    return M.roomNeedsAutoRoof(room, floor, plan);
+  }
+
+  // 部屋の天井面（箱の上面。日射・3D 共用ジオメトリ）
+  _buildRoomCeiling(room, ceilingYM, mat, floor = null) {
+    if (!this._roomHasCeiling(room)) return null;
+    const shape = floor ? this._roomCeilingShape(room, floor) : this._roomShape(room);
+    if (!shape) return null;
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: CEILING_SLAB_M, bevelEnabled: false });
+    geo.rotateX(Math.PI / 2);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = ceilingYM - CEILING_SLAB_M;
+    return mesh;
+  }
+
+  // 平板屋根（上階に構造がない部屋のみ）
+  _buildRoomRoof(room, ceilingYM, mat, floor = null) {
+    const shape = floor ? this._roomCeilingShape(room, floor) : this._roomShape(room);
+    if (!shape) return null;
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: ROOF_SLAB_M, bevelEnabled: false });
+    geo.rotateX(Math.PI / 2);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = ceilingYM;
+    return mesh;
+  }
+
   _buildRoomFloor(room, yM, mat, floor, plan, opts = {}) {
     if (!this._roomHasFloor(room)) return null;
     const shape = (floor && plan)
@@ -302,18 +335,6 @@ export class Viewer3D {
     const mesh = new THREE.Mesh(geo, useMat);
     mesh.position.y = yM;
     if (opts.receiveShadow) mesh.receiveShadow = true;
-    return mesh;
-  }
-
-  // 部屋の天井面（箱の上面。日射・3D 共用ジオメトリ）
-  _buildRoomCeiling(room, ceilingYM, mat, floor = null) {
-    if (!this._roomHasCeiling(room)) return null;
-    const shape = floor ? this._roomCeilingShape(room, floor) : this._roomShape(room);
-    if (!shape) return null;
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: CEILING_SLAB_M, bevelEnabled: false });
-    geo.rotateX(Math.PI / 2);
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.y = ceilingYM - CEILING_SLAB_M;
     return mesh;
   }
 
@@ -363,10 +384,24 @@ export class Viewer3D {
           fg.add(ceilMesh);
         }
       }
+
+      if (this._roomNeedsRoof(room, floor, planData)) {
+        const roofMat = isOcc ? OCCLUDER_MAT : this._materials.roof;
+        const roofMesh = this._buildRoomRoof(room, ceilingY, roofMat, floor);
+        if (roofMesh) {
+          roofMesh.userData = { roomId: room.id, kind: 'roof' };
+          if (!isOcc) {
+            roofMesh.castShadow = true;
+            roofMesh.receiveShadow = true;
+          }
+          fg.add(roofMesh);
+        }
+      }
     }
 
     for (const wall of floor.walls) {
-      const ops = (floor.openings || []).filter((o) => o.wallId === wall.id);
+      if (M.isWallEdgeRemoved(floor, wall)) continue;
+      const ops = this._openingsForWall(floor, wall);
       const wallGroup = this._buildWallWithOpenings(wall, ops, isOcc ? OCCLUDER_MAT : null, { occluder: isOcc });
       if (!wallGroup) continue;
       const rid = wall.roomId || null;
@@ -518,16 +553,64 @@ export class Viewer3D {
     return { nx, nz, ux, uz };
   }
 
+  _wallEdgeKey(wall) {
+    const a = wall.start, b = wall.end;
+    const k1 = `${Math.round(a.x)}:${Math.round(a.z)}:${Math.round(b.x)}:${Math.round(b.z)}`;
+    const k2 = `${Math.round(b.x)}:${Math.round(b.z)}:${Math.round(a.x)}:${Math.round(a.z)}`;
+    return k1 < k2 ? k1 : k2;
+  }
+
+  _openingsForWall(floor, wall) {
+    const key = this._wallEdgeKey(wall);
+    const seen = new Set();
+    const ops = [];
+    for (const op of (floor.openings || [])) {
+      const opWall = floor.walls.find((w) => w.id === op.wallId);
+      if (!opWall || this._wallEdgeKey(opWall) !== key) continue;
+      if (seen.has(op.id)) continue;
+      seen.add(op.id);
+      ops.push(op);
+    }
+    return ops;
+  }
+
+  _wallForRoom(floor, op, room) {
+    const wall = floor.walls.find((w) => w.id === op.wallId);
+    if (!wall) return null;
+    if (M.inferWallRoomId(wall) === room.id) return wall;
+    const key = this._wallEdgeKey(wall);
+    return floor.walls.find((w) =>
+      w.id !== wall.id
+      && this._wallEdgeKey(w) === key
+      && M.inferWallRoomId(w) === room.id,
+    ) || null;
+  }
+
   _roomOpeningPairs(floor, room) {
     const pairs = [];
+    const seen = new Set();
     for (const op of (floor.openings || [])) {
-      const wall = floor.walls.find((w) => w.id === op.wallId);
+      const wall = this._wallForRoom(floor, op, room);
       if (!wall) continue;
-      const wallRoomId = M.inferWallRoomId(wall);
-      if (wallRoomId !== room.id) continue;
+      const key = `${op.id}:${room.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       pairs.push({ op, wall });
     }
     return pairs;
+  }
+
+  _openingDefaultHeightMM(opening) {
+    if (opening.heightMM) return opening.heightMM;
+    if (opening.type === 'sliding' || opening.type === 'door') return 2000;
+    return 1100;
+  }
+
+  _openingVerticalMetrics(opening, wall) {
+    const wallH = wall.heightMM || 2400;
+    const sillMM = opening.sillMM || 0;
+    const heightMM = Math.min(this._openingDefaultHeightMM(opening), Math.max(0, wallH - sillMM));
+    return { sillMM, heightMM, wallH };
   }
 
   // 自室の箱（床壁天井）以外の遮蔽ヒットか
@@ -539,15 +622,24 @@ export class Viewer3D {
   }
 
   // サンプル点 sy が開口の鉛直範囲内か（高高度の太陽も窓から入るため仰角比較は使わない）
-  _sunWithinOpeningVertical(opening, sampleY, dir, baseYM) {
-    const sill = (opening.sillMM || 0) * MM;
-    const h = (opening.heightMM || 1100) * MM;
-    const y0 = baseYM + sill;
-    const y1 = baseYM + sill + h;
+  _sunWithinOpeningVertical(opening, wall, sampleY, dir, baseYM) {
+    const { sillMM, heightMM } = this._openingVerticalMetrics(opening, wall);
+    const y0 = baseYM + sillMM * MM;
+    const y1 = baseYM + (sillMM + heightMM) * MM;
     if (sampleY < y0 - 0.02 || sampleY > y1 + 0.02) return false;
     // 太陽が地平線より十分上（開口から見える前提）
     const horiz = Math.hypot(dir.x, dir.z);
     return dir.y > -0.05 && Math.atan2(dir.y, Math.max(horiz, 1e-4)) > -0.05;
+  }
+
+  _openingHeightSampleFracs(opening, wall) {
+    const { sillMM, heightMM, wallH } = this._openingVerticalMetrics(opening, wall);
+    const fillRatio = heightMM / wallH;
+    if (opening.type === 'sliding' || (sillMM === 0 && fillRatio > 0.6)) {
+      return [0.12, 0.3, 0.5, 0.7, 0.88];
+    }
+    if (sillMM === 0) return [0.2, 0.45, 0.7];
+    return [0.35, 0.55, 0.75];
   }
 
   // 1つの開口から太陽が見えるか
@@ -559,18 +651,20 @@ export class Viewer3D {
 
     const pts = this._openingWorldPoints(wall, opening);
     if (!pts) return false;
-    const sill = (opening.sillMM || 0) * MM;
-    const h = (opening.heightMM || 1100) * MM;
+    const { sillMM, heightMM } = this._openingVerticalMetrics(opening, wall);
+    if (heightMM < 50) return false;
+    const sill = sillMM * MM;
+    const h = heightMM * MM;
     const outDist = (wall.thicknessMM || 120) * MM * 2.5 + 0.15;
     const widthFracs = [0.25, 0.5, 0.75];
-    const heightFracs = [0.35, 0.55, 0.75];
+    const heightFracs = this._openingHeightSampleFracs(opening, wall);
 
     for (const wf of widthFracs) {
       const cx = (pts.start.x + (pts.end.x - pts.start.x) * wf) * MM;
       const cz = (pts.start.z + (pts.end.z - pts.start.z) * wf) * MM;
       for (const hf of heightFracs) {
         const sy = baseYM + sill + h * hf;
-        if (!this._sunWithinOpeningVertical(opening, sy, dir, baseYM)) continue;
+        if (!this._sunWithinOpeningVertical(opening, wall, sy, dir, baseYM)) continue;
 
         const exterior = new THREE.Vector3(
           cx + wn.nx * outDist,
@@ -683,7 +777,10 @@ export class Viewer3D {
       const oStartMM = Math.max(0, op.offsetMM - op.widthMM / 2);
       const oEndMM   = Math.min(lenMM, op.offsetMM + op.widthMM / 2);
       const oSillMM  = op.sillMM || 0;
-      const oHgtMM   = op.heightMM || 1100;
+      const oHgtMM   = Math.min(
+        this._openingDefaultHeightMM(op),
+        Math.max(0, (wall.heightMM || 2400) - oSillMM),
+      );
       const oTopMM   = oSillMM + oHgtMM;
       const oW       = (oEndMM - oStartMM) * MM;
       const cx       = toLocalX((oStartMM + oEndMM) / 2);
@@ -704,7 +801,7 @@ export class Viewer3D {
         addSeg(oW, lintelMM * MM, T, useMat, cx, oTopMM * MM + lintelMM * MM / 2);
       }
 
-      // 窓枠（日射オクルーダーでは開口を塞がないよう省略）
+      // 窓枠・ガラス（日射オクルーダーでは開口を塞がないよう省略）
       if (!forOccluder) {
         const frameMat = this._getFrameMat();
         const FT = T * 1.05;
@@ -713,6 +810,16 @@ export class Viewer3D {
         addSeg(oW + FW * 2, FW, FT, frameMat, cx, oSillMM * MM - FW / 2);
         addSeg(FW, oHgtMM * MM, FT, frameMat, cx - oW / 2 - FW / 2, (oSillMM + oTopMM) / 2 * MM);
         addSeg(FW, oHgtMM * MM, FT, frameMat, cx + oW / 2 + FW / 2, (oSillMM + oTopMM) / 2 * MM);
+
+        if (op.type === 'window' || op.type === 'sliding') {
+          const glassMat = this._getGlassMat();
+          const glassT = 0.006;
+          addSeg(oW - FW * 0.5, oHgtMM * MM - FW, glassT, glassMat, cx, (oSillMM + oTopMM) / 2 * MM);
+          if (op.type === 'sliding') {
+            const mullionW = 0.025;
+            addSeg(mullionW, oHgtMM * MM - FW, FT * 0.95, frameMat, cx, (oSillMM + oTopMM) / 2 * MM);
+          }
+        }
       }
 
       curMM = oEndMM;
@@ -734,6 +841,21 @@ export class Viewer3D {
       });
     }
     return this._materials.frame;
+  }
+
+  _getGlassMat() {
+    if (!this._materials.glass) {
+      this._materials.glass = new THREE.MeshStandardMaterial({
+        color: 0xa8d8f0,
+        roughness: 0.08,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.38,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+    }
+    return this._materials.glass;
   }
 
   _buildFurnitureBox(f) {

@@ -21,7 +21,7 @@ const ui = {
   openingId: OPENING_TYPES[0].id,  // 'window' | 'sliding' | 'door'
   plumbingId: PLUMBING_TYPES[0].id,
   exteriorId: EXTERIOR_TYPES[0].id,
-  selection: null,       // { kind:'room'|'furniture'|'stair'|'opening', id }
+  selection: null,       // { kind:'room'|'furniture'|'stair'|'opening'|'wall', ... }
   showGrid: true,
   showDimensions: false,
   showLowerFloorRef: true,
@@ -592,7 +592,7 @@ function buildProps() {
 
   if (!sel) {
     body.className = 'props-empty';
-    body.textContent = '未選択（選択ツールで部屋・家具・階段をクリック）';
+    body.textContent = '未選択（選択ツールで部屋・壁・家具・階段をクリック）';
     return;
   }
   body.className = '';
@@ -766,6 +766,44 @@ function buildProps() {
     body.appendChild(readonlyRow('壁中心からの距離', `${Math.round(op.offsetMM)}mm`));
 
     body.appendChild(deleteButton('この建具を削除'));
+  } else if (sel.kind === 'wall') {
+    const keys = sel.edgeKeys || [];
+    const walls = floor.walls.filter((w) => keys.includes(M.wallEdgeKeyFromWall(w)));
+    if (!walls.length) { body.textContent = '—'; return; }
+
+    const countLabel = keys.length > 1 ? `${keys.length} 本選択中` : '1 本選択中';
+    body.appendChild(readonlyRow('選択', countLabel));
+
+    const sample = walls[0];
+    const lenMM = Math.round(Math.hypot(
+      sample.end.x - sample.start.x, sample.end.z - sample.start.z,
+    ));
+    body.appendChild(readonlyRow('長さ', `${lenMM}mm`));
+
+    const plan = store.current();
+    const ext = M.isExteriorWall(sample, floor, plan);
+    body.appendChild(readonlyRow('壁区分', ext ? '外壁' : '内壁（間仕切り）'));
+
+    const shared = keys.some((key) =>
+      floor.walls.filter((w) => M.wallEdgeKeyFromWall(w) === key).length > 1,
+    );
+    if (shared) body.appendChild(readonlyRow('備考', '両側の部屋に共有する壁'));
+
+    body.appendChild(field('壁厚 (mm)', inputNumber(sample.thicknessMM ?? 120, (v) => {
+      const t = Math.max(50, Math.round(v));
+      store.update((plan) => {
+        const fl = M.getFloor(plan, ui.floorId);
+        for (const key of keys) {
+          for (const w of fl.walls) {
+            if (M.wallEdgeKeyFromWall(w) === key) w.thicknessMM = t;
+          }
+        }
+      });
+      editor.draw();
+      if (ui.view === '3d') viewer.rebuild();
+    })));
+
+    body.appendChild(deleteButton(keys.length > 1 ? '選択した壁を削除' : 'この壁を削除'));
   }
 }
 
@@ -891,6 +929,14 @@ function reconcileSelection(sel) {
   if (sel.kind === 'opening') {
     return (floor.openings || []).some((o) => o.id === sel.id) ? sel : null;
   }
+  if (sel.kind === 'wall') {
+    const valid = (sel.edgeKeys || []).filter((key) =>
+      (floor.walls || []).some((w) =>
+        M.wallEdgeKeyFromWall(w) === key && !M.isWallEdgeRemoved(floor, w),
+      ),
+    );
+    return valid.length ? { kind: 'wall', edgeKeys: valid } : null;
+  }
   return null;
 }
 
@@ -920,7 +966,7 @@ function updateHint() {
     return;
   }
   const map = {
-    select: '選択：クリックで選択/ドラッグで移動。⌘C/V/Z でコピー/貼付/元に戻す。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。階段・ドアは緑丸で90°回転。短クリック/右クリック→操作メニュー',
+    select: '選択：壁クリックで壁選択（Shift+クリックで複数 / ドラッグで範囲選択）。Delete で削除。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。Shift+壁クリックで部屋選択中も壁選択可。階段・ドアは緑丸で90°回転',
     room: 'ドラッグで部屋を矩形作成（スナップ適用）。完了後は自動で選択モードへ',
     furniture: 'クリックで家具を配置。完了後は自動で選択モードへ',
     stair: 'クリックで階段を配置。完了後は自動で選択モードへ。辺ドラッグでサイズ変更 / 緑丸ドラッグで90°回転',

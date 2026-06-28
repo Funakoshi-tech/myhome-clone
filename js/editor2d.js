@@ -19,6 +19,40 @@ function _ptSegDist(p, a, b) {
   return Math.hypot(p.x - a.x - t * dx, p.z - a.z - t * dz);
 }
 
+// 画面上の点 (px,py) から線分 sa-sb への最短距離（px）
+function _ptSegDistScreen(px, py, sa, sb) {
+  const wx = sb.x - sa.x, wy = sb.y - sa.y;
+  const len2 = wx * wx + wy * wy;
+  if (len2 < 1) return Math.hypot(px - sa.x, py - sa.y);
+  let t = ((px - sa.x) * wx + (py - sa.y) * wy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (sa.x + wx * t), py - (sa.y + wy * t));
+}
+
+function _segIntersectsRect(ax, ay, bx, by, rx0, ry0, rx1, ry1) {
+  const left = Math.min(rx0, rx1), right = Math.max(rx0, rx1);
+  const top = Math.min(ry0, ry1), bottom = Math.max(ry0, ry1);
+  const inRect = (x, y) => x >= left && x <= right && y >= top && y <= bottom;
+  if (inRect(ax, ay) || inRect(bx, by)) return true;
+  const edges = [
+    [left, top, right, top],
+    [right, top, right, bottom],
+    [right, bottom, left, bottom],
+    [left, bottom, left, top],
+  ];
+  const cross = (x1, y1, x2, y2, x3, y3, x4, y4) => {
+    const d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (Math.abs(d) < 1e-9) return false;
+    const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d;
+    const u = ((x1 - x3) * (y1 - y2) - (y1 - y3) * (x1 - x2)) / d;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+  };
+  for (const [x1, y1, x2, y2] of edges) {
+    if (cross(ax, ay, bx, by, x1, y1, x2, y2)) return true;
+  }
+  return false;
+}
+
 function _edgeKey(a, b) {
   const r = (v) => Math.round(v);
   const p1 = `${r(a.x)},${r(a.z)}`;
@@ -205,6 +239,7 @@ export class Editor2D {
     // ホバー状態（選択中の部屋の頂点/辺）
     this.hoverVertex = null; // { id, index }
     this.hoverEdge = null;   // { id, index } — カーソル変更用（+ ハンドルは廃止）
+    this.hoverWallKey = null; // 壁ホバー（edgeKey）
 
     this._space = false;
     this._bgImgCache = null;
@@ -775,10 +810,18 @@ export class Editor2D {
       }
     }
 
-    // 部屋選択中 → 頂点ハンドル優先 → 辺平行移動 → 通常ヒットテスト
+    // 部屋選択中 → Shift+壁クリックで壁選択 / 頂点・辺ドラッグ
     if (this.ui.selection?.kind === 'room') {
       const room = this._floor().rooms.find((r) => r.id === this.ui.selection.id);
       if (room) {
+        if (e.shiftKey) {
+          const wall = this._wallHitTest(sx, sy);
+          if (wall) {
+            this._selectWall(wall, true);
+            this.draw();
+            return;
+          }
+        }
         const vi = this._vertexHandleAt(room, sx, sy);
         if (vi >= 0) {
           this.drag = { kind: 'vertex', roomId: room.id, index: vi };
@@ -801,10 +844,20 @@ export class Editor2D {
       }
     }
 
-    const hit = this._hitTest(w);
+    const hit = this._hitTest(w, sx, sy);
+    if (hit?.kind === 'wall') {
+      this._selectWall(hit.wall, e.shiftKey);
+      this.hoverVertex = null;
+      this.hoverEdge = null;
+      this.hoverWallKey = M.wallEdgeKeyFromWall(hit.wall);
+      this.onUI();
+      this.draw();
+      return;
+    }
     this.ui.selection = hit;
     this.hoverVertex = null;
     this.hoverEdge = null;
+    this.hoverWallKey = null;
     this.onUI();
     if (hit) {
       if (hit.kind === 'furniture') {
@@ -834,6 +887,13 @@ export class Editor2D {
       } else if (hit.kind === 'room') {
         this.drag = { kind: 'move-room', id: hit.id, startW: w };
       }
+    } else if (tool === 'select') {
+      this.drag = {
+        kind: 'marquee',
+        sx, sy, ex: sx, ey: sy,
+        additive: e.shiftKey,
+      };
+      if (!e.shiftKey) this.ui.selection = null;
     }
     this.draw();
   }
@@ -875,6 +935,13 @@ export class Editor2D {
     if (d.kind === 'pan') {
       this.cam.panX = d.panX + (sx - d.sx);
       this.cam.panY = d.panY + (sy - d.sy);
+      this.draw();
+      return;
+    }
+
+    if (d.kind === 'marquee') {
+      d.ex = sx;
+      d.ey = sy;
       this.draw();
       return;
     }
@@ -1029,6 +1096,22 @@ export class Editor2D {
 
     this.drag = null;
 
+    if (d.kind === 'marquee') {
+      const keys = this._wallsInMarquee(d.sx, d.sy, d.ex, d.ey);
+      if (keys.length) {
+        if (d.additive && this.ui.selection?.kind === 'wall') {
+          const merged = new Set(this.ui.selection.edgeKeys);
+          for (const k of keys) merged.add(k);
+          this.ui.selection = { kind: 'wall', edgeKeys: [...merged] };
+        } else {
+          this.ui.selection = { kind: 'wall', edgeKeys: keys };
+        }
+        this.onUI();
+      }
+      this.draw();
+      return;
+    }
+
     if (d.kind === 'room') {
       const a = d.start, b = d.cur;
       if (Math.abs(a.x - b.x) >= 100 && Math.abs(a.z - b.z) >= 100) {
@@ -1069,7 +1152,56 @@ export class Editor2D {
   }
 
   // ---- ヒットテスト ---------------------------------------------------------
-  _hitTest(w) {
+  _wallHitTest(sx, sy, hitPx = 16) {
+    const floor = this._floor();
+    let best = null;
+    let bestDist = hitPx;
+    for (const wall of floor.walls) {
+      if (M.isWallEdgeRemoved(floor, wall)) continue;
+      const sa = this.worldToScreen(wall.start.x, wall.start.z);
+      const sb = this.worldToScreen(wall.end.x, wall.end.z);
+      const d = _ptSegDistScreen(sx, sy, sa, sb);
+      if (d <= bestDist) {
+        bestDist = d;
+        best = wall;
+      }
+    }
+    return best;
+  }
+
+  _wallsInMarquee(sx0, sy0, sx1, sy1) {
+    const floor = this._floor();
+    const seen = new Set();
+    const keys = [];
+    for (const wall of floor.walls) {
+      if (M.isWallEdgeRemoved(floor, wall)) continue;
+      const key = M.wallEdgeKeyFromWall(wall);
+      if (seen.has(key)) continue;
+      const sa = this.worldToScreen(wall.start.x, wall.start.z);
+      const sb = this.worldToScreen(wall.end.x, wall.end.z);
+      if (_segIntersectsRect(sa.x, sa.y, sb.x, sb.y, sx0, sy0, sx1, sy1)) {
+        seen.add(key);
+        keys.push(key);
+      }
+    }
+    return keys;
+  }
+
+  _selectWall(wall, additive = false) {
+    const key = M.wallEdgeKeyFromWall(wall);
+    if (additive && this.ui.selection?.kind === 'wall') {
+      const keys = [...this.ui.selection.edgeKeys];
+      const idx = keys.indexOf(key);
+      if (idx >= 0) keys.splice(idx, 1);
+      else keys.push(key);
+      this.ui.selection = keys.length ? { kind: 'wall', edgeKeys: keys } : null;
+    } else {
+      this.ui.selection = { kind: 'wall', edgeKeys: [key] };
+    }
+    this.onUI();
+  }
+
+  _hitTest(w, sx, sy) {
     const floor = this._floor();
     // 家具優先
     for (let i = (floor.furniture || []).length - 1; i >= 0; i--) {
@@ -1089,12 +1221,15 @@ export class Editor2D {
     const opHit = 12 / this.cam.scale;
     for (const op of (floor.openings || [])) {
       const wl = floor.walls.find((x) => x.id === op.wallId);
-      if (!wl) continue;
+      if (!wl || M.isWallEdgeRemoved(floor, wl)) continue;
       const pts = this._openingWorldPoints(wl, op);
       if (pts && _ptSegDist(w, pts.start, pts.end) <= opHit) {
         return { kind: 'opening', id: op.id };
       }
     }
+    // 壁（部屋より優先 — 画面上の距離で判定）
+    const wall = this._wallHitTest(sx, sy);
+    if (wall) return { kind: 'wall', wall };
     // 部屋
     for (let i = (floor.rooms || []).length - 1; i >= 0; i--) {
       const room = floor.rooms[i];
@@ -1124,6 +1259,7 @@ export class Editor2D {
     const floor = this._floor();
     const HIT = 12 / this.cam.scale;
     for (const wall of floor.walls) {
+      if (M.isWallEdgeRemoved(floor, wall)) continue;
       if (_ptSegDist(w, wall.start, wall.end) <= HIT) return wall;
     }
     return null;
@@ -1153,6 +1289,16 @@ export class Editor2D {
       if (!wall) return false;
       const pts = this._openingWorldPoints(wall, op);
       return pts ? _ptSegDist(w, pts.start, pts.end) <= 15 / this.cam.scale : false;
+    }
+    if (sel.kind === 'wall') {
+      for (const key of sel.edgeKeys) {
+        const wall = floor.walls.find((wl) => M.wallEdgeKeyFromWall(wl) === key);
+        if (!wall || M.isWallEdgeRemoved(floor, wall)) continue;
+        const sa = this.worldToScreen(wall.start.x, wall.start.z);
+        const sb = this.worldToScreen(wall.end.x, wall.end.z);
+        if (_ptSegDistScreen(sx, sy, sa, sb) <= 16) return true;
+      }
+      return false;
     }
     return false;
   }
@@ -1207,7 +1353,9 @@ export class Editor2D {
   // ドラッグなし時のホバー更新（カーソル変化・辺ハイライト）
   _updateHover(sx, sy) {
     let hv = null, he = null;
+    let nextWallKey = this.hoverWallKey;
     if (this.ui.tool === 'select' && this.ui.selection?.kind === 'room') {
+      nextWallKey = null;
       const room = this._floor().rooms.find((r) => r.id === this.ui.selection.id);
       if (room) {
         const vi = this._vertexHandleAt(room, sx, sy);
@@ -1228,6 +1376,7 @@ export class Editor2D {
         this.canvas.style.cursor = '';
       }
     } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'furniture') {
+      nextWallKey = null;
       const f = (this._floor().furniture || []).find((x) => x.id === this.ui.selection.id);
       if (f) {
         if (this._furnitureRotateHandleHit(f, sx, sy)) {
@@ -1239,6 +1388,7 @@ export class Editor2D {
         this.canvas.style.cursor = '';
       }
     } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'stair') {
+      nextWallKey = null;
       const s = (this._floor().stairs || []).find((x) => x.id === this.ui.selection.id);
       if (s) {
         if (this._stairRotateHandleHit(s, sx, sy)) {
@@ -1257,6 +1407,7 @@ export class Editor2D {
         this.canvas.style.cursor = '';
       }
     } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'opening') {
+      nextWallKey = null;
       const op = (this._floor().openings || []).find((o) => o.id === this.ui.selection.id);
       const wall = op ? this._floor().walls.find((w) => w.id === op.wallId) : null;
       if (op?.type === 'door' && wall && this._doorRotateHandleHit(op, wall, sx, sy)) {
@@ -1266,13 +1417,20 @@ export class Editor2D {
       } else {
         this.canvas.style.cursor = '';
       }
+    } else if (this.ui.tool === 'select') {
+      const wall = this._wallHitTest(sx, sy);
+      this.canvas.style.cursor = wall ? 'pointer' : '';
+      nextWallKey = wall ? M.wallEdgeKeyFromWall(wall) : null;
     } else {
+      nextWallKey = null;
       this.canvas.style.cursor = '';
     }
     const changed = JSON.stringify(hv) !== JSON.stringify(this.hoverVertex)
-      || JSON.stringify(he) !== JSON.stringify(this.hoverEdge);
+      || JSON.stringify(he) !== JSON.stringify(this.hoverEdge)
+      || nextWallKey !== this.hoverWallKey;
     this.hoverVertex = hv;
     this.hoverEdge = he;
+    this.hoverWallKey = nextWallKey;
     if (changed) this.draw();
   }
 
@@ -1402,6 +1560,8 @@ export class Editor2D {
         floor.stairs = (floor.stairs || []).filter((s) => s.id !== sel.id);
       } else if (sel.kind === 'opening') {
         floor.openings = (floor.openings || []).filter((o) => o.id !== sel.id);
+      } else if (sel.kind === 'wall') {
+        M.removeWallEdges(floor, sel.edgeKeys);
       }
     });
     this.ui.selection = null;
@@ -1559,6 +1719,12 @@ export class Editor2D {
       } else if (sel.kind === 'opening') {
         const o = (floor.openings || []).find((x) => x.id === sel.id);
         if (o) mutator(o);
+      } else if (sel.kind === 'wall') {
+        for (const key of sel.edgeKeys) {
+          for (const w of floor.walls) {
+            if (M.wallEdgeKeyFromWall(w) === key) mutator(w);
+          }
+        }
       }
     });
     this.onUI();
@@ -1833,9 +1999,15 @@ export class Editor2D {
 
     for (const room of floor.rooms) this._drawRoom(ctx, room);
     for (const wall of floor.walls) this._drawWall(ctx, wall);
-    for (const op of (floor.openings || [])) this._drawOpeningSymbol(ctx, op);
+    for (const op of (floor.openings || [])) {
+      const wl = floor.walls.find((w) => w.id === op.wallId);
+      if (wl && M.isWallEdgeRemoved(floor, wl)) continue;
+      this._drawOpeningSymbol(ctx, op);
+    }
     for (const s of (floor.stairs || [])) this._drawStair(ctx, s, false);
     for (const f of floor.furniture) this._drawFurniture(ctx, f);
+    this._drawWallHover(ctx);
+    if (this.drag?.kind === 'marquee') this._drawMarquee(ctx);
     this._drawSelection(ctx);
     const guideF = this._activeFurnitureForGuides();
     if (guideF) this._drawFurnitureDistanceGuides(ctx, guideF, floor);
@@ -2138,12 +2310,25 @@ export class Editor2D {
     }
   }
 
+  _openingsOnWall(floor, wall) {
+    const key = _edgeKey(wall.start, wall.end);
+    const seen = new Set();
+    const ops = [];
+    for (const op of (floor.openings || [])) {
+      const opWall = floor.walls.find((w) => w.id === op.wallId);
+      if (!opWall || _edgeKey(opWall.start, opWall.end) !== key) continue;
+      if (seen.has(op.id)) continue;
+      seen.add(op.id);
+      ops.push(op);
+    }
+    return ops.sort((a, b) => a.offsetMM - b.offsetMM);
+  }
+
   _drawWall(ctx, wall, opts = {}) {
     const floor = opts.floor || this._floor();
+    if (M.isWallEdgeRemoved(floor, wall)) return;
     const isRef = !!opts.isRef;
-    const ops = (floor.openings || [])
-      .filter((o) => o.wallId === wall.id)
-      .sort((a, b) => a.offsetMM - b.offsetMM);
+    const ops = this._openingsOnWall(floor, wall);
 
     const ax = wall.start.x, az = wall.start.z;
     const bx = wall.end.x, bz = wall.end.z;
@@ -2272,22 +2457,42 @@ export class Editor2D {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
 
-    const faceSign = opening.wallFaceSign ?? 1;
     const isSelected = this.ui.selection?.kind === 'opening'
       && this.ui.selection.id === opening.id
       && this.ui.tool === 'select';
 
-    // 壁厚の片側に平行線2本
-    for (const offset of [0.45, 0.58]) {
-      const p1 = this.worldToScreen(
-        ax + ux * oStart + nx * halfT * offset * faceSign,
-        az + uz * oStart + nz * halfT * offset * faceSign,
-      );
-      const p2 = this.worldToScreen(
-        ax + ux * oEnd + nx * halfT * offset * faceSign,
-        az + uz * oEnd + nz * halfT * offset * faceSign,
-      );
-      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+    // 壁厚の内外両面にガラス二重線（wallFaceSign は回転ハンドル用のみ）
+    for (const sign of [-1, 1]) {
+      for (const offset of [0.45, 0.58]) {
+        const p1 = this.worldToScreen(
+          ax + ux * oStart + nx * halfT * offset * sign,
+          az + uz * oStart + nz * halfT * offset * sign,
+        );
+        const p2 = this.worldToScreen(
+          ax + ux * oEnd + nx * halfT * offset * sign,
+          az + uz * oEnd + nz * halfT * offset * sign,
+        );
+        ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      }
+    }
+    // 掃き出し窓：中央のスライド扉分割線
+    if (opening.type === 'sliding') {
+      const midMM = (oStart + oEnd) / 2;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = '#3a7a96';
+      for (const sign of [-1, 1]) {
+        const pA = this.worldToScreen(
+          ax + ux * midMM + nx * halfT * 0.52 * sign,
+          az + uz * midMM + nz * halfT * 0.52 * sign,
+        );
+        const pB = this.worldToScreen(
+          ax + ux * midMM - nx * halfT * 0.52 * sign,
+          az + uz * midMM - nz * halfT * 0.52 * sign,
+        );
+        ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke();
+      }
+      ctx.setLineDash([]);
     }
     // 両端のキャップ線
     ctx.lineWidth = 1;
@@ -2445,6 +2650,52 @@ export class Editor2D {
     }
   }
 
+  _drawWallEdgeKeys(ctx, edgeKeys, color, lineWidth = 3, dash = [6, 4]) {
+    const floor = this._floor();
+    const drawn = new Set();
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    if (dash?.length) ctx.setLineDash(dash);
+    for (const key of edgeKeys) {
+      if (drawn.has(key)) continue;
+      const wall = floor.walls.find((w) => M.wallEdgeKeyFromWall(w) === key);
+      if (!wall || M.isWallEdgeRemoved(floor, wall)) continue;
+      drawn.add(key);
+      const sa = this.worldToScreen(wall.start.x, wall.start.z);
+      const sb = this.worldToScreen(wall.end.x, wall.end.z);
+      ctx.beginPath();
+      ctx.moveTo(sa.x, sa.y);
+      ctx.lineTo(sb.x, sb.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  _drawWallHover(ctx) {
+    if (!this.hoverWallKey || this.ui.tool !== 'select') return;
+    const sel = this.ui.selection;
+    if (sel?.kind === 'wall' && sel.edgeKeys.includes(this.hoverWallKey)) return;
+    this._drawWallEdgeKeys(ctx, [this.hoverWallKey], 'rgba(90, 150, 220, 0.85)', 3, []);
+  }
+
+  _drawMarquee(ctx) {
+    const d = this.drag;
+    if (!d || d.kind !== 'marquee') return;
+    const x = Math.min(d.sx, d.ex);
+    const y = Math.min(d.sy, d.ey);
+    const w = Math.abs(d.ex - d.sx);
+    const h = Math.abs(d.ey - d.sy);
+    ctx.save();
+    ctx.fillStyle = 'rgba(44, 123, 229, 0.08)';
+    ctx.strokeStyle = 'rgba(44, 123, 229, 0.75)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  }
+
   _drawSelection(ctx) {
     const sel = this.ui.selection;
     if (!sel) return;
@@ -2491,6 +2742,13 @@ export class Editor2D {
           }
         }
       }
+    } else if (sel.kind === 'wall') {
+      ctx.restore();
+      this._drawWallEdgeKeys(ctx, sel.edgeKeys, '#f5a623', 5, [6, 4]);
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#f5a623';
     }
     ctx.restore();
   }

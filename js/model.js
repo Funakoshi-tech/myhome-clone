@@ -341,7 +341,115 @@ export function pointInOrientedRect(pt, cx, cz, w, d, rotationDeg) {
   return Math.abs(lx) <= w / 2 && Math.abs(lz) <= d / 2;
 }
 
+// ---- 屋根自動生成（部屋単位・上階重なり判定）--------------------------------
+/** 屋根を付けない部屋種別 */
+export const NO_AUTO_ROOF_TYPES = new Set(['balcony', 'fukinuke']);
+/** 上階で「構造」とみなさない部屋（下階への遮蔽なし） */
+export const UPPER_OPEN_ROOF_TYPES = new Set(['balcony', 'fukinuke']);
+
+function _cross2D(o, a, b) {
+  return (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+}
+
+function _onSegment2D(a, b, c) {
+  return Math.min(a.x, c.x) - 1e-6 <= b.x && b.x <= Math.max(a.x, c.x) + 1e-6
+    && Math.min(a.z, c.z) - 1e-6 <= b.z && b.z <= Math.max(a.z, c.z) + 1e-6;
+}
+
+function _segmentsIntersect2D(a1, a2, b1, b2) {
+  const d1 = _cross2D(a1, a2, b1);
+  const d2 = _cross2D(a1, a2, b2);
+  const d3 = _cross2D(b1, b2, a1);
+  const d4 = _cross2D(b1, b2, a2);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+    && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  if (Math.abs(d1) < 1e-9 && _onSegment2D(a1, b1, a2)) return true;
+  if (Math.abs(d2) < 1e-9 && _onSegment2D(a1, b2, a2)) return true;
+  if (Math.abs(d3) < 1e-9 && _onSegment2D(b1, a1, b2)) return true;
+  if (Math.abs(d4) < 1e-9 && _onSegment2D(b1, a2, b2)) return true;
+  return false;
+}
+
+/** 2 ポリゴン（XZ）が重なるか */
+export function polygonsOverlapXZ(polyA, polyB) {
+  if (!polyA?.length || !polyB?.length || polyA.length < 3 || polyB.length < 3) return false;
+  for (const p of polyA) {
+    if (pointInPolygon(p, polyB)) return true;
+  }
+  for (const p of polyB) {
+    if (pointInPolygon(p, polyA)) return true;
+  }
+  const ca = polygonCentroid(polyA);
+  const cb = polygonCentroid(polyB);
+  if (pointInPolygon(ca, polyB) || pointInPolygon(cb, polyA)) return true;
+  for (let i = 0; i < polyA.length; i++) {
+    const a1 = polyA[i], a2 = polyA[(i + 1) % polyA.length];
+    for (let j = 0; j < polyB.length; j++) {
+      const b1 = polyB[j], b2 = polyB[(j + 1) % polyB.length];
+      if (_segmentsIntersect2D(a1, a2, b1, b2)) return true;
+    }
+  }
+  return false;
+}
+
+/** 上階にこの部屋と重なる構造（部屋・階段）があるか */
+export function roomHasUpperStructureOverlap(room, upperFloor) {
+  if (!room?.polygon || room.polygon.length < 3 || !upperFloor) return false;
+  for (const ur of upperFloor.rooms || []) {
+    if (UPPER_OPEN_ROOF_TYPES.has(ur.type)) continue;
+    if (ur.polygon?.length >= 3 && polygonsOverlapXZ(room.polygon, ur.polygon)) return true;
+  }
+  for (const stair of upperFloor.stairs || []) {
+    if (polygonsOverlapXZ(room.polygon, stairFootprintCorners(stair))) return true;
+  }
+  return false;
+}
+
+/** 平板屋根を自動生成すべき部屋か（バルコニー・吹抜け除外、上階構造なし） */
+export function roomNeedsAutoRoof(room, floor, plan) {
+  if (!room?.polygon || room.polygon.length < 3) return false;
+  if (NO_AUTO_ROOF_TYPES.has(room.type)) return false;
+  const upper = getUpperFloor(plan, floor.id);
+  if (!upper) return true;
+  return !roomHasUpperStructureOverlap(room, upper);
+}
+
 // ---- 壁の自動生成 -----------------------------------------------------------
+/** 壁辺の決定論的キー（共有壁の同一判定に使用） */
+export function wallEdgeKey(start, end) {
+  const r = (v) => Math.round(v);
+  const p1 = `${r(start.x)},${r(start.z)}`;
+  const p2 = `${r(end.x)},${r(end.z)}`;
+  return p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
+}
+
+export function wallEdgeKeyFromWall(wall) {
+  return wallEdgeKey(wall.start, wall.end);
+}
+
+export function isWallEdgeRemoved(floor, wall) {
+  return (floor.removedWallEdges || []).includes(wallEdgeKeyFromWall(wall));
+}
+
+export function removeWallEdges(floor, edgeKeys) {
+  if (!edgeKeys?.length) return;
+  if (!floor.removedWallEdges) floor.removedWallEdges = [];
+  for (const key of edgeKeys) {
+    if (!floor.removedWallEdges.includes(key)) floor.removedWallEdges.push(key);
+  }
+  const removed = new Set(edgeKeys);
+  floor.openings = (floor.openings || []).filter((op) => {
+    const w = floor.walls.find((wl) => wl.id === op.wallId);
+    return w && !removed.has(wallEdgeKeyFromWall(w));
+  });
+}
+
+export function pruneRemovedWallEdges(floor) {
+  if (!floor.removedWallEdges?.length) return;
+  const live = new Set((floor.walls || []).map(wallEdgeKeyFromWall));
+  floor.removedWallEdges = floor.removedWallEdges.filter((k) => live.has(k));
+}
+
 // 部屋ポリゴンの外周に沿って壁セグメントを生成する（MVP）。
 export function wallsFromPolygon(polygon, { thicknessMM = 120, heightMM = 2400 } = {}) {
   const walls = [];
@@ -392,6 +500,7 @@ export function rebuildFloorWalls(floor, plan = null) {
     }
   }
   floor.walls = walls;
+  pruneRemovedWallEdges(floor);
 }
 
 // ポリゴン全体を平行移動
@@ -408,6 +517,7 @@ export function defaultFloor(id, level) {
     rooms: [],
     walls: [],
     openings: [], // フェーズAでは空（スキーマのみ）
+    removedWallEdges: [], // 消去済み壁辺（edgeKey の配列）
     furniture: [],
     stairs: [],   // 独立した階段カテゴリ
   };
@@ -521,6 +631,7 @@ export function normalizePlan(plan) {
     rooms: Array.isArray(f.rooms) ? f.rooms : [],
     walls: Array.isArray(f.walls) ? f.walls : [],
     openings: Array.isArray(f.openings) ? f.openings : [],
+    removedWallEdges: Array.isArray(f.removedWallEdges) ? f.removedWallEdges : [],
     furniture: Array.isArray(f.furniture) ? f.furniture : [],
     stairs: Array.isArray(f.stairs) ? f.stairs : [],
   }));
