@@ -640,6 +640,12 @@ export class Editor2D {
     window.addEventListener('pointerup', (e) => this._onUp(e));
     c.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
     c.addEventListener('contextmenu', (e) => e.preventDefault());
+    // 表示バーの出入りなどでキャンバスの実サイズが変わっても、内部解像度と座標変換を実サイズに合わせ続ける
+    // （合わないと描画が伸縮して、クリック位置と描画位置がずれる）
+    if (typeof ResizeObserver !== 'undefined') {
+      this._resizeObserver = new ResizeObserver(() => this.resize());
+      this._resizeObserver.observe(c);
+    }
     window.addEventListener('keydown', (e) => this._onKey(e));
     window.addEventListener('keyup', (e) => { if (e.code === 'Space') this._space = false; });
   }

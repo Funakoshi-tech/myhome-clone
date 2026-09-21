@@ -160,6 +160,11 @@ export class Viewer3D {
 
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
+    // 表示バーの出入りなどでコンテナの実サイズが変わったときも追従する（下に余白が出るのを防ぐ）
+    if (typeof ResizeObserver !== 'undefined') {
+      this._resizeObserver = new ResizeObserver(() => { if (this.active) this.resize(); });
+      this._resizeObserver.observe(this.container);
+    }
 
     this.interior = new InteriorMode(this);
   }
