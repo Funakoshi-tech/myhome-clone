@@ -233,6 +233,10 @@ export class Editor2D {
         items.push({ label: '上下反転', action: () => this._toggleDoorFlip('flipUD') });
       }
     }
+    if (sel.kind === 'furniture') {
+      items.push({ label: '左右反転', action: () => this.flipSelectedFurniture('flipLR') });
+      items.push({ label: '上下反転', action: () => this.flipSelectedFurniture('flipUD') });
+    }
     items.push({ label: '削除', action: () => this._deleteSelection(), danger: true });
     return items;
   }
@@ -2100,6 +2104,12 @@ export class Editor2D {
     this.onUI();
   }
 
+  /** 家具の反転（field: 'flipLR'=左右 / 'flipUD'=上下）。家具自身の向きを基準にした鏡像 */
+  flipSelectedFurniture(field) {
+    if (this.ui.selection?.kind !== 'furniture') return;
+    this.applyToSelection((f) => { f[field] = !f[field]; });
+  }
+
   rotateSelectedStair(deg) {
     const sel = this.ui.selection;
     if (!sel || sel.kind !== 'stair') return;
@@ -3870,6 +3880,7 @@ export class Editor2D {
         ctx.save();
         ctx.translate(sc.x, sc.y);
         ctx.rotate((f.rotationDeg || 0) * Math.PI / 180);
+        ctx.scale(f.flipLR ? -1 : 1, f.flipUD ? -1 : 1); // 反転は家具自身の向きが基準（回転の後に適用）
         ctx.drawImage(icon, -hw, -hd, hw * 2, hd * 2);
         ctx.restore();
       } else if (icon === undefined) {

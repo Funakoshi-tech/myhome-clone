@@ -1184,6 +1184,7 @@ export class Viewer3D {
     const group = new THREE.Group();
     group.position.set(f.x * MM, (f.y || 0) * MM, f.z * MM);
     group.rotation.y = -((f.rotationDeg || 0) * Math.PI) / 180;
+    group.scale.set(f.flipLR ? -1 : 1, 1, f.flipUD ? -1 : 1); // 反転は家具自身の向きが基準（回転より先に適用される）
     group.userData = { kind: 'furniture', roomId: null };
 
     if (modelPath) {
