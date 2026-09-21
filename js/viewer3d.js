@@ -317,7 +317,6 @@ export class Viewer3D {
       if (!showAll && lower?.stairs?.length) {
         const riseMM = lower.ceilingHeightMM || 2400;
         const riseM = riseMM * MM;
-        const upper = M.getUpperFloor(plan, floor.id);
         const plateMat = this._floorMaterial('#c9ad88');
         for (const s of lower.stairs) {
           const plate = this._buildStairFloorPlate(s, plateMat, -riseM + 0.005);
@@ -325,7 +324,7 @@ export class Viewer3D {
             plate.userData = { kind: 'stair-floor' };
             g.add(plate);
           }
-          const obj = this._buildStair(s, riseMM, lower, upper);
+          const obj = this._buildStair(s, riseMM, lower);
           if (obj) {
             obj.position.y = -riseM;
             g.add(obj);
@@ -565,7 +564,7 @@ export class Viewer3D {
         mesh.userData = { roomId: null, kind: 'stair' };
         fg.add(mesh);
       } else {
-        const obj = this._buildStair(s, riseMM, floor, upper);
+        const obj = this._buildStair(s, riseMM, floor);
         if (obj) fg.add(obj);
       }
     }
@@ -1204,7 +1203,7 @@ export class Viewer3D {
     this._addStairTread(group, 0, h - treadThick / 2, -d / 2 + stepD * 0.46, treadW, stepD * 0.88, mat, treadThick);
   }
 
-  _buildLStair3D(group, w, d, h, mat, riserMat) {
+  _buildLStair3D(group, w, d, h, mat) {
     const nSteps = Math.max(6, Math.min(16, Math.round((d + w) / 0.28)));
     const nV = Math.max(3, Math.round(nSteps * 0.6));
     const nH = Math.max(2, nSteps - nV);
@@ -1234,7 +1233,7 @@ export class Viewer3D {
     this._addStairTread(group, -w / 2 + stepW2 * 0.46, h - treadThick / 2, 0, stepW2 * 0.88, runW * 0.88, mat, treadThick);
   }
 
-  _buildUStair3D(group, w, d, h, mat, riserMat) {
+  _buildUStair3D(group, w, d, h, mat) {
     const nSteps = Math.max(6, Math.min(18, Math.round(d * 2 / 0.23)));
     const nHalf = Math.max(3, Math.round(nSteps / 2));
     const stepH = h / nSteps;
@@ -1360,7 +1359,7 @@ export class Viewer3D {
     }
   }
 
-  _buildStair(stair, riseMM, sourceFloor, upperFloor) {
+  _buildStair(stair, riseMM, sourceFloor) {
     const w = stair.widthMM * MM;
     const d = stair.depthMM * MM;
     const h = riseMM * MM;
@@ -1384,10 +1383,10 @@ export class Viewer3D {
 
     switch (stairType) {
       case 'l_shape':
-        this._buildLStair3D(group, w, d, h, mat, riserMat);
+        this._buildLStair3D(group, w, d, h, mat);
         break;
       case 'u_shape':
-        this._buildUStair3D(group, w, d, h, mat, riserMat);
+        this._buildUStair3D(group, w, d, h, mat);
         break;
       case 'winding':
         this._buildWindingStair3D(group, w, d, h, mat);

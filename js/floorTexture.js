@@ -1,7 +1,7 @@
 // floorTexture.js — 床テクスチャの生成・読込・UV・マテリアル
 
 import * as THREE from 'three';
-import { FLOORING_TYPES, getFlooring } from './catalog.js';
+import { FLOORING_TYPES } from './catalog.js';
 
 const MM = 0.001;
 

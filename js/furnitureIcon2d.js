@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
-import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
+import { tintVehicleBody } from './vehicleTint.js';
 
 const MM = 0.001;
 const ICON_PX = 256;

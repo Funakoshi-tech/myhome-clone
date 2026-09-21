@@ -195,7 +195,7 @@ export class PlanList {
     menuBtn.textContent = '⋯';
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      this._toggleMenu(card, menuBtn, id);
+      this._toggleMenu(card);
     });
     head.appendChild(menuBtn);
     card.appendChild(head);
@@ -296,7 +296,7 @@ export class PlanList {
     return card;
   }
 
-  _toggleMenu(card, btn, id) {
+  _toggleMenu(card) {
     const open = card.classList.contains('menu-open');
     this._closeMenus();
     if (!open) {

@@ -3287,10 +3287,10 @@ export class Editor2D {
     if (opening.type === 'maguchi') {
       this._drawMaguchiSymbol(ctx, wall, opening, { isSelected });
       if (isSelected) {
-        const pts = this._openingWorldPoints(wall, opening);
-        if (pts) {
-          const sa = this.worldToScreen(pts.start.x, pts.start.z);
-          const sb = this.worldToScreen(pts.end.x, pts.end.z);
+        const capPts = this._openingWorldPoints(wall, opening);
+        if (capPts) {
+          const sa = this.worldToScreen(capPts.start.x, capPts.start.z);
+          const sb = this.worldToScreen(capPts.end.x, capPts.end.z);
           ctx.fillStyle = '#ffffff';
           ctx.strokeStyle = '#2c7be5';
           ctx.lineWidth = 2;

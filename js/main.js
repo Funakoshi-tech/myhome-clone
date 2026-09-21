@@ -929,8 +929,8 @@ function buildProps() {
 
     body.appendChild(field('壁厚 (mm)', inputNumber(sample.thicknessMM ?? 120, (v) => {
       const t = Math.max(50, Math.round(v));
-      store.update((plan) => {
-        const fl = M.getFloor(plan, ui.floorId);
+      store.update((draft) => {
+        const fl = M.getFloor(draft, ui.floorId);
         for (const key of keys) {
           for (const w of fl.walls) {
             if (M.wallEdgeKeyFromWall(w) === key) w.thicknessMM = t;
