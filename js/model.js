@@ -456,26 +456,46 @@ export function floorCeilingMM(floor, fallback = DEFAULT_CEILING_MM) {
   return floor?.ceilingHeightMM ?? fallback;
 }
 
-/** バルコニーの屋外側の壁（手すり壁）の高さ（mm） */
+/** バルコニーの屋外側の壁（手すり壁）の既定の高さ（mm） */
 export const BALCONY_PARAPET_MM = 1500;
+/** 手すり壁の高さの下限（mm） */
+export const MIN_BALCONY_PARAPET_MM = 300;
+
+/**
+ * バルコニーの手すり壁の高さ（mm）。部屋ごとに room.parapetHeightMM で指定でき、未指定なら既定値。
+ * 下限（300mm）と階の天井高の範囲に収める。
+ */
+export function balconyParapetMM(room, ceilingMM) {
+  const v = Number(room?.parapetHeightMM);
+  const h = Number.isFinite(v) && v > 0 ? v : BALCONY_PARAPET_MM;
+  return Math.min(Math.max(Math.round(h), MIN_BALCONY_PARAPET_MM), ceilingMM);
+}
 
 /**
  * 壁の高さを部屋の種類から決める。
  * バルコニーの屋外側の辺だけ手すり壁の高さ、それ以外（居室の壁・バルコニーと居室が共有する建物側の壁）は階の天井高。
- * 辺は壁辺キーで比べるので、居室の壁と辺の座標が完全に一致する辺だけが「共有」とみなされる。
+ * 「居室と共有する辺」は、辺の座標が居室の壁と一致するか、辺の中点が居室の壁の上にある（同一直線上）辺とみなす。
+ * バルコニーが 2 つ並んで 1 つの居室の壁に接する場合のように、辺の一部だけが居室の壁と重なる場合にも対応するが、
+ * 辺の途中で共有と屋外が切り替わる場合（バルコニーが居室より長い等）は、辺全体を中点の側に揃える。
  */
 export function applyWallHeights(floor) {
   const ceiling = floorCeilingMM(floor);
   const roomById = new Map((floor.rooms || []).map((r) => [r.id, r]));
-  const indoorEdgeKeys = new Set();
+  const indoorWalls = (floor.walls || []).filter((w) => {
+    const room = roomById.get(inferWallRoomId(w));
+    return room && !isOutdoorRoom(room);
+  });
+  const indoorEdgeKeys = new Set(indoorWalls.map((w) => wallEdgeKeyFromWall(w)));
+  const sharedWithIndoor = (w) => {
+    if (indoorEdgeKeys.has(wallEdgeKeyFromWall(w))) return true;
+    const mid = { x: (w.start.x + w.end.x) / 2, z: (w.start.z + w.end.z) / 2 };
+    return indoorWalls.some((iw) =>
+      _segmentsParallel(w.start, w.end, iw.start, iw.end) && pointToSegmentDist(mid, iw.start, iw.end) < 5);
+  };
   for (const w of floor.walls || []) {
     const room = roomById.get(inferWallRoomId(w));
-    if (room && !isOutdoorRoom(room)) indoorEdgeKeys.add(wallEdgeKeyFromWall(w));
-  }
-  for (const w of floor.walls || []) {
-    const room = roomById.get(inferWallRoomId(w));
-    const parapet = room?.type === 'balcony' && !indoorEdgeKeys.has(wallEdgeKeyFromWall(w));
-    w.heightMM = parapet ? Math.min(BALCONY_PARAPET_MM, ceiling) : ceiling;
+    const parapet = room?.type === 'balcony' && !sharedWithIndoor(w);
+    w.heightMM = parapet ? balconyParapetMM(room, ceiling) : ceiling;
   }
 }
 

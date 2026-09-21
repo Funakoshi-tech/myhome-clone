@@ -716,6 +716,19 @@ function buildProps() {
     });
     body.appendChild(field('種別', typeSel));
 
+    // バルコニー：屋外側の手すり壁の高さ
+    if (r.type === 'balcony') {
+      const ceiling = M.floorCeilingMM(floor);
+      const parapetInput = inputNumber(M.balconyParapetMM(r, ceiling), (v) => {
+        editor.applyToSelection((room) => { room.parapetHeightMM = M.balconyParapetMM({ parapetHeightMM: v }, ceiling); });
+      });
+      parapetInput.min = String(M.MIN_BALCONY_PARAPET_MM);
+      parapetInput.max = String(ceiling);
+      parapetInput.step = '50';
+      body.appendChild(field('手すりの高さ (mm)', parapetInput));
+      body.appendChild(propNote('屋外側の壁の高さです。居室と共有する壁は天井高のままです。'));
+    }
+
     // 床材
     const floorSel = document.createElement('select');
     const currentFlooring = flooringForRoom(r);
@@ -940,8 +953,8 @@ function buildProps() {
       body.appendChild(field(`辺${i + 1}（頂点${i + 1}→${j + 1}） mm`,
         inputNumber(Math.round(SITE.edgeLengthMM(b, i)), (v) => editor.setSiteEdgeLength(i, v))));
     });
-    body.appendChild(sitePropNote(`内角: ${b.map((_, i) => `${i + 1}: ${SITE.interiorAngleDeg(b, i).toFixed(1)}°`).join(' / ')}`));
-    body.appendChild(sitePropNote('辺の長さを変えると、その辺の終点の頂点が辺に沿って動きます（次の辺の長さ・角度が変わります）。頂点は図上でドラッグ、右クリックで追加・削除できます。'));
+    body.appendChild(propNote(`内角: ${b.map((_, i) => `${i + 1}: ${SITE.interiorAngleDeg(b, i).toFixed(1)}°`).join(' / ')}`));
+    body.appendChild(propNote('辺の長さを変えると、その辺の終点の頂点が辺に沿って動きます（次の辺の長さ・角度が変わります）。頂点は図上でドラッグ、右クリックで追加・削除できます。'));
     body.appendChild(deleteButton('敷地を削除'));
   } else if (sel.kind === 'wall') {
     const keys = sel.edgeKeys || [];
@@ -1041,7 +1054,7 @@ function checkRow(label, checked, onChange) {
   return row;
 }
 /** プロパティ欄の補足文（長文でも読みやすいよう小さく表示） */
-function sitePropNote(text) {
+function propNote(text) {
   const p = document.createElement('p');
   p.className = 'pane-hint';
   p.textContent = text;

@@ -83,3 +83,71 @@ test('wallsToRender: 居室とバルコニーの共有壁は 1 本に合成さ�
     assert.equal(M.inferWallRoomId(shared[0].wall), 'R', `balconyFirst=${balconyFirst}`);
   }
 });
+
+// ---- バルコニーごとの手すり壁の高さ（room.parapetHeightMM） ----
+
+test('手すり壁の高さは部屋ごとに指定でき、未指定は既定値（1500）', () => {
+  const ceiling = 2400;
+  assert.equal(M.balconyParapetMM({}, ceiling), 1500);
+  assert.equal(M.balconyParapetMM(undefined, ceiling), 1500);
+  assert.equal(M.balconyParapetMM({ parapetHeightMM: 1100 }, ceiling), 1100);
+  assert.equal(M.balconyParapetMM({ parapetHeightMM: '1200' }, ceiling), 1200); // 文字列でも数値に
+});
+
+test('手すり壁の高さは 300mm 〜 天井高に収まり、不正な値は既定値になる', () => {
+  const ceiling = 2400;
+  assert.equal(M.balconyParapetMM({ parapetHeightMM: 50 }, ceiling), M.MIN_BALCONY_PARAPET_MM);
+  assert.equal(M.balconyParapetMM({ parapetHeightMM: 9999 }, ceiling), ceiling);
+  for (const bad of [0, -100, NaN, 'abc', null]) {
+    assert.equal(M.balconyParapetMM({ parapetHeightMM: bad }, ceiling), 1500, String(bad));
+  }
+});
+
+test('壁の高さに反映され、変えた部屋だけが変わる（居室と共有する辺は天井高のまま）', () => {
+  const plan = M.createEmptyPlan('t');
+  const floor = plan.floors[1];
+  floor.rooms.push(
+    rect('R', 'yoshitsu', 0, 0, 7280, 5460),
+    rect('B1', 'balcony', 0, 5460, 3640, 6370),
+    rect('B2', 'balcony', 3640, 5460, 7280, 6370),
+  );
+  floor.rooms.find((r) => r.id === 'B1').parapetHeightMM = 1100;
+  M.rebuildFloorWalls(floor, plan);
+  // B1: 共有辺（北）は天井高、屋外側の 3 辺は 1100。B2 は既定の 1500。
+  assert.equal(heightOf(floor, 'w_B1_0'), floor.ceilingHeightMM);
+  for (const i of [1, 2, 3]) assert.equal(heightOf(floor, `w_B1_${i}`), 1100);
+  for (const i of [1, 2, 3]) assert.equal(heightOf(floor, `w_B2_${i}`), 1500);
+});
+
+test('保存済みプラン（room.parapetHeightMM 付き）の読み込みで指定が保たれる', () => {
+  const { plan, floor } = planWithBalcony();
+  floor.rooms.find((r) => r.id === 'B').parapetHeightMM = 1000;
+  M.rebuildFloorWalls(floor, plan);
+  const loaded = M.normalizePlan(JSON.parse(JSON.stringify(plan)));
+  const f = loaded.floors[1];
+  for (const i of [1, 2, 3]) assert.equal(f.walls.find((w) => w.id === `w_B_${i}`).heightMM, 1000);
+});
+
+test('居室の壁の一部にだけ接するバルコニー（2 つ並び）でも、居室側の辺は天井高・屋外側は手すり壁', () => {
+  const plan = M.createEmptyPlan('t');
+  const floor = plan.floors[1];
+  floor.rooms.push(
+    rect('R', 'yoshitsu', 0, 0, 7280, 5460),
+    rect('B1', 'balcony', 0, 5460, 3640, 6370),
+    rect('B2', 'balcony', 3640, 5460, 7280, 6370),
+  );
+  M.rebuildFloorWalls(floor, plan);
+  for (const id of ['B1', 'B2']) {
+    assert.equal(heightOf(floor, `w_${id}_0`), floor.ceilingHeightMM, `${id} の居室側の辺`);
+    for (const i of [1, 2, 3]) assert.equal(heightOf(floor, `w_${id}_${i}`), 1500, `${id} の辺${i}`);
+  }
+});
+
+test('斜めの辺や、居室の壁と平行でない壁を「共有」と誤認しない', () => {
+  const plan = M.createEmptyPlan('t');
+  const floor = plan.floors[1];
+  // 居室の角に、辺の中点だけが居室の壁の端に触れる位置でバルコニーを置く（共有ではない）
+  floor.rooms.push(rect('R', 'yoshitsu', 0, 0, 3640, 3640), rect('B', 'balcony', 3640, 3640, 5460, 4550));
+  M.rebuildFloorWalls(floor, plan);
+  for (let i = 0; i < 4; i++) assert.equal(heightOf(floor, `w_B_${i}`), 1500, `辺${i}`);
+});
