@@ -779,7 +779,7 @@ export class Viewer3D {
   }
 
   // 1つの開口から太陽が見えるか
-  _openingAdmitsSun(opening, wall, room, baseYM, dir, ray, occ) {
+  _openingAdmitsSun(opening, wall, room, floor, baseYM, dir, ray, occ) {
     const wn = this._wallExteriorNormal(wall, room);
     if (!wn) return false;
     const n3 = new THREE.Vector3(wn.nx, 0, wn.nz);
@@ -818,7 +818,7 @@ export class Viewer3D {
   // 天井なし部屋：開口経由のみ（上空直晒しはバルコニー等の室外用途に限定）
   _openTopRoomAdmitsSun(room, floor, baseYM, dir, ray, occ) {
     const pairs = this._roomOpeningPairs(floor, room);
-    if (pairs.some(({ op, wall }) => this._openingAdmitsSun(op, wall, room, baseYM, dir, ray, occ))) {
+    if (pairs.some(({ op, wall }) => this._openingAdmitsSun(op, wall, room, floor, baseYM, dir, ray, occ))) {
       return true;
     }
     // バルコニー・ポーチなど：壁に囲まれず上方からの直射も許可（閾値を上げて過大計測を抑制）
@@ -835,7 +835,7 @@ export class Viewer3D {
   _enclosedRoomAdmitsSun(room, floor, baseYM, dir, ray, occ) {
     const pairs = this._roomOpeningPairs(floor, room);
     if (!pairs.length) return false;
-    return pairs.some(({ op, wall }) => this._openingAdmitsSun(op, wall, room, baseYM, dir, ray, occ));
+    return pairs.some(({ op, wall }) => this._openingAdmitsSun(op, wall, room, floor, baseYM, dir, ray, occ));
   }
 
   _roomAdmitsSunHour(room, floor, baseYM, dir, ray, occ) {
