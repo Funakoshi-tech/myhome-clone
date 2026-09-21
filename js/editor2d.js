@@ -3,7 +3,7 @@
 // store の同じデータを読み書きするだけ（描画専用ロジック）。
 
 import * as M from './model.js';
-import { getRoomType, getFurniture, getStairType, getOpeningType } from './catalog.js';
+import { getRoomType, getFurniture, getStairType, getOpeningType, isWallMountedFurniture } from './catalog.js';
 import { drawStair2d } from './stairDraw2d.js';
 import { getFurnitureIcon, requestFurnitureIcon } from './furnitureIcon2d.js';
 import { vehicleBodyColor } from './vehicleTint.js';
@@ -763,7 +763,7 @@ export class Editor2D {
           };
           return;
         }
-        if (M.pointInOrientedRect(w, f.x, f.z, f.wMM, f.dMM, f.rotationDeg || 0)) {
+        if (this._furnitureScreenHit(sx, sy, f)) {
           this.drag = {
             kind: 'move-furniture', id: f.id, startW: w, ox: f.x, oz: f.z,
             ...this._clickMenuMeta(e, sx, sy),
@@ -1202,15 +1202,45 @@ export class Editor2D {
     this.onUI();
   }
 
+  _isWallMountedFurn(f) {
+    return !!(f?.wallMounted || isWallMountedFurniture(f));
+  }
+
+  _furnitureHitPadPx(f) {
+    return this._isWallMountedFurn(f) ? 26 : 10;
+  }
+
+  _furnitureScreenHit(sx, sy, f) {
+    if (!f) return false;
+    if (this._furnitureRotateHandleHit(f, sx, sy)) return true;
+    const w = this.screenToWorld(sx, sy);
+    const padMM = this._furnitureHitPadPx(f) / this.cam.scale;
+    return M.pointInOrientedRect(
+      w, f.x, f.z,
+      f.wMM + padMM * 2,
+      f.dMM + padMM * 2,
+      f.rotationDeg || 0,
+    );
+  }
+
+  _furnitureAt(sx, sy) {
+    const items = this._floor().furniture || [];
+    for (let i = items.length - 1; i >= 0; i--) {
+      const f = items[i];
+      if (!this._isWallMountedFurn(f)) continue;
+      if (this._furnitureScreenHit(sx, sy, f)) return f;
+    }
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (this._furnitureScreenHit(sx, sy, items[i])) return items[i];
+    }
+    return null;
+  }
+
   _hitTest(w, sx, sy) {
     const floor = this._floor();
-    // 家具優先
-    for (let i = (floor.furniture || []).length - 1; i >= 0; i--) {
-      const f = floor.furniture[i];
-      if (M.pointInOrientedRect(w, f.x, f.z, f.wMM, f.dMM, f.rotationDeg || 0)) {
-        return { kind: 'furniture', id: f.id };
-      }
-    }
+    // 家具優先（壁吊りはキッチン等と重なっても選択しやすくする）
+    const furnHit = this._furnitureAt(sx, sy);
+    if (furnHit) return { kind: 'furniture', id: furnHit.id };
     // 階段
     for (let i = (floor.stairs || []).length - 1; i >= 0; i--) {
       const s = floor.stairs[i];
@@ -1277,7 +1307,7 @@ export class Editor2D {
     }
     if (sel.kind === 'furniture') {
       const f = floor.furniture.find((x) => x.id === sel.id);
-      return f ? M.pointInOrientedRect(w, f.x, f.z, f.wMM, f.dMM, f.rotationDeg || 0) : false;
+      return f ? this._furnitureScreenHit(sx, sy, f) : false;
     }
     if (sel.kind === 'stair') {
       const s = (floor.stairs || []).find((x) => x.id === sel.id);
@@ -1468,11 +1498,13 @@ export class Editor2D {
       const f = {
         id: M.uid('f'),
         catalogId: cat.id,
-        x: p.x, y: 0, z: p.z,
+        x: p.x, z: p.z,
+        y: cat.yMM ?? 0,
         rotationDeg: 0,
         wMM: cat.wMM, dMM: cat.dMM, hMM: cat.hMM,
         color: cat.color,
       };
+      if (cat.wallMounted) f.wallMounted = true;
       floor.furniture.push(f);
       this.ui.selection = { kind: 'furniture', id: f.id };
     });
@@ -2006,7 +2038,13 @@ export class Editor2D {
       this._drawOpeningSymbol(ctx, op);
     }
     for (const s of (floor.stairs || [])) this._drawStair(ctx, s, false);
-    for (const f of floor.furniture) this._drawFurniture(ctx, f);
+    const furn = floor.furniture || [];
+    for (const f of furn) {
+      if (!this._isWallMountedFurn(f)) this._drawFurniture(ctx, f);
+    }
+    for (const f of furn) {
+      if (this._isWallMountedFurn(f)) this._drawFurniture(ctx, f);
+    }
     this._drawWallHover(ctx);
     if (this.drag?.kind === 'marquee') this._drawMarquee(ctx);
     this._drawSelection(ctx);
@@ -2595,7 +2633,22 @@ export class Editor2D {
     ctx.fill();
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = '#2c3444';
+    if (f.wallMounted || isWallMountedFurniture(f)) ctx.setLineDash([5, 4]);
     ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  _drawWallMountedFurnitureMarker(ctx, f, sc, hw, hd) {
+    if (!f.wallMounted && !isWallMountedFurniture(f)) return;
+    ctx.save();
+    ctx.translate(sc.x, sc.y);
+    ctx.rotate((f.rotationDeg || 0) * Math.PI / 180);
+    ctx.strokeStyle = 'rgba(44,123,229,0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(-hw, -hd, hw * 2, hd * 2);
+    ctx.setLineDash([]);
     ctx.restore();
   }
 
@@ -2637,6 +2690,8 @@ export class Editor2D {
     } else {
       this._drawFurnitureFallbackRect(ctx, f, sc, hw, hd);
     }
+
+    this._drawWallMountedFurnitureMarker(ctx, f, sc, hw, hd);
 
     if (this.cam.scale * f.wMM > 28) {
       const name = cat.name;

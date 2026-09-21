@@ -40,6 +40,7 @@ const KENNEY_CARS_GLB = 'assets/kenney-cars/models_glb';
 
 export const FURNITURE = [
   { id: 'kitchen', name: 'キッチン', wMM: 2580, dMM: 970, hMM: 850, color: '#4aa0a0', model3d: `${KENNEY_GLB}/kitchenBar.glb` },
+  { id: 'uppercabinet', name: '上吊り棚', wMM: P_MM, dMM: 350, hMM: 720, yMM: 1400, color: '#4aa0a0', wallMounted: true, model3d: `${KENNEY_GLB}/kitchenCabinetUpper.glb` },
   { id: 'cupboard', name: 'カップボード', wMM: 1800, dMM: 450, hMM: 900, color: '#4aa0a0', model3d: `${KENNEY_GLB}/kitchenCabinetUpperDouble.glb` },
   { id: 'table', name: 'ダイニングテーブル', wMM: 1600, dMM: 850, hMM: 700, color: '#b9770e', model3d: `${KENNEY_GLB}/table.glb` },
   { id: 'sofaL', name: 'L字ソファ', wMM: 2400, dMM: 1800, hMM: 800, color: '#c0392b', model3d: `${KENNEY_GLB}/loungeSofaCorner.glb` },
@@ -50,7 +51,7 @@ export const FURNITURE = [
   { id: 'chair', name: '椅子', wMM: 900, dMM: 500, hMM: 800, color: '#7d6608', model3d: `${KENNEY_GLB}/chair.glb` },
   { id: 'vanity', name: '洗面化粧台', wMM: 1200, dMM: 450, hMM: 1800, color: '#5b8aa6', model3d: `${KENNEY_GLB}/bathroomCabinetDrawer.glb` },
   { id: 'tansu', name: 'タンス', wMM: 900, dMM: 500, hMM: 800, color: '#6e2c00', model3d: `${KENNEY_GLB}/sideTableDrawers.glb` },
-  { id: 'washer', name: '洗濯機', wMM: 600, dMM: 600, hMM: 1000, color: '#566573', model3d: `${KENNEY_GLB}/washer.glb` },
+  { id: 'washer', name: '洗濯機', wMM: 640, dMM: 720, hMM: 1000, color: '#566573', model3d: `${KENNEY_GLB}/washer.glb` },
   { id: 'carSuv', name: '車（SUV）', wMM: 1840, dMM: 4650, hMM: 1700, color: '#1a1a1a', modelBodyColor: '#1a1a1a', kind: 'vehicle', model3d: `${KENNEY_CARS_GLB}/suv.glb` },
   { id: 'carKei', name: '車（軽自動車）', wMM: 1475, dMM: 3395, hMM: 1525, color: '#fffffa', modelBodyColor: '#fffffa', kind: 'vehicle', model3d: `${KENNEY_CARS_GLB}/hatchback-sports.glb` },
   // その他
@@ -59,13 +60,22 @@ export const FURNITURE = [
   { id: 'sofa1', name: '1人ソファ', wMM: 800, dMM: 800, hMM: 700, color: '#a93226', model3d: `${KENNEY_GLB}/loungeChair.glb` },
   { id: 'lowtable', name: 'ローテーブル', wMM: 1000, dMM: 500, hMM: 380, color: '#8e6310', model3d: `${KENNEY_GLB}/tableCoffee.glb` },
   { id: 'shelf', name: '本棚', wMM: 900, dMM: 300, hMM: 1800, color: '#6e2c00', model3d: `${KENNEY_GLB}/bookcaseClosedDoors.glb` },
-  { id: 'fridge', name: '冷蔵庫', wMM: 700, dMM: 700, hMM: 1800, color: '#566573', model3d: `${KENNEY_GLB}/kitchenFridge.glb` },
+  { id: 'fridge', name: '冷蔵庫', wMM: 750, dMM: 750, hMM: 1800, color: '#566573', model3d: `${KENNEY_GLB}/kitchenFridge.glb` },
   { id: 'tvboard', name: 'TVボード', wMM: 1500, dMM: 400, hMM: 450, color: '#515a5a', model3d: `${KENNEY_GLB}/cabinetTelevision.glb` },
   { id: 'dining', name: 'ダイニングセット', wMM: 1500, dMM: 900, hMM: 720, color: '#9a7d0a', model3d: `${KENNEY_GLB}/tableCross.glb` },
+  // 住設（3D モデル付き）
+  { id: 'toilet', name: '便器', wMM: 400, dMM: 650, hMM: 400, color: '#9a5b8a', model3d: `${KENNEY_GLB}/toilet.glb` },
+  { id: 'unitbath', name: 'ユニットバス', wMM: P_MM * 2, dMM: P_MM, hMM: 700, color: '#2d7fa6', model3d: `${KENNEY_GLB}/bathtub.glb` },
 ];
 
 export function getFurniture(id) {
   return FURNITURE.find((f) => f.id === id) || FURNITURE[0];
+}
+
+/** 壁吊り家具（上吊り棚など）か */
+export function isWallMountedFurniture(item) {
+  const cat = typeof item === 'string' ? getFurniture(item) : getFurniture(item?.catalogId);
+  return !!(cat?.wallMounted || item?.wallMounted);
 }
 
 // ---- 階段（独立カテゴリ） ---------------------------------------------------
@@ -98,15 +108,23 @@ export function getOpeningType(id) {
 
 // ---- 住設（設備）------------------------------------------------------------
 export const PLUMBING_TYPES = [
-  { id: 'toilet', name: '便器', color: '#9a5b8a' },
-  { id: 'washbasin', name: '洗面台', color: '#5b8aa6' },
-  { id: 'unitbath', name: 'ユニットバス', color: '#2d7fa6' },
-  { id: 'kitchen', name: 'キッチン', color: '#4aa0a0' },
+  { id: 'toilet', name: '便器', color: '#9a5b8a', furnitureId: 'toilet' },
+  { id: 'washbasin', name: '洗面台', color: '#5b8aa6', furnitureId: 'vanity' },
+  { id: 'unitbath', name: 'ユニットバス', color: '#2d7fa6', furnitureId: 'unitbath' },
+  { id: 'kitchen', name: 'キッチン', color: '#4aa0a0', furnitureId: 'kitchen' },
+  { id: 'fridge', name: '冷蔵庫', color: '#566573', furnitureId: 'fridge' },
+  { id: 'washer', name: '洗濯機', color: '#566573', furnitureId: 'washer' },
   { id: 'waterheater', name: '給湯器', color: '#566573' },
 ];
 
 export function getPlumbingType(id) {
   return PLUMBING_TYPES.find((p) => p.id === id) || PLUMBING_TYPES[0];
+}
+
+/** 住設チップ → 家具カタログ ID（配置可能なもののみ） */
+export function getPlumbingFurnitureId(plumbingId) {
+  const t = PLUMBING_TYPES.find((p) => p.id === plumbingId);
+  return t?.furnitureId || null;
 }
 
 // ---- 外構 -------------------------------------------------------------------

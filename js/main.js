@@ -3,7 +3,7 @@
 
 import { store } from './store.js';
 import * as M from './model.js';
-import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, getOpeningType, flooringForRoom } from './catalog.js';
+import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, flooringForRoom } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
@@ -196,6 +196,8 @@ function setTool(tool) {
   $('#stair-pane').classList.toggle('hl', tool === 'stair');
   $('#opening-pane').classList.toggle('hl', tool === 'opening');
   $('#furniture-pane').classList.toggle('hl', tool === 'furniture');
+  $('#plumbing-pane').classList.toggle('hl', tool === 'furniture' && !!getPlumbingFurnitureId(ui.plumbingId)
+    && ui.furnitureId === getPlumbingFurnitureId(ui.plumbingId));
   updateHint();
 }
 
@@ -299,6 +301,12 @@ function buildPlumbingChips() {
     b.innerHTML = `<span class="dot" style="background:${t.color}"></span>${t.name}`;
     b.addEventListener('click', () => {
       ui.plumbingId = t.id;
+      const furnId = getPlumbingFurnitureId(t.id);
+      if (furnId && getFurniture(furnId)) {
+        ui.furnitureId = furnId;
+        ui.tool = 'furniture';
+        setTool('furniture');
+      }
       markChips();
     });
     wrap.appendChild(b);
@@ -576,9 +584,21 @@ function wireBgPanel() {
 function updateFurnitureDimension(key, value) {
   const sel = ui.selection;
   if (!sel || sel.kind !== 'furniture') return;
+  const min = key === 'dMM' ? 200 : 100;
   store.update((plan) => {
     const f = M.getFloor(plan, ui.floorId).furniture.find((x) => x.id === sel.id);
-    if (f) f[key] = Math.max(100, Math.round(value));
+    if (f) f[key] = Math.max(min, Math.round(value));
+  });
+  editor.draw();
+  if (ui.view === '3d') viewer.rebuild();
+}
+
+function updateFurnitureMountY(value) {
+  const sel = ui.selection;
+  if (!sel || sel.kind !== 'furniture') return;
+  store.update((plan) => {
+    const f = M.getFloor(plan, ui.floorId).furniture.find((x) => x.id === sel.id);
+    if (f) f.y = Math.max(0, Math.round(value));
   });
   editor.draw();
   if (ui.view === '3d') viewer.rebuild();
@@ -661,6 +681,14 @@ function buildProps() {
     body.appendChild(field('高さ (mm)', inputNumberLive(f.hMM, (v) => {
       updateFurnitureDimension('hMM', v);
     })));
+
+    if (isWallMountedFurniture(f)) {
+      const mountY = f.y ?? cat?.yMM ?? 0;
+      body.appendChild(field('取付高さ (mm)', inputNumberLive(mountY, (v) => {
+        updateFurnitureMountY(v);
+      }, { min: 0, max: 3500 })));
+      body.appendChild(readonlyRow('備考', '床面から上吊り棚の下端までの高さ'));
+    }
 
     // 回転
     const rotWrap = document.createElement('div');
@@ -851,9 +879,10 @@ function inputNumber(value, onChange) {
   i.addEventListener('change', () => { const v = Number(i.value); if (!Number.isNaN(v)) onChange(v); });
   return i;
 }
-function inputNumberLive(value, onChange) {
+function inputNumberLive(value, onChange, { min = 100, max = null } = {}) {
   const i = document.createElement('input');
-  i.type = 'number'; i.value = value; i.step = '10'; i.min = '100';
+  i.type = 'number'; i.value = value; i.step = '10'; i.min = String(min);
+  if (max != null) i.max = String(max);
   const fire = () => {
     const v = Number(i.value);
     if (!Number.isNaN(v)) onChange(v);
