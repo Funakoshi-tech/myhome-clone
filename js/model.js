@@ -456,6 +456,29 @@ export function floorCeilingMM(floor, fallback = DEFAULT_CEILING_MM) {
   return floor?.ceilingHeightMM ?? fallback;
 }
 
+/** バルコニーの屋外側の壁（手すり壁）の高さ（mm） */
+export const BALCONY_PARAPET_MM = 1500;
+
+/**
+ * 壁の高さを部屋の種類から決める。
+ * バルコニーの屋外側の辺だけ手すり壁の高さ、それ以外（居室の壁・バルコニーと居室が共有する建物側の壁）は階の天井高。
+ * 辺は壁辺キーで比べるので、居室の壁と辺の座標が完全に一致する辺だけが「共有」とみなされる。
+ */
+export function applyWallHeights(floor) {
+  const ceiling = floorCeilingMM(floor);
+  const roomById = new Map((floor.rooms || []).map((r) => [r.id, r]));
+  const indoorEdgeKeys = new Set();
+  for (const w of floor.walls || []) {
+    const room = roomById.get(inferWallRoomId(w));
+    if (room && !isOutdoorRoom(room)) indoorEdgeKeys.add(wallEdgeKeyFromWall(w));
+  }
+  for (const w of floor.walls || []) {
+    const room = roomById.get(inferWallRoomId(w));
+    const parapet = room?.type === 'balcony' && !indoorEdgeKeys.has(wallEdgeKeyFromWall(w));
+    w.heightMM = parapet ? Math.min(BALCONY_PARAPET_MM, ceiling) : ceiling;
+  }
+}
+
 // ---- 壁の自動生成 -----------------------------------------------------------
 /** 壁辺の決定論的キー（共有壁の同一判定に使用） */
 export function wallEdgeKey(start, end) {
@@ -669,6 +692,9 @@ export function wallsToRender(floor) {
   const floorOnlyIds = new Set(
     (floor.rooms || []).filter(isFloorOnlyRoom).map((r) => r.id),
   );
+  const outdoorIds = new Set(
+    (floor.rooms || []).filter(isOutdoorRoom).map((r) => r.id),
+  );
   const active = (floor.walls || []).filter((w) => {
     if (isWallEdgeRemoved(floor, w)) return false;
     const rid = inferWallRoomId(w);
@@ -686,7 +712,8 @@ export function wallsToRender(floor) {
       });
       continue;
     }
-    const gkey = `${span.kind}:${span.fixed}`;
+    // 高さの違う壁（バルコニーの手すり壁と居室の壁など）は同じ直線上でも合成しない
+    const gkey = `${span.kind}:${span.fixed}:${wall.heightMM ?? ''}`;
     if (!lineGroups.has(gkey)) lineGroups.set(gkey, []);
     lineGroups.get(gkey).push(span);
   }
@@ -707,7 +734,8 @@ export function wallsToRender(floor) {
       }
     }
     for (const interval of merged) {
-      const template = interval.walls[0];
+      // 合成後の壁に付く部屋は、屋内の部屋を優先する（バルコニーの名が付くと日射の遮蔽から外れてしまうため）
+      const template = interval.walls.find((w) => !outdoorIds.has(inferWallRoomId(w))) || interval.walls[0];
       const renderWall = _syntheticWallFromInterval(interval, template);
       result.push({
         wall: renderWall,
@@ -773,6 +801,7 @@ export function rebuildFloorWalls(floor, plan = null) {
     }
   }
   floor.walls = walls;
+  applyWallHeights(floor);
   remapOpeningWallIds(floor, oldWalls);
   pruneRemovedWallEdges(floor);
   syncStairWallOpenings(floor);
@@ -1035,6 +1064,7 @@ export function normalizePlan(plan) {
     remapOpeningWallIds(floor, oldWalls);
   }
   for (const floor of out.floors) {
+    applyWallHeights(floor);
     for (const op of floor.openings || []) {
       if (op.wallEdgeKey) continue;
       const w = floor.walls.find((wl) => wl.id === op.wallId);

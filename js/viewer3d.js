@@ -861,8 +861,24 @@ export class Viewer3D {
   }
 
   // 天井なし部屋：開口経由のみ（上空直晒しはバルコニー等の室外用途に限定）
+  /** バルコニーから見て、建物（屋内の部屋）側を向いている開口か（居室の掃き出し窓など） */
+  _openingLooksIntoHouse(opening, wall, room, floor) {
+    const wn = this._wallExteriorNormal(wall, room);
+    const pts = this._openingWorldPoints(wall, opening);
+    if (!wn || !pts) return false;
+    const probe = {
+      x: (pts.start.x + pts.end.x) / 2 + wn.nx * 300,
+      z: (pts.start.z + pts.end.z) / 2 + wn.nz * 300,
+    };
+    return (floor.rooms || []).some((r) =>
+      r.id !== room.id && !M.isOutdoorRoom(r) && r.polygon && M.pointInPolygon(probe, r.polygon));
+  }
+
   _openTopRoomAdmitsSun(room, floor, baseYM, dir, ray, occ) {
-    const pairs = this._roomOpeningPairs(floor, room);
+    // 屋外の部屋（バルコニー等）の採光に、居室側を向いた窓は数えない。
+    // 数えると、居室の内側から出した光線が壁のすき間を抜けて日照に加算されてしまう。
+    const pairs = this._roomOpeningPairs(floor, room).filter(({ op, wall }) =>
+      !M.isOutdoorRoom(room) || !this._openingLooksIntoHouse(op, wall, room, floor));
     if (pairs.some(({ op, wall }) => this._openingAdmitsSun(op, wall, room, floor, baseYM, dir, ray, occ))) {
       return true;
     }
