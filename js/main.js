@@ -3,6 +3,7 @@
 
 import { store } from './store.js';
 import * as M from './model.js';
+import * as SITE from './sitePolygon.js';
 import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, flooringForRoom } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
@@ -242,6 +243,8 @@ function setTool(tool) {
   ui.tool = tool;
   document.querySelectorAll('#tool-group .seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.tool === tool));
+  $('#site-pane').classList.toggle('hl', tool === 'site');
+  $('#site-draw').classList.toggle('active', tool === 'site');
   $('#room-pane').classList.toggle('hl', tool === 'room');
   $('#stair-pane').classList.toggle('hl', tool === 'stair');
   $('#opening-pane').classList.toggle('hl', tool === 'opening');
@@ -401,8 +404,29 @@ function refreshPanels() {
   syncConstructionButtons();
   syncLowerFloorRefToggle();
   syncBgPanel();
+  syncSitePanel();
   if (ui.view === '2d') editor.draw();
   if (ui.view === '3d') viewer.rebuild();
+}
+
+// ---- 敷地 -------------------------------------------------------------------
+function syncSitePanel() {
+  const summary = $('#site-summary');
+  if (!summary) return;
+  const b = store.current()?.site?.boundary || [];
+  const has = SITE.isValidSite(b);
+  summary.textContent = has
+    ? `敷地面積 ${SITE.siteAreaLabel(b)} ／ 周長 ${SITE.perimeterM(b).toFixed(2)}m ／ ${b.length}頂点`
+    : '未設定';
+  $('#site-actions').hidden = !has;
+  $('#site-draw').textContent = has ? '敷地を描き直す' : '敷地を描く';
+}
+
+function startSiteDrawing() {
+  if (ui.view !== '2d') setView('2d');
+  ui.selection = null;
+  setTool('site');
+  refreshPanels();
 }
 
 // ---- 敷地写真（下絵） -------------------------------------------------------
@@ -904,6 +928,21 @@ function buildProps() {
     body.appendChild(field(`向き（${p.rotationDeg || 0}°）`, rotWrap));
 
     body.appendChild(deleteButton('この壁を削除'));
+  } else if (sel.kind === 'site') {
+    const b = store.current().site?.boundary || [];
+    if (!SITE.isValidSite(b)) { body.textContent = '—'; return; }
+    body.appendChild(readonlyRow('種類', '敷地'));
+    body.appendChild(readonlyRow('面積', SITE.siteAreaLabel(b)));
+    body.appendChild(readonlyRow('周長', `${SITE.perimeterM(b).toFixed(2)}m`));
+    if (SITE.hasSelfIntersection(b)) body.appendChild(readonlyRow('注意', '辺が交差しています'));
+    b.forEach((_, i) => {
+      const j = (i + 1) % b.length;
+      body.appendChild(field(`辺${i + 1}（頂点${i + 1}→${j + 1}） mm`,
+        inputNumber(Math.round(SITE.edgeLengthMM(b, i)), (v) => editor.setSiteEdgeLength(i, v))));
+    });
+    body.appendChild(sitePropNote(`内角: ${b.map((_, i) => `${i + 1}: ${SITE.interiorAngleDeg(b, i).toFixed(1)}°`).join(' / ')}`));
+    body.appendChild(sitePropNote('辺の長さを変えると、その辺の終点の頂点が辺に沿って動きます（次の辺の長さ・角度が変わります）。頂点は図上でドラッグ、右クリックで追加・削除できます。'));
+    body.appendChild(deleteButton('敷地を削除'));
   } else if (sel.kind === 'wall') {
     const keys = sel.edgeKeys || [];
     const walls = floor.walls.filter((w) => keys.includes(M.wallEdgeKeyFromWall(w)));
@@ -1001,6 +1040,13 @@ function checkRow(label, checked, onChange) {
   row.append(i, s);
   return row;
 }
+/** プロパティ欄の補足文（長文でも読みやすいよう小さく表示） */
+function sitePropNote(text) {
+  const p = document.createElement('p');
+  p.className = 'pane-hint';
+  p.textContent = text;
+  return p;
+}
 function deleteButton(label) {
   const b = document.createElement('button');
   b.className = 'btn danger wide';
@@ -1024,6 +1070,7 @@ function buildFloorInfo() {
     <div><span>建具数</span><b>${(floor.openings || []).length}</b></div>
     <div><span>追加壁</span><b>${(floor.partitions || []).length}</b></div>
     <div><span>床面積合計</span><b>${M.formatAreaLabel(total, tatami)}</b></div>
+    ${SITE.isValidSite(plan.site?.boundary) ? `<div><span>敷地面積</span><b>${SITE.siteAreaLabel(plan.site.boundary)}</b></div>` : ''}
   `;
 }
 
@@ -1072,6 +1119,9 @@ function reconcileSelection(sel) {
   if (sel.kind === 'partition') {
     return (floor.partitions || []).some((p) => p.id === sel.id) ? sel : null;
   }
+  if (sel.kind === 'site') {
+    return SITE.isValidSite(store.current()?.site?.boundary) ? sel : null;
+  }
   if (sel.kind === 'wall') {
     const valid = (sel.edgeKeys || []).filter((key) =>
       (floor.walls || []).some((w) =>
@@ -1111,7 +1161,8 @@ function updateHint() {
     return;
   }
   const map = {
-    select: '選択：壁クリックで壁選択（Shift+クリックで複数 / ドラッグで範囲選択）。Delete で削除。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。Shift+壁クリックで部屋選択中も壁選択可。階段・ドアは緑丸で90°回転。追加壁は緑丸で自由回転 / ドラッグで移動 / R で90°回転',
+    select: '選択：壁クリックで壁選択（Shift+クリックで複数 / ドラッグで範囲選択）。Delete で削除。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。Shift+壁クリックで部屋選択中も壁選択可。階段・ドアは緑丸で90°回転。追加壁は緑丸で自由回転 / ドラッグで移動 / R で90°回転。敷地は枠線をクリックで選択（頂点ドラッグ・右クリックで頂点の追加/削除）',
+    site: '敷地作図：下絵に沿って頂点を順にクリック → Enter または始点クリック（ダブルクリックでも可）で確定。Shift で 45° 刻み・右クリック/Backspace で直前の点を取り消し・Esc で中止。確定後は右のプロパティで辺の長さを数値で修正できます',
     room: 'ドラッグで部屋を矩形作成（スナップ適用）。完了後は自動で選択モードへ',
     furniture: 'クリックで家具を配置。完了後は自動で選択モードへ',
     stair: 'クリックで階段を配置。完了後は自動で選択モードへ。辺ドラッグでサイズ変更 / 緑丸ドラッグで90°回転',
@@ -1246,6 +1297,12 @@ function wireEvents() {
   $('#interior-mode-toggle').addEventListener('click', () => {
     setInteriorMode(!ui.interiorMode);
   });
+  $('#site-draw').addEventListener('click', () => startSiteDrawing());
+  $('#site-select').addEventListener('click', () => {
+    setTool('select');
+    editor.selectSite();
+  });
+  $('#site-clear').addEventListener('click', () => editor.deleteSite());
   document.querySelectorAll('#tool-group .seg-btn').forEach((b) =>
     b.addEventListener('click', () => setTool(b.dataset.tool)));
 

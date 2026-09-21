@@ -8,6 +8,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import * as M from './model.js';
+import * as SITE from './sitePolygon.js';
 import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, flooringForRoom } from './catalog.js';
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
@@ -298,6 +299,9 @@ export class Viewer3D {
     // site.azimuth（真北からの回転角）を建物全体に反映
     this.root.rotation.y = (plan.site?.azimuth || 0) * Math.PI / 180;
 
+    const siteGroup = this._buildSite(plan);
+    if (siteGroup) this.root.add(siteGroup);
+
     for (const floor of plan.floors) {
       if (!showAll && floor.id !== selectedId) continue;
       const hasContent = floor.rooms.length || floor.furniture.length || (floor.stairs || []).length
@@ -352,6 +356,43 @@ export class Viewer3D {
     if (this.interior?.active) {
       this.interior.onRebuild();
     }
+  }
+
+  /** 敷地（site.boundary）の地面（薄い緑）と枠線。未設定なら null */
+  _buildSite(plan) {
+    const b = plan.site?.boundary;
+    if (!SITE.isValidSite(b)) return null;
+    const group = new THREE.Group();
+    group.userData = { kind: 'site' };
+
+    const shape = new THREE.Shape();
+    b.forEach((p, i) => (i ? shape.lineTo(p.x * MM, p.z * MM) : shape.moveTo(p.x * MM, p.z * MM)));
+    shape.closePath();
+    const fillGeo = new THREE.ShapeGeometry(shape);
+    fillGeo.rotateX(Math.PI / 2);
+    const fillMat = new THREE.MeshBasicMaterial({
+      color: 0x8fbf6a,
+      transparent: true,
+      opacity: 0.28,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
+    });
+    fillMat._disposable = true;
+    const fill = new THREE.Mesh(fillGeo, fillMat);
+    fill.position.y = 0.002;
+    fill.renderOrder = -1;
+    group.add(fill);
+
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(
+      b.map((p) => new THREE.Vector3(p.x * MM, 0.012, p.z * MM)),
+    );
+    const lineMat = new THREE.LineBasicMaterial({ color: 0x4f8a2e });
+    lineMat._disposable = true;
+    group.add(new THREE.LineLoop(lineGeo, lineMat));
+    return group;
   }
 
   _roomHasFloor(room) {

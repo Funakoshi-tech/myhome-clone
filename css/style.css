@@ -456,6 +456,7 @@ body.plan-list-mode { overflow: auto; }
 .btn.danger:hover { background: #fbecec; }
 .btn.wide { width: 100%; }
 .btn-row { display: flex; gap: 6px; }
+.btn-row[hidden] { display: none !important; }
 .btn-row .btn { flex: 1; }
 
 /* ===== レイアウト ===== */

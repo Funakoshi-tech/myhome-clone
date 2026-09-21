@@ -13,6 +13,7 @@ import {
 import {
   openingWallFor, openingWallAxes, applyOpeningToWall as applyOpeningToWallModel,
 } from './openingModel.js';
+import * as SITE from './sitePolygon.js';
 
 // 緑丸回転ハンドルのクリック判定半径（px）
 const ROTATE_HANDLE_HIT_PX = 16;
@@ -202,6 +203,7 @@ export class Editor2D {
     this._bgImgCache = null;
     this._bgImgUrl = null;
     this._bgCalib = null; // { step: 1|2, p1?: {px,py}, p2?: {px,py} }
+    this._siteDraft = null; // 敷地作図中 { pts: [{x,z}], cur: {x,z} }
     this._clipboard = null;
     this._bind();
     this._initContextMenu();
@@ -597,6 +599,7 @@ export class Editor2D {
     for (const room of floor.rooms) for (const p of room.polygon) expand(p);
     for (const f of floor.furniture) expand({ x: f.x, z: f.z });
     for (const s of (floor.stairs || [])) expand({ x: s.x, z: s.z });
+    for (const p of this._siteBoundary()) expand(p);
     const bgBounds = this._bgWorldBounds(this._plan().site?.backgroundImage);
     if (bgBounds) {
       expand({ x: bgBounds.minX, z: bgBounds.minZ });
@@ -686,6 +689,12 @@ export class Editor2D {
       return;
     }
 
+    // 敷地作図ツール（左クリックで頂点追加・右クリックで直前の頂点を取り消し）
+    if (tool === 'site') {
+      this._siteToolDown(e, sx, sy, w);
+      return;
+    }
+
     // ---- 右クリック ----
     if (e.button === 2) {
       this._hideContextMenu();
@@ -710,6 +719,13 @@ export class Editor2D {
               return;
             }
           }
+        }
+        // 敷地：頂点上なら削除 → 辺上なら頂点挿入
+        if (sel.kind === 'site' && this._hasSite()) {
+          const vi = this._siteVertexAt(sx, sy);
+          if (vi >= 0) { this._siteRemoveVertex(vi); return; }
+          const ei = this._siteEdgeAt(w);
+          if (ei >= 0) { this._siteInsertVertex(ei, w); return; }
         }
         // 選択済みパーツ上 → コンテキストメニュー
         if (this._isOnSelection(w, sx, sy)) {
@@ -975,6 +991,9 @@ export class Editor2D {
       }
     }
 
+    // 敷地選択中 → 頂点・辺ドラッグ（壁など他の要素より優先）
+    if (this.ui.selection?.kind === 'site' && this._siteStartDrag(sx, sy, w)) return;
+
     const opPick = this._openingAt(sx, sy);
     const hit = opPick
       ? { kind: 'opening', id: opPick.id }
@@ -1059,6 +1078,8 @@ export class Editor2D {
         }
       } else if (hit.kind === 'room') {
         this.drag = { kind: 'move-room', id: hit.id, startW: w };
+      } else if (hit.kind === 'site') {
+        this._siteStartDrag(sx, sy, w);
       }
     } else if (tool === 'select') {
       this.drag = {
@@ -1077,7 +1098,13 @@ export class Editor2D {
     const w = this.screenToWorld(sx, sy);
     const d = this.drag;
 
+    if (!d && this.ui.tool === 'site') { this._siteToolMove(e, w); return; }
     if (!d) { this._updateHover(sx, sy); return; }
+
+    if (d.kind === 'site-vertex' || d.kind === 'site-edge') {
+      this._siteDragMove(d, w, e);
+      return;
+    }
 
     if (d.kind === 'vertex') {
       const floor = this._floor();
@@ -1314,6 +1341,11 @@ export class Editor2D {
       return;
     }
 
+    if (d.kind === 'site-vertex' || d.kind === 'site-edge') {
+      this._commitSiteDrag(d);
+      return;
+    }
+
     if (d.kind === 'room') {
       const a = d.start, b = d.cur;
       if (Math.abs(a.x - b.x) >= 100 && Math.abs(a.z - b.z) >= 100) {
@@ -1345,6 +1377,16 @@ export class Editor2D {
     const tag = (e.target?.tagName) || '';
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag) || e.target?.isContentEditable) return;
     if (e.code === 'Space') { this._space = true; }
+    if (this.ui.tool === 'site') {
+      if (this._siteDraft) {
+        if (e.key === 'Enter') { this.finishSiteDraft(); e.preventDefault(); return; }
+        if (e.key === 'Escape') { this.cancelSiteDraft(); e.preventDefault(); return; }
+        if (e.key === 'Backspace' || e.key === 'Delete') { this._siteUndoLastPoint(); e.preventDefault(); return; }
+      } else if (e.key === 'Escape' && this.ui.setTool) {
+        this.ui.setTool('select');
+        return;
+      }
+    }
     const sel = this.ui.selection;
     if (!sel) return;
     if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1468,6 +1510,10 @@ export class Editor2D {
       if (M.pointInPolygon(w, room.polygon)) {
         return { kind: 'room', id: room.id };
       }
+    }
+    // 敷地（枠線・頂点の近くのみ。内側のクリックでは選択しない）
+    if (this._hasSite() && (this._siteVertexAt(sx, sy) >= 0 || this._siteEdgeAt(w) >= 0)) {
+      return { kind: 'site' };
     }
     return null;
   }
@@ -1659,6 +1705,11 @@ export class Editor2D {
       } else {
         this.canvas.style.cursor = '';
       }
+    } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'site' && this._hasSite()) {
+      nextWallKey = null;
+      if (this._siteVertexAt(sx, sy) >= 0) this.canvas.style.cursor = 'grab';
+      else if (this._siteEdgeAt(this.screenToWorld(sx, sy)) >= 0) this.canvas.style.cursor = 'move';
+      else this.canvas.style.cursor = '';
     } else if (this.ui.tool === 'select' && this.ui.selection?.kind === 'partition') {
       nextWallKey = null;
       const p = (this._floor().partitions || []).find((x) => x.id === this.ui.selection.id);
@@ -1896,6 +1947,8 @@ export class Editor2D {
         floor.partitions = (floor.partitions || []).filter((p) => p.id !== sel.id);
       } else if (sel.kind === 'wall') {
         M.removeWallEdges(floor, sel.edgeKeys);
+      } else if (sel.kind === 'site') {
+        plan.site.boundary = [];
       }
     });
     this.ui.selection = null;
@@ -2104,6 +2157,185 @@ export class Editor2D {
   deleteSelection() { this._deleteSelection(); }
 
   // ---- 敷地写真（下絵） -----------------------------------------------------
+  // ---- 敷地（site.boundary）の作図・編集 -------------------------------------
+  // 敷地はプラン単位の閉じた多角形（フロアに依存しない）。編集は必ず store.update を通し、
+  // ドラッグ中だけ plan を直接書き換えて、確定時に「変更前へ戻してから update」で履歴に残す。
+
+  _siteBoundary() { return this._plan().site?.boundary || []; }
+  _hasSite() { return SITE.isValidSite(this._siteBoundary()); }
+
+  cancelSiteDraft() {
+    if (!this._siteDraft) return;
+    this._siteDraft = null;
+    this.draw();
+  }
+
+  _siteUndoLastPoint() {
+    const d = this._siteDraft;
+    if (!d) return;
+    d.pts.pop();
+    if (!d.pts.length) this._siteDraft = null;
+    this.draw();
+  }
+
+  /** 作図中のカーソル位置（10mm スナップ。Shift で直前の点から 45° 刻みに拘束） */
+  _siteCursorPoint(w, e) {
+    const pts = this._siteDraft?.pts;
+    const pt = SITE.snapToMM(w);
+    if (e?.shiftKey && pts?.length) return SITE.constrainAngle(pts[pts.length - 1], pt);
+    return pt;
+  }
+
+  _siteToolDown(e, sx, sy, w) {
+    if (e.button === 2) { this._siteUndoLastPoint(); return; }
+    if (e.button !== 0) return;
+    const pt = this._siteCursorPoint(w, e);
+    if (!this._siteDraft) this._siteDraft = { pts: [], cur: pt };
+    const pts = this._siteDraft.pts;
+    if (pts.length >= SITE.MIN_SITE_VERTICES) {
+      // 始点をクリック、または直前の点をもう一度クリック（ダブルクリック）で確定
+      const nearScreen = (p, px) => {
+        const s = this.worldToScreen(p.x, p.z);
+        return Math.hypot(s.x - sx, s.y - sy) <= px;
+      };
+      if (nearScreen(pts[0], 12) || nearScreen(pts[pts.length - 1], 8)) {
+        this.finishSiteDraft();
+        return;
+      }
+    }
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(pt.x - last.x, pt.z - last.z) >= 1) pts.push(pt);
+    this._siteDraft.cur = pt;
+    this.draw();
+  }
+
+  _siteToolMove(e, w) {
+    this.canvas.style.cursor = 'crosshair';
+    if (!this._siteDraft) return;
+    this._siteDraft.cur = this._siteCursorPoint(w, e);
+    this.draw();
+  }
+
+  /** 作図中の頂点列を敷地として確定する（3 点未満なら何もしない） */
+  finishSiteDraft() {
+    const d = this._siteDraft;
+    if (!d || d.pts.length < SITE.MIN_SITE_VERTICES) return false;
+    const pts = SITE.cloneBoundary(d.pts);
+    this._siteDraft = null;
+    this.store.update((plan) => { plan.site.boundary = pts; });
+    this.ui.selection = { kind: 'site' };
+    if (this.ui.setTool) this.ui.setTool('select');
+    this.onUI();
+    this.draw();
+    return true;
+  }
+
+  _siteVertexAt(sx, sy) {
+    const b = this._siteBoundary();
+    for (let i = 0; i < b.length; i++) {
+      const s = this.worldToScreen(b[i].x, b[i].z);
+      if (Math.hypot(s.x - sx, s.y - sy) <= 10) return i;
+    }
+    return -1;
+  }
+
+  _siteEdgeAt(w) {
+    const b = this._siteBoundary();
+    const hit = 8 / this.cam.scale;
+    for (let i = 0; i < b.length; i++) {
+      if (M.pointToSegmentDist(w, b[i], b[(i + 1) % b.length]) <= hit) return i;
+    }
+    return -1;
+  }
+
+  /** 頂点・辺の上ならドラッグを開始して true を返す */
+  _siteStartDrag(sx, sy, w) {
+    const b = this._siteBoundary();
+    if (!SITE.isValidSite(b)) return false;
+    const vi = this._siteVertexAt(sx, sy);
+    if (vi >= 0) {
+      this.drag = { kind: 'site-vertex', index: vi, orig: SITE.cloneBoundary(b) };
+      return true;
+    }
+    const ei = this._siteEdgeAt(w);
+    if (ei >= 0) {
+      this.drag = {
+        kind: 'site-edge', idxA: ei, idxB: (ei + 1) % b.length, startW: w, orig: SITE.cloneBoundary(b),
+      };
+      return true;
+    }
+    return false;
+  }
+
+  _siteDragMove(d, w, e) {
+    const n = d.orig.length;
+    let next;
+    if (d.kind === 'site-vertex') {
+      let np = SITE.snapToMM(w);
+      if (e?.shiftKey) np = SITE.constrainAngle(d.orig[(d.index - 1 + n) % n], np);
+      next = d.orig.map((p, i) => (i === d.index ? np : { x: p.x, z: p.z }));
+    } else {
+      const u = SITE.SITE_SNAP_MM;
+      const dx = Math.round((w.x - d.startW.x) / u) * u;
+      const dz = Math.round((w.z - d.startW.z) / u) * u;
+      next = d.orig.map((p, i) => (
+        i === d.idxA || i === d.idxB ? { x: p.x + dx, z: p.z + dz } : { x: p.x, z: p.z }
+      ));
+    }
+    this._plan().site.boundary = next;
+    this.draw();
+  }
+
+  _commitSiteDrag(d) {
+    const site = this._plan().site;
+    const finalB = site.boundary;
+    // 履歴には「ドラッグ前」を残したいので、一度戻してから store.update で確定する
+    site.boundary = d.orig;
+    if (JSON.stringify(finalB) === JSON.stringify(d.orig)) {
+      this.draw();
+      return;
+    }
+    this.store.update((plan) => { plan.site.boundary = finalB; });
+  }
+
+  _siteInsertVertex(edgeIndex, w) {
+    const next = SITE.insertVertex(this._siteBoundary(), edgeIndex, w);
+    this.store.update((plan) => { plan.site.boundary = next; });
+    this.draw();
+  }
+
+  _siteRemoveVertex(index) {
+    const b = this._siteBoundary();
+    if (b.length <= SITE.MIN_SITE_VERTICES) return;
+    const next = SITE.removeVertex(b, index);
+    this.store.update((plan) => { plan.site.boundary = next; });
+    this.draw();
+  }
+
+  /** 辺 index の長さを mm で指定する（終点の頂点が辺に沿って動く） */
+  setSiteEdgeLength(index, lenMM) {
+    const b = this._siteBoundary();
+    if (!SITE.isValidSite(b) || !Number.isFinite(lenMM)) return;
+    const next = SITE.setEdgeLength(b, index, lenMM);
+    this.store.update((plan) => { plan.site.boundary = next; });
+    this.draw();
+  }
+
+  selectSite() {
+    if (!this._hasSite()) return;
+    this.ui.selection = { kind: 'site' };
+    this.onUI();
+    this.draw();
+  }
+
+  deleteSite() {
+    this.store.update((plan) => { plan.site.boundary = []; });
+    if (this.ui.selection?.kind === 'site') this.ui.selection = null;
+    this.onUI();
+    this.draw();
+  }
+
+
   invalidateBgImage() {
     this._bgImgCache = null;
     this._bgImgUrl = null;
@@ -2341,6 +2573,7 @@ export class Editor2D {
   draw() {
     if (!this.ctx) return;
     const ctx = this.ctx;
+    if (this._siteDraft && this.ui.tool !== 'site') this._siteDraft = null;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.cssW, this.cssH);
 
@@ -2351,6 +2584,7 @@ export class Editor2D {
 
     if (this.ui.showGrid) this._drawGrid(ctx);
     this._drawAxes(ctx);
+    this._drawSite(ctx);
 
     const floor = this._floor();
 
@@ -2392,12 +2626,185 @@ export class Editor2D {
     const guideF = this._activeFurnitureForGuides();
     if (guideF) this._drawFurnitureDistanceGuides(ctx, guideF, floor);
     this._drawRoomHandles(ctx);
+    this._drawSiteHandles(ctx);
     this._drawFurnitureHandles(ctx);
     this._drawStairHandles(ctx);
     if (this.drag?.kind === 'room') this._drawRoomPreview(ctx, this.drag);
+    this._drawSiteDraft(ctx);
     if (this.ui.showDimensions) this._drawWallDimensions(ctx, floor);
     this._drawBgCalibOverlay(ctx);
   }
+
+  // ---- 敷地の描画 -------------------------------------------------------------
+  /** 白フチ付きテキスト（下絵・グリッド・壁に重なっても読めるように） */
+  _drawSiteText(ctx, text, x, y, { color = '#3d6b25', font = '600 11px system-ui, sans-serif' } = {}) {
+    ctx.save();
+    ctx.font = font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+
+  /** 辺の外側へ少しずらして長さラベルを描く（sa→sc は画面座標。nx,nz は外向き単位法線） */
+  _drawSiteEdgeLabel(ctx, sa, sc, nx, nz, mm, color) {
+    if (Math.hypot(sc.x - sa.x, sc.y - sa.y) < 40) return;
+    this._drawSiteText(ctx, _formatDimMm(mm), (sa.x + sc.x) / 2 + nx * 14, (sa.y + sc.y) / 2 + nz * 14, { color });
+  }
+
+  /** 多角形の外向き単位法線（世界座標）。辺の中点から法線方向に少し進んだ点が内側なら反転する */
+  _siteOutwardNormal(poly, i) {
+    const a = poly[i];
+    const c = poly[(i + 1) % poly.length];
+    const dx = c.x - a.x, dz = c.z - a.z;
+    const len = Math.hypot(dx, dz) || 1;
+    let nx = dz / len, nz = -dx / len;
+    const probe = { x: (a.x + c.x) / 2 + nx * 60, z: (a.z + c.z) / 2 + nz * 60 };
+    if (M.pointInPolygon(probe, poly)) { nx = -nx; nz = -nz; }
+    return { nx, nz };
+  }
+
+  _drawSite(ctx) {
+    const b = this._siteBoundary();
+    if (!SITE.isValidSite(b)) return;
+    const selected = this.ui.selection?.kind === 'site' && this.ui.tool === 'select';
+    const bad = SITE.hasSelfIntersection(b);
+    const s = b.map((p) => this.worldToScreen(p.x, p.z));
+    const stroke = bad ? '#c0392b' : (selected ? '#2c7be5' : '#5b8a3c');
+
+    ctx.save();
+    ctx.beginPath();
+    s.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(120,170,90,0.10)';
+    ctx.fill();
+    ctx.setLineDash([10, 5]);
+    ctx.lineWidth = selected ? 2.5 : 2;
+    ctx.strokeStyle = stroke;
+    ctx.stroke();
+    ctx.restore();
+
+    // 辺の長さ（常時表示。下絵との突き合わせ用）
+    const labelColor = bad ? '#c0392b' : (selected ? '#1d5fbf' : '#3d6b25');
+    for (let i = 0; i < b.length; i++) {
+      const len = SITE.edgeLengthMM(b, i);
+      if (len < 1) continue;
+      const { nx, nz } = this._siteOutwardNormal(b, i);
+      this._drawSiteEdgeLabel(ctx, s[i], s[(i + 1) % b.length], nx, nz, len, labelColor);
+    }
+
+    // 面積（上辺の少し上）
+    const minZ = Math.min(...b.map((p) => p.z));
+    const cx = (Math.min(...b.map((p) => p.x)) + Math.max(...b.map((p) => p.x))) / 2;
+    const top = this.worldToScreen(cx, minZ);
+    const label = bad ? '敷地の辺が交差しています' : `敷地 ${SITE.siteAreaLabel(b)}`;
+    this._drawSiteText(ctx, label, top.x, top.y - 34, { color: labelColor, font: '700 12px system-ui, sans-serif' });
+  }
+
+  /** 選択中の敷地：頂点ハンドルと内角 */
+  _drawSiteHandles(ctx) {
+    if (this.ui.tool !== 'select' || this.ui.selection?.kind !== 'site') return;
+    const b = this._siteBoundary();
+    if (!SITE.isValidSite(b)) return;
+    const n = b.length;
+    for (let i = 0; i < n; i++) {
+      const s = this.worldToScreen(b[i].x, b[i].z);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#2c7be5';
+      ctx.stroke();
+
+      // 内角ラベル（頂点から内側へ少しずらす）
+      const prev = b[(i - 1 + n) % n];
+      const next = b[(i + 1) % n];
+      const ua = { x: prev.x - b[i].x, z: prev.z - b[i].z };
+      const ub = { x: next.x - b[i].x, z: next.z - b[i].z };
+      const la = Math.hypot(ua.x, ua.z), lb = Math.hypot(ub.x, ub.z);
+      if (la < 1 || lb < 1) continue;
+      let bx = ua.x / la + ub.x / lb;
+      let bz = ua.z / la + ub.z / lb;
+      const bl = Math.hypot(bx, bz);
+      if (bl < 1e-3) continue; // ほぼ一直線
+      const ang = SITE.interiorAngleDeg(b, i);
+      const dir = ang > 180 ? -1 : 1;
+      bx = (bx / bl) * dir;
+      bz = (bz / bl) * dir;
+      this._drawSiteText(ctx, `${ang.toFixed(1)}°`, s.x + bx * 26, s.y + bz * 26, {
+        color: '#5a6472', font: '500 10px system-ui, sans-serif',
+      });
+    }
+  }
+
+  /** 作図中の下書き（確定済み線分・カーソルまでのゴム線・各辺の長さ・始点の確定マーカー） */
+  _drawSiteDraft(ctx) {
+    const d = this._siteDraft;
+    if (!d || this.ui.tool !== 'site') return;
+    const pts = d.pts;
+    const sp = pts.map((p) => this.worldToScreen(p.x, p.z));
+    const cur = d.cur ? this.worldToScreen(d.cur.x, d.cur.z) : null;
+    const color = '#3d6b25';
+
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#5b8a3c';
+    if (sp.length > 1) {
+      ctx.beginPath();
+      sp.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.stroke();
+    }
+    if (sp.length && cur) {
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(sp[sp.length - 1].x, sp[sp.length - 1].y);
+      ctx.lineTo(cur.x, cur.y);
+      ctx.stroke();
+      if (sp.length >= 2) {
+        // 閉じたときの形のプレビュー（薄く）
+        ctx.strokeStyle = 'rgba(91,138,60,0.35)';
+        ctx.beginPath();
+        ctx.moveTo(cur.x, cur.y);
+        ctx.lineTo(sp[0].x, sp[0].y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    for (const p of sp) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#5b8a3c';
+      ctx.fill();
+    }
+    // 始点に近づくと確定できることを示すリング
+    if (sp.length >= SITE.MIN_SITE_VERTICES && cur && Math.hypot(cur.x - sp[0].x, cur.y - sp[0].y) <= 12) {
+      ctx.beginPath();
+      ctx.arc(sp[0].x, sp[0].y, 9, 0, Math.PI * 2);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#2c7be5';
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 各辺の長さ（確定済み＋カーソルまで）。法線は画面の上向き側を優先
+    const segs = [];
+    for (let i = 0; i + 1 < pts.length; i++) segs.push([pts[i], pts[i + 1]]);
+    if (pts.length && d.cur) segs.push([pts[pts.length - 1], d.cur]);
+    for (const [a, c] of segs) {
+      const len = Math.hypot(c.x - a.x, c.z - a.z);
+      if (len < 1) continue;
+      let nx = (c.z - a.z) / len, nz = -(c.x - a.x) / len;
+      if (nz > 0 || (nz === 0 && nx < 0)) { nx = -nx; nz = -nz; }
+      this._drawSiteEdgeLabel(ctx, this.worldToScreen(a.x, a.z), this.worldToScreen(c.x, c.z), nx, nz, len, color);
+    }
+  }
+
 
   // ---- 部屋/壁/家具の描画（既存） -------------------------------------------
   _drawGrid(ctx) {
