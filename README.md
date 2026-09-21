@@ -28,17 +28,28 @@ python3 -m http.server 5500
 ## ファイル構成
 
 ```
-index.html        画面骨格 + importmap
-css/style.css     ダークモードUI
-js/main.js        エントリ。UI配線・統括
-js/store.js       状態管理・LocalStorage・JSON入出力・プラン管理
-js/model.js       データ構造／座標変換／面積・畳の計算（純粋関数・共通定数）
-js/catalog.js     部屋種別・家具・建具の定義（データ）
-js/geometry2d.js  2Dキャンバス用の純粋幾何ヘルパー
-js/openingModel.js 建具の壁スナップ・軸計算（純関数）
-js/editor2d.js    2D作図エディタ（Canvas）
-js/viewer3d.js    Three.js の 3D 描画
-js/sun.js         日射計算
+index.html             画面骨格 + importmap
+css/style.css          ダークモードUI
+js/main.js             エントリ。UI配線・統括
+js/store.js            状態管理・LocalStorage・JSON入出力・プラン管理
+js/model.js            データ構造／座標変換／面積・畳の計算（純粋関数・共通定数）
+js/catalog.js          部屋種別・家具・建具・住設・床材の定義（データ）
+js/geometry2d.js       2Dキャンバス用の純粋幾何ヘルパー
+js/openingModel.js     建具の壁スナップ・軸計算（純関数）
+js/editor2d.js         2D作図エディタ（Canvas）
+js/stairDraw2d.js      2D階段シンボル描画（エディタ・サムネイル共通）
+js/furnitureIcon2d.js  GLB家具モデルの真上ビューアイコン生成（2D平面図用）
+js/viewer3d.js         Three.js の 3D 描画
+js/floorTexture.js     床テクスチャの生成・読込・UV・マテリアル
+js/vehicleTint.js      車モデルの車体メッシュを単色塗装
+js/interiorMode.js     内観（一人称）モードの入力・移動・UI連携
+js/interiorNav.js      内観モードの衝突・ワープ・スナップ（純関数）
+js/interiorMinimap.js  内観モード右上の間取りミニマップ
+js/sun.js              日射計算
+js/planList.js         プラン一覧画面
+js/planThumbnail.js    プラン一覧用の簡易サムネイル描画
+js/dialog.js           PWA standalone でも動く prompt / confirm / alert（HTMLモーダル）
+assets/                Kenney Furniture Kit・Kenney Car Kit（GLB）と床材テクスチャ
 ```
 
 ## 開発時の静的チェック（任意）
