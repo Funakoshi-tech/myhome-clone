@@ -570,8 +570,74 @@ body.plan-list-mode { overflow: auto; }
 /* ===== ステージ ===== */
 #stage { position: relative; flex: 1; background: var(--bg-2); }
 #canvas2d { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-#viewer3d { position: absolute; inset: 0; width: 100%; height: 100%; }
+#viewer3d { position: absolute; inset: 0; width: 100%; height: 100%; outline: none; }
 #viewer3d canvas { display: block; }
+
+/* 内観モード */
+#interior-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 25;
+}
+#interior-minimap {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 220px;
+  height: 220px;
+  pointer-events: auto;
+  cursor: crosshair;
+  border-radius: 8px;
+  box-shadow: 0 2px 14px rgba(0,0,0,0.18);
+  border: 1px solid var(--border);
+}
+.interior-floor-bar {
+  position: absolute;
+  left: 12px;
+  bottom: 48px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  pointer-events: auto;
+  max-width: 50%;
+}
+.interior-floor-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.92);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.interior-floor-btn:hover { border-color: var(--accent); }
+.interior-floor-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.interior-hint {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  margin: 0;
+  background: rgba(255,255,255,0.9);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  pointer-events: none;
+  max-width: 55%;
+}
+#interior-mode-toggle.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
 
 #hint {
   position: absolute;

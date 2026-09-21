@@ -27,6 +27,7 @@ const ui = {
   showLowerFloorRef: true,
   furnitureWallMagnet: true,
   view3dAllFloors: false, // 3D: true=全階積み上げ表示, false=選択階のみ
+  interiorMode: false,    // 3D: 内観（一人称）モード
   // 日射シミュレーション（フェーズB）
   sun: { doy: 172, hour: 12, playing: false },
   daylight: {},          // { [roomId]: 直射時間 }
@@ -87,6 +88,10 @@ function returnToPlanList() {
 
 // ---- ビュー切替 -------------------------------------------------------------
 function setView(view) {
+  if (view !== '3d' && ui.interiorMode) {
+    ui.interiorMode = false;
+    viewer.setInteriorMode(false);
+  }
   ui.view = view;
   const is3d = view === '3d';
   canvas.hidden = is3d;
@@ -99,12 +104,47 @@ function setView(view) {
   if (is3d) {
     viewer.updateSun(ui.sun.doy, ui.sun.hour);
     updateSunInfo();
+    syncInteriorUIButton();
   } else {
     stopSunAnimation();
     editor.resize(); editor.draw();
   }
   syncView3dAllFloorsButton();
+  syncInteriorUIButton();
   syncDisplayBar();
+  updateHint();
+}
+
+function syncInteriorUIButton() {
+  const btn = $('#interior-mode-toggle');
+  const zoomBtn = $('#zoom-fit');
+  const sunPanel = $('#sun-panel');
+  if (!btn) return;
+  const is3d = ui.view === '3d';
+  const canInterior = is3d && !ui.view3dAllFloors;
+  btn.hidden = !canInterior;
+  if (zoomBtn) zoomBtn.hidden = is3d && ui.interiorMode;
+  if (sunPanel && is3d) sunPanel.hidden = ui.interiorMode;
+  btn.classList.toggle('active', !!ui.interiorMode);
+  btn.textContent = ui.interiorMode ? '内観終了' : '内観モード';
+  const hint = $('#hint');
+  if (hint) hint.hidden = is3d && ui.interiorMode;
+  syncView3dAllFloorsButton();
+}
+
+function setInteriorMode(on) {
+  if (ui.view !== '3d') return;
+  if (on && ui.view3dAllFloors) {
+    ui.view3dAllFloors = false;
+    viewer.rebuild({ fitCamera: true });
+  }
+  ui.interiorMode = !!on;
+  viewer.setInteriorMode(ui.interiorMode);
+  if (on) {
+    requestAnimationFrame(() => viewer.interior?.focusView?.());
+  }
+  syncView3dAllFloorsButton();
+  syncInteriorUIButton();
   updateHint();
 }
 
@@ -163,12 +203,13 @@ function syncView3dAllFloorsButton() {
   const btn = $('#view3d-all-floors');
   if (!btn) return;
   const is3d = ui.view === '3d';
-  btn.hidden = !is3d;
+  btn.hidden = !is3d || !!ui.interiorMode;
   btn.classList.toggle('active', is3d && ui.view3dAllFloors);
   btn.textContent = ui.view3dAllFloors ? '全階表示中' : '全階表示';
 }
 
 function setView3dAllFloors(on) {
+  if (on && ui.interiorMode) setInteriorMode(false);
   ui.view3dAllFloors = !!on;
   syncView3dAllFloorsButton();
   if (ui.view === '3d') {
@@ -178,6 +219,15 @@ function setView3dAllFloors(on) {
 }
 
 function setFloor(floorId) {
+  if (ui.interiorMode && ui.view === '3d') {
+    viewer.interior.warpToFloor(floorId);
+    document.querySelectorAll('#floor-tabs .seg-btn').forEach((b) =>
+      b.classList.toggle('active', b.dataset.floor === floorId));
+    syncView3dAllFloorsButton();
+    syncInteriorUIButton();
+    refreshPanels();
+    return;
+  }
   ui.floorId = floorId;
   ui.selection = null;
   ui.view3dAllFloors = false;
@@ -1049,9 +1099,11 @@ function isEditorTypingTarget(e) {
 function updateHint() {
   const hint = $('#hint');
   if (ui.view === '3d') {
-    hint.textContent = ui.view3dAllFloors
-      ? '全階表示中。フロア切替または全階表示ボタンで現在階のみに戻せます。ドラッグで回転 / ホイールでズーム'
-      : `${ui.floorId} のみ表示中。全階表示ボタンですべての階を積み上げ表示。ドラッグで回転 / ホイールでズーム`;
+    hint.textContent = ui.interiorMode
+      ? '内観: 左ドラッグで視点 · WASD/矢印で移動 · 右上間取りクリックでワープ · 左下で階切替'
+      : ui.view3dAllFloors
+        ? '全階表示中。フロア切替または全階表示ボタンで現在階のみに戻せます。ドラッグで回転 / ホイールでズーム'
+        : `${ui.floorId} のみ表示中。全階表示ボタンですべての階を積み上げ表示。内観モードで室内を歩けます。ドラッグで回転 / ホイールでズーム`;
     return;
   }
   if (ui.bgCalib) {
@@ -1191,6 +1243,9 @@ function wireEvents() {
   $('#view3d-all-floors').addEventListener('click', () => {
     setView3dAllFloors(!ui.view3dAllFloors);
   });
+  $('#interior-mode-toggle').addEventListener('click', () => {
+    setInteriorMode(!ui.interiorMode);
+  });
   document.querySelectorAll('#tool-group .seg-btn').forEach((b) =>
     b.addEventListener('click', () => setTool(b.dataset.tool)));
 
@@ -1245,7 +1300,7 @@ function wireEvents() {
 
   $('#zoom-fit').addEventListener('click', () => {
     if (ui.view === '2d') editor.zoomFit();
-    else viewer.resetView();
+    else if (!ui.interiorMode) viewer.resetView();
   });
 
   $('#back-to-list').addEventListener('click', () => returnToPlanList());

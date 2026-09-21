@@ -12,6 +12,7 @@ import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, floori
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
+import { InteriorMode } from './interiorMode.js';
 
 const MM = 0.001; // mm → m
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -158,6 +159,8 @@ export class Viewer3D {
 
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
+
+    this.interior = new InteriorMode(this);
   }
 
   setActive(on) {
@@ -167,9 +170,28 @@ export class Viewer3D {
       this.resize();
       this.rebuild();
       this._loop();
-    } else if (this._raf) {
-      cancelAnimationFrame(this._raf);
-      this._raf = null;
+    } else {
+      this.setInteriorMode(false);
+      if (this._raf) {
+        cancelAnimationFrame(this._raf);
+        this._raf = null;
+      }
+    }
+  }
+
+  setInteriorMode(on) {
+    if (!this._inited) {
+      if (!this.active) return;
+      this._init();
+    }
+    if (on) {
+      if (this.interior?.active) return;
+      if (this.ui) this.ui.interiorMode = true;
+      this.interior.enter();
+    } else if (this.interior?.active) {
+      this.interior.exit();
+      if (this.ui) this.ui.interiorMode = false;
+      this._fitCamera();
     }
   }
 
@@ -184,7 +206,7 @@ export class Viewer3D {
 
   /** Mac トラックパッド: ctrlKey=ピンチズーム、それ以外=二本指パン */
   _handleWheel(e) {
-    if (!this.active) return;
+    if (!this.active || this.interior?.active) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -223,7 +245,11 @@ export class Viewer3D {
   _loop() {
     if (!this.active) return;
     this._raf = requestAnimationFrame(() => this._loop());
-    this.controls.update();
+    if (this.interior?.active) {
+      this.interior.update();
+    } else {
+      this.controls.update();
+    }
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -319,9 +345,13 @@ export class Viewer3D {
     // 太陽光を現在のUI状態で更新
     if (this.ui?.sun) this.updateSun(this.ui.sun.doy, this.ui.sun.hour);
 
-    if (fitCamera || !this._fitted) {
+    if ((fitCamera || !this._fitted) && !this.interior?.active) {
       this._fitted = true;
       this._fitCamera();
+    }
+
+    if (this.interior?.active) {
+      this.interior.onRebuild();
     }
   }
 

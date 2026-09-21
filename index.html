@@ -82,6 +82,7 @@
     </div>
 
     <button id="view3d-all-floors" class="btn" type="button" hidden title="全フロアを積み上げて表示">全階表示</button>
+    <button id="interior-mode-toggle" class="btn" type="button" hidden title="160cm目線で室内を歩く">内観モード</button>
     <button id="zoom-fit" class="btn btn-compact" type="button" title="全体表示にズーム">全体</button>
 
     <div class="spacer"></div>
@@ -246,6 +247,14 @@
     <section id="stage">
       <canvas id="canvas2d"></canvas>
       <div id="viewer3d" hidden></div>
+
+      <!-- 内観モード UI（3D・内観時のみ） -->
+      <div id="interior-overlay" hidden>
+        <canvas id="interior-minimap" width="220" height="220" title="クリックでワープ"></canvas>
+        <div id="interior-floor-bar" class="interior-floor-bar"></div>
+        <p id="interior-hint" class="interior-hint">左ドラッグまたは左+右ドラッグで視点 · WASD/矢印で移動</p>
+      </div>
+
       <div id="hint"></div>
 
       <!-- フロア情報（2D・右上・クリックで開閉） -->
