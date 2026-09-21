@@ -21,7 +21,7 @@ const ui = {
   openingId: OPENING_TYPES[0].id,  // 'window' | 'sliding' | 'door'
   plumbingId: PLUMBING_TYPES[0].id,
   exteriorId: EXTERIOR_TYPES[0].id,
-  selection: null,       // { kind:'room'|'furniture'|'stair'|'opening'|'wall', ... }
+  selection: null,       // { kind:'room'|'furniture'|'stair'|'opening'|'wall'|'partition', ... }
   showGrid: true,
   showDimensions: false,
   showLowerFloorRef: true,
@@ -612,7 +612,7 @@ function buildProps() {
 
   if (!sel) {
     body.className = 'props-empty';
-    body.textContent = '未選択（選択ツールで部屋・壁・家具・階段をクリック）';
+    body.textContent = '未選択（選択ツールで部屋・壁・家具・階段・追加壁をクリック）';
     return;
   }
   body.className = '';
@@ -789,6 +789,17 @@ function buildProps() {
       ud.addEventListener('click', () => editor.toggleDoorFlip('flipUD'));
       flipWrap.append(lr, ud);
       body.appendChild(field('開き方', flipWrap));
+    } else if (op.type === 'maguchi') {
+      body.appendChild(field('幅 (mm)', inputNumber(op.widthMM, (v) => {
+        editor.applyToSelection((o) => {
+          o.widthMM = Math.max(100, v);
+          if (wall) {
+            const halfW = o.widthMM / 2;
+            o.offsetMM = Math.max(halfW, Math.min(wallLen - halfW, o.offsetMM));
+          }
+        });
+      })));
+      body.appendChild(readonlyRow('高さ', '床〜天井（壁高さに追従）'));
     } else {
       // 窓・掃き出し窓：幅・腰高・開口高
       body.appendChild(field('幅 (mm)', inputNumber(op.widthMM, (v) => {
@@ -810,6 +821,39 @@ function buildProps() {
     body.appendChild(readonlyRow('壁中心からの距離', `${Math.round(op.offsetMM)}mm`));
 
     body.appendChild(deleteButton('この建具を削除'));
+  } else if (sel.kind === 'partition') {
+    const p = (floor.partitions || []).find((x) => x.id === sel.id);
+    if (!p) { body.textContent = '—'; return; }
+    const plan = store.current();
+    const ceil = floor.ceilingHeightMM || 2400;
+
+    body.appendChild(readonlyRow('種類', '壁（追加）'));
+    body.appendChild(readonlyRow('高さ', `${ceil}mm（階の天井高に追従）`));
+
+    body.appendChild(field('長さ (mm)', inputNumber(p.lengthMM, (v) => {
+      editor.applyToSelection((pt) => {
+        pt.lengthMM = Math.max(M.P_MM / 2, M.snap(v, plan.meta.snapDivisions || 4));
+      });
+    })));
+
+    body.appendChild(field('壁厚 (mm)', inputNumber(p.thicknessMM ?? 120, (v) => {
+      editor.applyToSelection((pt) => {
+        pt.thicknessMM = Math.max(50, Math.round(v));
+      });
+    })));
+
+    const rotWrap = document.createElement('div');
+    rotWrap.className = 'btn-row';
+    const rl = document.createElement('button');
+    rl.className = 'btn'; rl.textContent = '⟲ -90°';
+    rl.addEventListener('click', () => editor.rotateSelectedPartition(-90));
+    const rr = document.createElement('button');
+    rr.className = 'btn'; rr.textContent = '+90° ⟳';
+    rr.addEventListener('click', () => editor.rotateSelectedPartition(90));
+    rotWrap.append(rl, rr);
+    body.appendChild(field(`向き（${p.rotationDeg || 0}°）`, rotWrap));
+
+    body.appendChild(deleteButton('この壁を削除'));
   } else if (sel.kind === 'wall') {
     const keys = sel.edgeKeys || [];
     const walls = floor.walls.filter((w) => keys.includes(M.wallEdgeKeyFromWall(w)));
@@ -928,6 +972,7 @@ function buildFloorInfo() {
     <div><span>家具数</span><b>${floor.furniture.length}</b></div>
     <div><span>階段数</span><b>${(floor.stairs || []).length}</b></div>
     <div><span>建具数</span><b>${(floor.openings || []).length}</b></div>
+    <div><span>追加壁</span><b>${(floor.partitions || []).length}</b></div>
     <div><span>床面積合計</span><b>${M.formatAreaLabel(total, tatami)}</b></div>
   `;
 }
@@ -974,6 +1019,9 @@ function reconcileSelection(sel) {
   if (sel.kind === 'opening') {
     return (floor.openings || []).some((o) => o.id === sel.id) ? sel : null;
   }
+  if (sel.kind === 'partition') {
+    return (floor.partitions || []).some((p) => p.id === sel.id) ? sel : null;
+  }
   if (sel.kind === 'wall') {
     const valid = (sel.edgeKeys || []).filter((key) =>
       (floor.walls || []).some((w) =>
@@ -1011,11 +1059,11 @@ function updateHint() {
     return;
   }
   const map = {
-    select: '選択：壁クリックで壁選択（Shift+クリックで複数 / ドラッグで範囲選択）。Delete で削除。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。Shift+壁クリックで部屋選択中も壁選択可。階段・ドアは緑丸で90°回転',
+    select: '選択：壁クリックで壁選択（Shift+クリックで複数 / ドラッグで範囲選択）。Delete で削除。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。Shift+壁クリックで部屋選択中も壁選択可。階段・ドアは緑丸で90°回転。追加壁は緑丸で自由回転 / ドラッグで移動 / R で90°回転',
     room: 'ドラッグで部屋を矩形作成（スナップ適用）。完了後は自動で選択モードへ',
     furniture: 'クリックで家具を配置。完了後は自動で選択モードへ',
     stair: 'クリックで階段を配置。完了後は自動で選択モードへ。辺ドラッグでサイズ変更 / 緑丸ドラッグで90°回転',
-    opening: '壁をクリックで建具を配置。ドア選択時は緑丸ドラッグで90°刻みの開き方向変更。短クリック/右クリック→操作メニュー',
+    opening: '壁をクリックで建具を配置。「壁」選択時はクリックで1Pの追加壁を配置（間口上クリックで壁を復元）。ドア選択時は緑丸ドラッグで90°刻みの開き方向変更。短クリック/右クリック→操作メニュー',
     pan: 'ドラッグで画面操作。ホイールでズーム',
   };
   hint.textContent = map[ui.tool] || '';

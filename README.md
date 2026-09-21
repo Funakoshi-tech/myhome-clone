@@ -32,11 +32,13 @@ index.html        画面骨格 + importmap
 css/style.css     ダークモードUI
 js/main.js        エントリ。UI配線・統括
 js/store.js       状態管理・LocalStorage・JSON入出力・プラン管理
-js/model.js       データ構造／座標変換／面積・畳の計算（純粋関数）
-js/catalog.js     部屋種別・家具の定義（データ）
+js/model.js       データ構造／座標変換／面積・畳の計算（純粋関数・共通定数）
+js/catalog.js     部屋種別・家具・建具の定義（データ）
+js/geometry2d.js  2Dキャンバス用の純粋幾何ヘルパー
+js/openingModel.js 建具の壁スナップ・軸計算（純関数）
 js/editor2d.js    2D作図エディタ（Canvas）
 js/viewer3d.js    Three.js の 3D 描画
-js/sun.js         日射計算（フェーズBで実装。現状は空）
+js/sun.js         日射計算
 ```
 
 ## 開発時の静的チェック（任意）

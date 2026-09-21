@@ -4,6 +4,8 @@
 
 // 1P = 910mm（1マス）
 export const P_MM = 910;
+export const DEFAULT_CEILING_MM = 2400;
+export const DEFAULT_WALL_THICKNESS_MM = 120;
 
 // ---- ID 生成 ----------------------------------------------------------------
 let _seq = 0;
@@ -53,19 +55,20 @@ export function wallThicknessPreset(plan, exterior) {
 }
 
 function _wallEdgeKey(a, b) {
-  const r = (v) => Math.round(v);
-  const p1 = `${r(a.x)},${r(a.z)}`;
-  const p2 = `${r(b.x)},${r(b.z)}`;
-  return p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
+  return wallEdgeKey(a, b);
 }
 
-function _pointToSegmentDist(p, a, b) {
+export function pointToSegmentDist(p, a, b) {
   const dx = b.x - a.x, dz = b.z - a.z;
   const len2 = dx * dx + dz * dz;
   if (len2 < 1e-6) return Math.hypot(p.x - a.x, p.z - a.z);
   let t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / len2;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(p.x - a.x - t * dx, p.z - a.z - t * dz);
+}
+
+function _pointToSegmentDist(p, a, b) {
+  return pointToSegmentDist(p, a, b);
 }
 
 function _segmentsParallel(a1, a2, b1, b2, angEps = 0.05) {
@@ -113,10 +116,41 @@ function _isBuildingPerimeterWall(wall, walls) {
   return count === 1;
 }
 
-/** 外壁判定：敷地境界に接する、または建物外周（部屋共有なし） */
+/** 外壁判定：敷地境界・建物外周・屋外（バルコニー等）に面する壁 */
 export function isExteriorWall(wall, floor, plan) {
   if (_wallTouchesSiteBoundary(wall, plan?.site?.boundary)) return true;
-  return _isBuildingPerimeterWall(wall, floor.walls || []);
+  if (_isBuildingPerimeterWall(wall, floor.walls || [])) return true;
+  return _wallAdjoinsOutdoorRoom(wall, floor);
+}
+
+/** 屋外扱いの部屋（バルコニー・吹抜け・ポーチなど） */
+export const OUTDOOR_ROOM_TYPES = new Set(['balcony', 'fukinuke', 'porch']);
+
+/** 床板のみ（壁・天井なし）の部屋種別 */
+export const FLOOR_ONLY_ROOM_TYPES = new Set(['porch']);
+
+export function isOutdoorRoom(room) {
+  return OUTDOOR_ROOM_TYPES.has(room?.type);
+}
+
+export function isFloorOnlyRoom(room) {
+  return FLOOR_ONLY_ROOM_TYPES.has(room?.type);
+}
+
+/** 室内と屋外が接する共有壁か */
+function _wallAdjoinsOutdoorRoom(wall, floor) {
+  const key = wallEdgeKeyFromWall(wall);
+  const wallRoomId = inferWallRoomId(wall);
+  const wallRoom = floor.rooms?.find((r) => r.id === wallRoomId);
+  const wallOutdoor = wallRoom ? isOutdoorRoom(wallRoom) : false;
+  for (const w of floor.walls || []) {
+    if (inferWallRoomId(w) === wallRoomId) continue;
+    if (wallEdgeKeyFromWall(w) !== key) continue;
+    const other = floor.rooms?.find((r) => r.id === inferWallRoomId(w));
+    if (!other) continue;
+    if (isOutdoorRoom(other) !== wallOutdoor) return true;
+  }
+  return false;
 }
 
 function _matchWallGeometry(a, b) {
@@ -343,9 +377,9 @@ export function pointInOrientedRect(pt, cx, cz, w, d, rotationDeg) {
 
 // ---- 屋根自動生成（部屋単位・上階重なり判定）--------------------------------
 /** 屋根を付けない部屋種別 */
-export const NO_AUTO_ROOF_TYPES = new Set(['balcony', 'fukinuke']);
+export const NO_AUTO_ROOF_TYPES = new Set(['balcony', 'fukinuke', 'porch']);
 /** 上階で「構造」とみなさない部屋（下階への遮蔽なし） */
-export const UPPER_OPEN_ROOF_TYPES = new Set(['balcony', 'fukinuke']);
+export const UPPER_OPEN_ROOF_TYPES = new Set(['balcony', 'fukinuke', 'porch']);
 
 function _cross2D(o, a, b) {
   return (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
@@ -414,6 +448,14 @@ export function roomNeedsAutoRoof(room, floor, plan) {
   return !roomHasUpperStructureOverlap(room, upper);
 }
 
+export function wallThicknessMM(wall, fallback = DEFAULT_WALL_THICKNESS_MM) {
+  return wall?.thicknessMM ?? fallback;
+}
+
+export function floorCeilingMM(floor, fallback = DEFAULT_CEILING_MM) {
+  return floor?.ceilingHeightMM ?? fallback;
+}
+
 // ---- 壁の自動生成 -----------------------------------------------------------
 /** 壁辺の決定論的キー（共有壁の同一判定に使用） */
 export function wallEdgeKey(start, end) {
@@ -450,8 +492,238 @@ export function pruneRemovedWallEdges(floor) {
   floor.removedWallEdges = floor.removedWallEdges.filter((k) => live.has(k));
 }
 
+/** 壁再生成後も建具の wallId を幾何＋部屋で追従させる */
+export function remapOpeningWallIds(floor, oldWalls) {
+  for (const op of floor.openings || []) {
+    const ow = oldWalls.find((w) => w.id === op.wallId);
+    if (!ow) continue;
+    const owRoom = inferWallRoomId(ow);
+    const nw = floor.walls.find(
+      (w) => _matchWallGeometry(w, ow) && inferWallRoomId(w) === owRoom,
+    );
+    if (nw) {
+      op.wallId = nw.id;
+      op.wallEdgeKey = wallEdgeKeyFromWall(nw);
+    }
+  }
+  // 古いデータ: wallEdgeKey 未設定の建具を補完
+  for (const op of floor.openings || []) {
+    if (op.wallEdgeKey) continue;
+    const w = floor.walls.find((wl) => wl.id === op.wallId);
+    if (w) op.wallEdgeKey = wallEdgeKeyFromWall(w);
+  }
+}
+
+/** 1 本の壁に紐づく建具（共有壁は edgeKey、幾何フォールバック付き） */
+export function openingsForWall(floor, wall) {
+  const key = wallEdgeKeyFromWall(wall);
+  const seen = new Set();
+  const ops = [];
+  for (const op of floor.openings || []) {
+    if (seen.has(op.id)) continue;
+    const ref = floor.walls.find((w) => w.id === op.wallId);
+    let include = false;
+    if (op.wallId === wall.id || op.wallEdgeKey === key) {
+      include = true;
+    } else if (ref && wallEdgeKeyFromWall(ref) === key) {
+      include = true;
+    } else if (ref && _pointOnWallSegment(wall, openingWorldPoint(ref, op))) {
+      include = true;
+    }
+    if (!include) continue;
+    seen.add(op.id);
+    ops.push(op);
+  }
+  return ops.sort((a, b) => a.offsetMM - b.offsetMM);
+}
+
+export function wallsSameDirection(a, b) {
+  const same = (p, q) => Math.abs(p.x - q.x) < 0.5 && Math.abs(p.z - q.z) < 0.5;
+  return same(a.start, b.start) && same(a.end, b.end);
+}
+
+/** 建具配置点の世界座標 */
+export function openingWorldPoint(wall, opening) {
+  const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 1) return { x: wall.start.x, z: wall.start.z };
+  const ux = dx / len, uz = dz / len;
+  return {
+    x: wall.start.x + ux * opening.offsetMM,
+    z: wall.start.z + uz * opening.offsetMM,
+  };
+}
+
+/** 世界座標を壁の offsetMM に変換 */
+export function offsetOnWallFromPoint(wall, pt) {
+  const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 1) return 0;
+  const ux = dx / len, uz = dz / len;
+  return (pt.x - wall.start.x) * ux + (pt.z - wall.start.z) * uz;
+}
+
+/** 建具の offset を描画壁の向きに合わせて変換（世界座標で投影） */
+export function openingOffsetOnWall(opening, floor, renderWall) {
+  const ref = floor.walls.find((w) => w.id === opening.wallId)
+    || floor.walls.find((w) => opening.wallEdgeKey && wallEdgeKeyFromWall(w) === opening.wallEdgeKey);
+  if (!ref) return opening.offsetMM;
+  const pt = openingWorldPoint(ref, opening);
+  return offsetOnWallFromPoint(renderWall, pt);
+}
+
+function _wallSpan(wall) {
+  const EPS = 0.5;
+  const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+  if (Math.abs(dz) < EPS) {
+    const z = Math.round((wall.start.z + wall.end.z) / 2);
+    return {
+      kind: 'H', fixed: z,
+      min: Math.min(wall.start.x, wall.end.x),
+      max: Math.max(wall.start.x, wall.end.x),
+      wall,
+    };
+  }
+  if (Math.abs(dx) < EPS) {
+    const x = Math.round((wall.start.x + wall.end.x) / 2);
+    return {
+      kind: 'V', fixed: x,
+      min: Math.min(wall.start.z, wall.end.z),
+      max: Math.max(wall.start.z, wall.end.z),
+      wall,
+    };
+  }
+  return {
+    kind: 'D',
+    fixed: 0,
+    min: 0,
+    max: Math.hypot(dx, dz),
+    wall,
+  };
+}
+
+function _pointOnWallSegment(wall, pt, tol = 2) {
+  const off = offsetOnWallFromPoint(wall, pt);
+  const len = Math.hypot(wall.end.x - wall.start.x, wall.end.z - wall.start.z);
+  if (off < -tol || off > len + tol) return false;
+  const dx = wall.end.x - wall.start.x, dz = wall.end.z - wall.start.z;
+  const len2 = Math.hypot(dx, dz);
+  if (len2 < 1) return true;
+  const ux = dx / len2, uz = dz / len2;
+  const px = wall.start.x + ux * off;
+  const pz = wall.start.z + uz * off;
+  return Math.hypot(px - pt.x, pz - pt.z) < tol;
+}
+
+function _syntheticWallFromInterval(interval, template) {
+  let start, end;
+  if (interval.kind === 'H') {
+    start = { x: interval.min, z: interval.fixed };
+    end = { x: interval.max, z: interval.fixed };
+  } else if (interval.kind === 'V') {
+    start = { x: interval.fixed, z: interval.min };
+    end = { x: interval.fixed, z: interval.max };
+  } else {
+    return { ...template };
+  }
+  return {
+    ...template,
+    start,
+    end,
+  };
+}
+
+function _spansTouchOrOverlap(a, b, tol = 5) {
+  return a.min <= b.max + tol && b.min <= a.max + tol;
+}
+
+function _openingsForChain(floor, chainWalls, renderWall) {
+  const seen = new Set();
+  const wallIds = new Set(chainWalls.map((w) => w.id));
+  const edgeKeys = new Set(chainWalls.map((w) => wallEdgeKeyFromWall(w)));
+  const ops = [];
+  for (const op of floor.openings || []) {
+    if (seen.has(op.id)) continue;
+    const ref = floor.walls.find((w) => w.id === op.wallId);
+    let include = false;
+    if (ref && (wallIds.has(ref.id) || edgeKeys.has(wallEdgeKeyFromWall(ref)))) {
+      include = true;
+    } else if (op.wallEdgeKey && edgeKeys.has(op.wallEdgeKey)) {
+      include = true;
+    } else if (ref) {
+      const pt = openingWorldPoint(ref, op);
+      include = _pointOnWallSegment(renderWall, pt);
+    }
+    if (!include) continue;
+    seen.add(op.id);
+    ops.push({
+      ...op,
+      offsetMM: openingOffsetOnWall(op, floor, renderWall),
+    });
+  }
+  return ops.sort((a, b) => a.offsetMM - b.offsetMM);
+}
+
+/** 同一直線上でつながる壁を結合して 3D 描画用リストを作る */
+export function wallsToRender(floor) {
+  const floorOnlyIds = new Set(
+    (floor.rooms || []).filter(isFloorOnlyRoom).map((r) => r.id),
+  );
+  const active = (floor.walls || []).filter((w) => {
+    if (isWallEdgeRemoved(floor, w)) return false;
+    const rid = inferWallRoomId(w);
+    return !rid || !floorOnlyIds.has(rid);
+  });
+  const diagChains = [];
+  const lineGroups = new Map();
+
+  for (const wall of active) {
+    const span = _wallSpan(wall);
+    if (span.kind === 'D') {
+      diagChains.push({
+        wall,
+        ops: _openingsForChain(floor, [wall], wall),
+      });
+      continue;
+    }
+    const gkey = `${span.kind}:${span.fixed}`;
+    if (!lineGroups.has(gkey)) lineGroups.set(gkey, []);
+    lineGroups.get(gkey).push(span);
+  }
+
+  const result = [...diagChains];
+
+  for (const spans of lineGroups.values()) {
+    spans.sort((a, b) => a.min - b.min);
+    const merged = [];
+    for (const s of spans) {
+      const prev = merged[merged.length - 1];
+      if (!prev || !_spansTouchOrOverlap(prev, s)) {
+        merged.push({ kind: s.kind, fixed: s.fixed, min: s.min, max: s.max, walls: [s.wall] });
+      } else {
+        prev.min = Math.min(prev.min, s.min);
+        prev.max = Math.max(prev.max, s.max);
+        prev.walls.push(s.wall);
+      }
+    }
+    for (const interval of merged) {
+      const template = interval.walls[0];
+      const renderWall = _syntheticWallFromInterval(interval, template);
+      result.push({
+        wall: renderWall,
+        ops: _openingsForChain(floor, interval.walls, renderWall),
+      });
+    }
+  }
+
+  return result;
+}
+
 // 部屋ポリゴンの外周に沿って壁セグメントを生成する（MVP）。
-export function wallsFromPolygon(polygon, { thicknessMM = 120, heightMM = 2400 } = {}) {
+export function wallsFromPolygon(polygon, {
+  thicknessMM = DEFAULT_WALL_THICKNESS_MM,
+  heightMM = DEFAULT_CEILING_MM,
+} = {}) {
   const walls = [];
   for (let i = 0; i < polygon.length; i++) {
     const a = polygon[i];
@@ -474,6 +746,7 @@ export function rebuildFloorWalls(floor, plan = null) {
   const oldWalls = (floor.walls || []).slice();
   const walls = [];
   for (const room of floor.rooms) {
+    if (isFloorOnlyRoom(room)) continue;
     const poly = room.polygon;
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i];
@@ -500,7 +773,9 @@ export function rebuildFloorWalls(floor, plan = null) {
     }
   }
   floor.walls = walls;
+  remapOpeningWallIds(floor, oldWalls);
   pruneRemovedWallEdges(floor);
+  syncStairWallOpenings(floor);
 }
 
 // ポリゴン全体を平行移動
@@ -513,13 +788,26 @@ export function defaultFloor(id, level) {
   return {
     id,
     level,
-    ceilingHeightMM: 2400,
+    ceilingHeightMM: DEFAULT_CEILING_MM,
     rooms: [],
     walls: [],
     openings: [], // フェーズAでは空（スキーマのみ）
     removedWallEdges: [], // 消去済み壁辺（edgeKey の配列）
     furniture: [],
     stairs: [],   // 独立した階段カテゴリ
+    partitions: [], // 追加壁（間口の逆：1P 等の独立壁段）
+  };
+}
+
+/** 追加壁の端点（世界座標 mm） */
+export function partitionEndpoints(p) {
+  const rad = (p.rotationDeg || 0) * Math.PI / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const hw = p.lengthMM / 2;
+  return {
+    start: { x: p.x - cos * hw, z: p.z - sin * hw },
+    end: { x: p.x + cos * hw, z: p.z + sin * hw },
   };
 }
 
@@ -529,7 +817,7 @@ export function createEmptyPlan(name = '新しいプラン') {
     meta: {
       name,
       schemaVersion: 1,
-      unitMM: 910,
+      unitMM: P_MM,
       snapDivisions: 4,
       tatamiM2: 1.62,
       createdAt: now,
@@ -580,6 +868,104 @@ export function getUpperFloor(plan, floorId) {
   const cur = plan.floors.find((f) => f.id === floorId);
   if (!cur) return null;
   return getFloorByLevel(plan, cur.level + 1);
+}
+
+/**
+ * 階段ローカル辺インデックス（editor2d の _stairEdgeAt と同じ）
+ * 0 = −Z（上り先）, 1 = +X, 2 = +Z（登り口）, 3 = −X
+ */
+export function stairOpenEdgeIndices(stair) {
+  const type = stair.type || 'straight';
+  switch (type) {
+    case 'l_shape': return [2, 3];       // 登り口 +Z / 出口 −X
+    case 'u_shape': return [0, 2];       // 出口 −Z / 登り口 +Z
+    case 'winding': return [0, 2];
+    case 'spiral': return [2];           // 登り口 +Z のみ（上階へ抜ける）
+    case 'straight':
+    default: return [0, 2];
+  }
+}
+
+/** 階段の出入り口辺を世界座標の線分で返す */
+export function stairOpenEdgeSegments(stair) {
+  const corners = stairFootprintCorners(stair);
+  return stairOpenEdgeIndices(stair).map((i) => ({
+    start: corners[i],
+    end: corners[(i + 1) % 4],
+  }));
+}
+
+/** 壁と階段出入り口辺の重なり（あれば offsetMM / widthMM） */
+function _wallOpeningOverlapForSegment(wall, seg, tolMM = 180) {
+  const wdx = wall.end.x - wall.start.x;
+  const wdz = wall.end.z - wall.start.z;
+  const wlen = Math.hypot(wdx, wdz);
+  if (wlen < 1) return null;
+  const ux = wdx / wlen;
+  const uz = wdz / wlen;
+  const nx = -uz;
+  const nz = ux;
+
+  const proj = (p) => (p.x - wall.start.x) * ux + (p.z - wall.start.z) * uz;
+  const t1 = proj(seg.start);
+  const t2 = proj(seg.end);
+  const segMin = Math.min(t1, t2);
+  const segMax = Math.max(t1, t2);
+  const overlapStart = Math.max(0, segMin);
+  const overlapEnd = Math.min(wlen, segMax);
+  const widthMM = overlapEnd - overlapStart;
+  if (widthMM < 400) return null;
+
+  const midT = (overlapStart + overlapEnd) / 2;
+  const wallMid = {
+    x: wall.start.x + ux * midT,
+    z: wall.start.z + uz * midT,
+  };
+  const segMid = {
+    x: (seg.start.x + seg.end.x) / 2,
+    z: (seg.start.z + seg.end.z) / 2,
+  };
+  const dist = Math.abs(nx * (segMid.x - wallMid.x) + nz * (segMid.z - wallMid.z));
+  if (dist > tolMM) return null;
+
+  const halfW = widthMM / 2;
+  const offsetMM = Math.max(halfW, Math.min(wlen - halfW, midT));
+  return { offsetMM, widthMM: Math.min(widthMM, wlen - 1) };
+}
+
+/** 階段の出入り口に接する部屋壁へ自動間口（maguchi）を付与・更新 */
+export function syncStairWallOpenings(floor) {
+  const stairs = floor.stairs || [];
+  const liveStairIds = new Set(stairs.map((s) => s.id));
+  floor.openings = (floor.openings || []).filter(
+    (op) => !op.autoStairId || liveStairIds.has(op.autoStairId),
+  );
+
+  for (const stair of stairs) {
+    floor.openings = floor.openings.filter((op) => op.autoStairId !== stair.id);
+    const seenEdgeKeys = new Set();
+    for (const seg of stairOpenEdgeSegments(stair)) {
+      for (const wall of floor.walls || []) {
+        if (isWallEdgeRemoved(floor, wall)) continue;
+        const key = wallEdgeKeyFromWall(wall);
+        if (seenEdgeKeys.has(key)) continue;
+        const hit = _wallOpeningOverlapForSegment(wall, seg);
+        if (!hit) continue;
+        seenEdgeKeys.add(key);
+        floor.openings.push({
+          id: uid('op'),
+          type: 'maguchi',
+          wallId: wall.id,
+          wallEdgeKey: key,
+          offsetMM: hit.offsetMM,
+          widthMM: hit.widthMM,
+          sillMM: 0,
+          heightMM: floor.ceilingHeightMM || 2400,
+          autoStairId: stair.id,
+        });
+      }
+    }
+  }
 }
 
 /** 階段の回転矩形フットプリント（mm） */
@@ -634,6 +1020,7 @@ export function normalizePlan(plan) {
     removedWallEdges: Array.isArray(f.removedWallEdges) ? f.removedWallEdges : [],
     furniture: Array.isArray(f.furniture) ? f.furniture : [],
     stairs: Array.isArray(f.stairs) ? f.stairs : [],
+    partitions: Array.isArray(f.partitions) ? f.partitions : [],
   }));
   ensureWallRoomIds(out);
   for (const floor of out.floors) {
@@ -645,15 +1032,13 @@ export function normalizePlan(plan) {
     if (!missingRoomId && !wrongCount) continue;
     const oldWalls = floor.walls.slice();
     rebuildFloorWalls(floor, out);
-    for (const op of floor.openings) {
-      const ow = oldWalls.find((w) => w.id === op.wallId);
-      if (!ow) continue;
-      const match = (a, b) =>
-        (a.start.x === b.start.x && a.start.z === b.start.z && a.end.x === b.end.x && a.end.z === b.end.z)
-        || (a.start.x === b.end.x && a.start.z === b.end.z && a.end.x === b.start.x && a.end.z === b.start.z);
-      const owRoom = inferWallRoomId(ow);
-      const nw = floor.walls.find((w) => match(w, ow) && inferWallRoomId(w) === owRoom);
-      if (nw) op.wallId = nw.id;
+    remapOpeningWallIds(floor, oldWalls);
+  }
+  for (const floor of out.floors) {
+    for (const op of floor.openings || []) {
+      if (op.wallEdgeKey) continue;
+      const w = floor.walls.find((wl) => wl.id === op.wallId);
+      if (w) op.wallEdgeKey = wallEdgeKeyFromWall(w);
     }
   }
   return out;

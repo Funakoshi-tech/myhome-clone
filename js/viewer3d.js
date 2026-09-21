@@ -8,7 +8,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import * as M from './model.js';
-import { getRoomType, getFurniture, flooringForRoom } from './catalog.js';
+import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, flooringForRoom } from './catalog.js';
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
@@ -122,9 +122,22 @@ export class Viewer3D {
       }),
       roof: new THREE.MeshStandardMaterial({
         color: 0x7a828c,
+        transparent: true,
+        opacity: 0.12,
         roughness: 0.88,
         metalness: 0.04,
         side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+      // 3D 表示専用：影のみ落とす不可視屋根（日射 occluder とは別）
+      roofShadow: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        roughness: 0.88,
+        side: THREE.DoubleSide,
+        depthWrite: true,
+        colorWrite: false,
       }),
     };
 
@@ -246,6 +259,11 @@ export class Viewer3D {
     const plan = this.store.current();
     if (!plan) return;
 
+    M.ensureWallRoomIds(plan);
+    for (const floor of plan.floors) {
+      if (floor.rooms?.length) M.rebuildFloorWalls(floor, plan);
+    }
+
     const showAll = !!this.ui?.view3dAllFloors;
     const selectedId = this.ui?.floorId || '1F';
     const displayKey = showAll ? '__all__' : selectedId;
@@ -256,7 +274,8 @@ export class Viewer3D {
 
     for (const floor of plan.floors) {
       if (!showAll && floor.id !== selectedId) continue;
-      const hasContent = floor.rooms.length || floor.furniture.length || (floor.stairs || []).length;
+      const hasContent = floor.rooms.length || floor.furniture.length || (floor.stairs || []).length
+        || (floor.partitions || []).length;
       const lower = M.getLowerFloor(plan, floor.id);
       const hasLowerStairs = !showAll && floor.id === selectedId && (lower?.stairs?.length || 0) > 0;
       if (!hasContent && !hasLowerStairs) continue;
@@ -271,11 +290,18 @@ export class Viewer3D {
       // 単階表示: 下階の階段を上階まで突き抜けて表示
       if (!showAll && lower?.stairs?.length) {
         const riseMM = lower.ceilingHeightMM || 2400;
+        const riseM = riseMM * MM;
         const upper = M.getUpperFloor(plan, floor.id);
+        const plateMat = this._floorMaterial('#c9ad88');
         for (const s of lower.stairs) {
+          const plate = this._buildStairFloorPlate(s, plateMat, -riseM + 0.005);
+          if (plate) {
+            plate.userData = { kind: 'stair-floor' };
+            g.add(plate);
+          }
           const obj = this._buildStair(s, riseMM, lower, upper);
           if (obj) {
-            obj.position.y = -riseMM * MM;
+            obj.position.y = -riseM;
             g.add(obj);
           }
         }
@@ -304,7 +330,7 @@ export class Viewer3D {
   }
 
   _roomHasCeiling(room) {
-    return !NO_CEILING_TYPES.has(room.type);
+    return !NO_CEILING_TYPES.has(room.type) && !M.isFloorOnlyRoom(room);
   }
 
   _roomNeedsRoof(room, floor, plan) {
@@ -365,6 +391,27 @@ export class Viewer3D {
     return mesh;
   }
 
+  /** 最下階の階段フットプリント上に置く床板（1F 設置時） */
+  _buildStairFloorPlate(stair, mat, yM = 0.005) {
+    const corners = M.stairFootprintCorners(stair);
+    if (corners.length < 3) return null;
+    const shape = new THREE.Shape();
+    corners.forEach((p, i) => {
+      const x = p.x * MM;
+      const z = p.z * MM;
+      if (i === 0) shape.moveTo(x, z);
+      else shape.lineTo(x, z);
+    });
+    shape.closePath();
+    const geo = new THREE.ShapeGeometry(shape);
+    geo.rotateX(Math.PI / 2);
+    const useMat = mat || this._floorMaterial('#c9ad88');
+    const mesh = new THREE.Mesh(geo, useMat);
+    mesh.position.y = yM;
+    mesh.receiveShadow = true;
+    return mesh;
+  }
+
   /**
    * 1フロア分の物理構造（床・壁・天井・階段・家具）をグループへ追加。
    * @param {'visual'|'occluder'} mode
@@ -374,6 +421,22 @@ export class Viewer3D {
     const ceilingY = (floor.ceilingHeightMM || 2400) * MM;
     const isOcc = mode === 'occluder';
     const upper = planData ? M.getUpperFloor(planData, floor.id) : null;
+    const isGroundFloor = planData ? !M.getLowerFloor(planData, floor.id) : (floor.level || 0) === 0;
+
+    // 最下階（1F）の階段下に床板
+    if (isGroundFloor) {
+      for (const s of (floor.stairs || [])) {
+        const plate = this._buildStairFloorPlate(
+          s,
+          isOcc ? OCCLUDER_MAT : this._floorMaterial('#c9ad88'),
+          isOcc ? 0 : 0.005,
+        );
+        if (plate) {
+          plate.userData = { kind: 'stair-floor' };
+          fg.add(plate);
+        }
+      }
+    }
 
     for (const room of floor.rooms) {
       const floorMesh = this._buildRoomFloor(
@@ -415,22 +478,34 @@ export class Viewer3D {
       }
 
       if (this._roomNeedsRoof(room, floor, planData)) {
-        const roofMat = isOcc ? OCCLUDER_MAT : this._materials.roof;
-        const roofMesh = this._buildRoomRoof(room, ceilingY, roofMat, floor);
-        if (roofMesh) {
-          roofMesh.userData = { roomId: room.id, kind: 'roof' };
-          if (!isOcc) {
-            roofMesh.castShadow = true;
-            roofMesh.receiveShadow = true;
+        if (isOcc) {
+          const roofMesh = this._buildRoomRoof(room, ceilingY, OCCLUDER_MAT, floor);
+          if (roofMesh) {
+            roofMesh.userData = { roomId: room.id, kind: 'roof' };
+            fg.add(roofMesh);
           }
-          fg.add(roofMesh);
+        } else {
+          const roofMesh = this._buildRoomRoof(room, ceilingY, this._materials.roof, floor);
+          if (roofMesh) {
+            roofMesh.userData = { roomId: room.id, kind: 'roof' };
+            roofMesh.castShadow = false;
+            roofMesh.receiveShadow = false;
+            roofMesh.renderOrder = 3;
+            fg.add(roofMesh);
+            const shadowRoof = this._buildRoomRoof(room, ceilingY, this._materials.roofShadow, floor);
+            if (shadowRoof) {
+              shadowRoof.userData = { roomId: room.id, kind: 'roof-shadow' };
+              shadowRoof.castShadow = true;
+              shadowRoof.receiveShadow = false;
+              shadowRoof.renderOrder = 0;
+              fg.add(shadowRoof);
+            }
+          }
         }
       }
     }
 
-    for (const wall of floor.walls) {
-      if (M.isWallEdgeRemoved(floor, wall)) continue;
-      const ops = this._openingsForWall(floor, wall);
+    for (const { wall, ops } of M.wallsToRender(floor)) {
       const wallGroup = this._buildWallWithOpenings(wall, ops, isOcc ? OCCLUDER_MAT : null, { occluder: isOcc });
       if (!wallGroup) continue;
       const rid = wall.roomId || null;
@@ -438,6 +513,16 @@ export class Viewer3D {
         if (o.isMesh) o.userData = { roomId: rid, kind: 'wall' };
       });
       fg.add(wallGroup);
+    }
+
+    for (const p of (floor.partitions || [])) {
+      const partGroup = this._buildPartition(p, floor, isOcc ? OCCLUDER_MAT : null);
+      if (partGroup) {
+        partGroup.traverse((o) => {
+          if (o.isMesh) o.userData = { roomId: null, kind: 'partition' };
+        });
+        fg.add(partGroup);
+      }
     }
 
     for (const s of (floor.stairs || [])) {
@@ -582,35 +667,14 @@ export class Viewer3D {
     return { nx, nz, ux, uz };
   }
 
-  _wallEdgeKey(wall) {
-    const a = wall.start, b = wall.end;
-    const k1 = `${Math.round(a.x)}:${Math.round(a.z)}:${Math.round(b.x)}:${Math.round(b.z)}`;
-    const k2 = `${Math.round(b.x)}:${Math.round(b.z)}:${Math.round(a.x)}:${Math.round(a.z)}`;
-    return k1 < k2 ? k1 : k2;
-  }
-
-  _openingsForWall(floor, wall) {
-    const key = this._wallEdgeKey(wall);
-    const seen = new Set();
-    const ops = [];
-    for (const op of (floor.openings || [])) {
-      const opWall = floor.walls.find((w) => w.id === op.wallId);
-      if (!opWall || this._wallEdgeKey(opWall) !== key) continue;
-      if (seen.has(op.id)) continue;
-      seen.add(op.id);
-      ops.push(op);
-    }
-    return ops;
-  }
-
   _wallForRoom(floor, op, room) {
     const wall = floor.walls.find((w) => w.id === op.wallId);
     if (!wall) return null;
     if (M.inferWallRoomId(wall) === room.id) return wall;
-    const key = this._wallEdgeKey(wall);
+    const key = M.wallEdgeKeyFromWall(wall);
     return floor.walls.find((w) =>
       w.id !== wall.id
-      && this._wallEdgeKey(w) === key
+      && M.wallEdgeKeyFromWall(w) === key
       && M.inferWallRoomId(w) === room.id,
     ) || null;
   }
@@ -629,24 +693,33 @@ export class Viewer3D {
     return pairs;
   }
 
-  _openingDefaultHeightMM(opening) {
+  _openingDefaultHeightMM(opening, wall = null) {
+    if (opening.type === 'maguchi') return wall?.heightMM || opening.heightMM || 2400;
     if (opening.heightMM) return opening.heightMM;
-    if (opening.type === 'sliding' || opening.type === 'door') return 2000;
+    if (opening.type === 'sliding' || opening.type === 'door' || opening.type === 'hikite'
+      || opening.type === 'hikichigai2' || opening.type === 'hikichigai3') return 2000;
     return 1100;
   }
 
   _openingVerticalMetrics(opening, wall) {
     const wallH = wall.heightMM || 2400;
+    if (opening.type === 'maguchi') {
+      return { sillMM: 0, heightMM: wallH, wallH };
+    }
     const sillMM = opening.sillMM || 0;
-    const heightMM = Math.min(this._openingDefaultHeightMM(opening), Math.max(0, wallH - sillMM));
+    const heightMM = Math.min(this._openingDefaultHeightMM(opening, wall), Math.max(0, wallH - sillMM));
     return { sillMM, heightMM, wallH };
   }
 
-  // 自室の箱（床壁天井）以外の遮蔽ヒットか
-  _isExternalOcclusionHit(hit, room) {
+  // 自室の箱（床壁天井）以外の遮蔽ヒットか（屋外バルコニーは遮蔽に含めない）
+  _isExternalOcclusionHit(hit, room, floor) {
     const ud = hit.object.userData;
     if (!ud) return true;
     if (ud.roomId === room.id) return false;
+    if (ud.roomId && floor) {
+      const other = floor.rooms?.find((r) => r.id === ud.roomId);
+      if (other && M.isOutdoorRoom(other)) return false;
+    }
     return true;
   }
 
@@ -663,8 +736,12 @@ export class Viewer3D {
 
   _openingHeightSampleFracs(opening, wall) {
     const { sillMM, heightMM, wallH } = this._openingVerticalMetrics(opening, wall);
+    if (opening.type === 'maguchi') {
+      return [0.12, 0.3, 0.5, 0.7, 0.88];
+    }
     const fillRatio = heightMM / wallH;
-    if (opening.type === 'sliding' || (sillMM === 0 && fillRatio > 0.6)) {
+    if (opening.type === 'sliding' || opening.type === 'hikite' || opening.type === 'hikichigai2'
+      || opening.type === 'hikichigai3' || (sillMM === 0 && fillRatio > 0.6)) {
       return [0.12, 0.3, 0.5, 0.7, 0.88];
     }
     if (sillMM === 0) return [0.2, 0.45, 0.7];
@@ -702,7 +779,7 @@ export class Viewer3D {
         );
         ray.set(exterior, dir);
         const hits = ray.intersectObjects(occ.children, true);
-        if (!hits.some((hit) => this._isExternalOcclusionHit(hit, room))) return true;
+        if (!hits.some((hit) => this._isExternalOcclusionHit(hit, room, floor))) return true;
       }
     }
     return false;
@@ -714,8 +791,8 @@ export class Viewer3D {
     if (pairs.some(({ op, wall }) => this._openingAdmitsSun(op, wall, room, baseYM, dir, ray, occ))) {
       return true;
     }
-    // バルコニーのみ：壁に囲まれず上方からの直射も許可（閾値を上げて過大計測を抑制）
-    if (room.type !== 'balcony') return false;
+    // バルコニー・ポーチなど：壁に囲まれず上方からの直射も許可（閾値を上げて過大計測を抑制）
+    if (room.type !== 'balcony' && !M.isFloorOnlyRoom(room)) return false;
     if (dir.y < 0.15) return false;
     const c = M.polygonCentroid(room.polygon);
     const origin = new THREE.Vector3(c.x * MM, baseYM + 1.2, c.z * MM);
@@ -758,6 +835,26 @@ export class Viewer3D {
     return mesh;
   }
 
+  /** 追加壁（床〜天井） */
+  _buildPartition(p, floor, mat = null) {
+    const H = (floor.ceilingHeightMM || 2400) * MM;
+    const L = p.lengthMM * MM;
+    const T = (p.thicknessMM || 120) * MM;
+    const ang = -((p.rotationDeg || 0) * Math.PI) / 180;
+    const useMat = mat || this._materials.wall;
+    const group = new THREE.Group();
+    group.position.set(p.x * MM, 0, p.z * MM);
+    group.rotation.y = ang;
+    const geo = new THREE.BoxGeometry(L, H, T);
+    const mesh = new THREE.Mesh(geo, useMat);
+    mesh.position.y = H / 2;
+    mesh.castShadow = !useMat.transparent;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+    group.userData = { kind: 'partition' };
+    return group;
+  }
+
   // 建具開口を考慮して壁を分割描画する。
   // openings: この壁に属する建具の配列（offsetMM でソート済みでなくてよい）
   _buildWallWithOpenings(wall, openings = [], mat = null, options = {}) {
@@ -781,13 +878,14 @@ export class Viewer3D {
     // ローカル X の中心からの距離に変換（壁は -L/2 〜 +L/2）
     const toLocalX = (offMM) => offMM * MM - L / 2;
 
-    const addSeg = (segW, segH, segT, m, cx, cy, cz = 0) => {
+    const addSeg = (segW, segH, segT, m, cx, cy, cz = 0, renderOrder = 0) => {
       if (segW < 0.0005 || segH < 0.0005) return;
       const geo = new THREE.BoxGeometry(segW, segH, segT);
       const mesh = new THREE.Mesh(geo, m);
       mesh.position.set(cx, cy, cz);
-      mesh.castShadow = true;
+      mesh.castShadow = !m.transparent;
       mesh.receiveShadow = true;
+      if (renderOrder) mesh.renderOrder = renderOrder;
       group.add(mesh);
     };
 
@@ -805,12 +903,13 @@ export class Viewer3D {
     for (const op of ops) {
       const oStartMM = Math.max(0, op.offsetMM - op.widthMM / 2);
       const oEndMM   = Math.min(lenMM, op.offsetMM + op.widthMM / 2);
-      const oSillMM  = op.sillMM || 0;
-      const oHgtMM   = Math.min(
-        this._openingDefaultHeightMM(op),
-        Math.max(0, (wall.heightMM || 2400) - oSillMM),
-      );
-      const oTopMM   = oSillMM + oHgtMM;
+      const isMaguchi = op.type === 'maguchi';
+      const wallHMM = wall.heightMM || 2400;
+      const oSillMM  = isMaguchi ? 0 : (op.sillMM || 0);
+      const oHgtMM   = isMaguchi
+        ? wallHMM
+        : Math.min(this._openingDefaultHeightMM(op, wall), Math.max(0, wallHMM - oSillMM));
+      const oTopMM   = isMaguchi ? wallHMM : oSillMM + oHgtMM;
       const oW       = (oEndMM - oStartMM) * MM;
       const cx       = toLocalX((oStartMM + oEndMM) / 2);
 
@@ -820,33 +919,44 @@ export class Viewer3D {
         addSeg(w, H, T, useMat, toLocalX((curMM + oStartMM) / 2), H / 2);
       }
 
-      // 開口内: 腰壁（sill > 0 の場合）
-      if (oSillMM > 0) {
-        addSeg(oW, oSillMM * MM, T, useMat, cx, oSillMM * MM / 2);
-      }
-      // 開口内: まぐさ（上部）
-      const lintelMM = Math.max(0, (wall.heightMM || 2400) - oTopMM);
-      if (lintelMM > 0) {
-        addSeg(oW, lintelMM * MM, T, useMat, cx, oTopMM * MM + lintelMM * MM / 2);
-      }
+      // 間口：床〜天井まで壁なし（枠・ガラスも描かない）
+      if (!isMaguchi) {
+        // 開口内: 腰壁（sill > 0 の場合）
+        if (oSillMM > 0) {
+          addSeg(oW, oSillMM * MM, T, useMat, cx, oSillMM * MM / 2);
+        }
+        // 開口内: まぐさ（上部）
+        const lintelMM = Math.max(0, wallHMM - oTopMM);
+        if (lintelMM > 0) {
+          addSeg(oW, lintelMM * MM, T, useMat, cx, oTopMM * MM + lintelMM * MM / 2);
+        }
 
-      // 窓枠・ガラス（日射オクルーダーでは開口を塞がないよう省略）
-      if (!forOccluder) {
-        const frameMat = this._getFrameMat();
-        const FT = T * 1.05;
-        const FW = 0.030;
-        addSeg(oW + FW * 2, FW, FT, frameMat, cx, oTopMM * MM + FW / 2);
-        addSeg(oW + FW * 2, FW, FT, frameMat, cx, oSillMM * MM - FW / 2);
-        addSeg(FW, oHgtMM * MM, FT, frameMat, cx - oW / 2 - FW / 2, (oSillMM + oTopMM) / 2 * MM);
-        addSeg(FW, oHgtMM * MM, FT, frameMat, cx + oW / 2 + FW / 2, (oSillMM + oTopMM) / 2 * MM);
+        // 窓枠・ガラス（日射オクルーダーでは開口を塞がないよう省略）
+        if (!forOccluder) {
+          const frameMat = this._getFrameMat();
+          const FT = T * 1.05;
+          const FW = 0.030;
+          addSeg(oW + FW * 2, FW, FT, frameMat, cx, oTopMM * MM + FW / 2, 0, 2);
+          addSeg(oW + FW * 2, FW, FT, frameMat, cx, oSillMM * MM - FW / 2, 0, 2);
+          addSeg(FW, oHgtMM * MM, FT, frameMat, cx - oW / 2 - FW / 2, (oSillMM + oTopMM) / 2 * MM, 0, 2);
+          addSeg(FW, oHgtMM * MM, FT, frameMat, cx + oW / 2 + FW / 2, (oSillMM + oTopMM) / 2 * MM, 0, 2);
 
-        if (op.type === 'window' || op.type === 'sliding') {
-          const glassMat = this._getGlassMat();
-          const glassT = 0.006;
-          addSeg(oW - FW * 0.5, oHgtMM * MM - FW, glassT, glassMat, cx, (oSillMM + oTopMM) / 2 * MM);
-          if (op.type === 'sliding') {
+          if (openingHasGlass(op.type)) {
+            const glassMat = this._getGlassMat();
+            const glassT = 0.012;
+            addSeg(oW - FW, oHgtMM * MM - FW * 2, glassT, glassMat, cx, (oSillMM + oTopMM) / 2 * MM, 0, 3);
+            const mullions = openingMullionCount(op.type);
             const mullionW = 0.025;
-            addSeg(mullionW, oHgtMM * MM - FW, FT * 0.95, frameMat, cx, (oSillMM + oTopMM) / 2 * MM);
+            const midY = (oSillMM + oTopMM) / 2 * MM;
+            const mullionH = oHgtMM * MM - FW * 2;
+            if (mullions === 1) {
+              let mx = cx;
+              if (op.type === 'hikite') mx = cx - oW / 6;
+              addSeg(mullionW, mullionH, FT * 0.95, frameMat, mx, midY, 0, 2);
+            } else if (mullions === 2) {
+              addSeg(mullionW, mullionH, FT * 0.95, frameMat, cx - oW / 3, midY, 0, 2);
+              addSeg(mullionW, mullionH, FT * 0.95, frameMat, cx + oW / 3, midY, 0, 2);
+            }
           }
         }
       }
@@ -875,13 +985,13 @@ export class Viewer3D {
   _getGlassMat() {
     if (!this._materials.glass) {
       this._materials.glass = new THREE.MeshStandardMaterial({
-        color: 0xa8d8f0,
-        roughness: 0.08,
-        metalness: 0.05,
+        color: 0x9fd4f0,
+        roughness: 0.05,
+        metalness: 0.08,
         transparent: true,
-        opacity: 0.38,
+        opacity: 0.45,
         side: THREE.DoubleSide,
-        depthWrite: false,
+        depthWrite: true,
       });
     }
     return this._materials.glass;
@@ -1192,9 +1302,9 @@ export class Viewer3D {
     }
 
     if (stairType === 'l_shape') {
-      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, 0, t, wh, d, wallMat);
-      this._addWallPanel(group, w / 2 + t / 2, wh / 2, d / 4, t, wh, d / 2, wallMat);
-      this._addWallPanel(group, -w / 4, wh / 2, d / 2 + t / 2, w / 2, wh, t, wallMat);
+      // 登り口 +Z・出口 −X は開口。−Z 背壁と +X 上段のみ囲う
+      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, d / 4, t, wh, d / 2, wallMat);
+      this._addWallPanel(group, w / 2 + t / 2, wh / 2, -d / 4, t, wh, d / 2, wallMat);
       this._addWallPanel(group, -w / 4, wh / 2, -d / 2 - t / 2, w / 2, wh, t, wallMat);
       return;
     }
@@ -1207,15 +1317,15 @@ export class Viewer3D {
     }
 
     if (stairType === 'winding') {
+      // 登り口 +Z は開口。−Z 出口側も開口
       this._addWallPanel(group, w / 2 + t / 2, wh / 2, 0, t, wh, d, wallMat);
-      this._addWallPanel(group, -w / 4, wh / 2, d / 2 + t / 2, w * 0.75, wh, t, wallMat);
       this._addWallPanel(group, -w / 2 - t / 2, wh / 2, -d / 4, t, wh, d * 0.75, wallMat);
       return;
     }
 
-    // spiral: 外周を円弧近似（4分割）
+    // spiral: 登り口 +Z を開け、側面のみ囲う
     const r = Math.min(w, d) * 0.48;
-    for (const [cx, cz] of [[-r / 2, 0], [r / 2, 0], [0, -r / 2]]) {
+    for (const [cx, cz] of [[-r / 2, 0], [r / 2, 0]]) {
       this._addWallPanel(group, cx, wh / 2, cz, t, wh, r * 0.55, wallMat);
     }
   }

@@ -81,13 +81,12 @@ export function isWallMountedFurniture(item) {
 // ---- 階段（独立カテゴリ） ---------------------------------------------------
 // defaultW=間口(X mm), defaultD=奥行(Z mm)
 // 直線系: 3P×1P / 折返し系: 2P×2P
-const P = 910;
 export const STAIR_TYPES = [
-  { id: 'straight', name: '直進階段',   icon: '↑', defaultW: 3 * P, defaultD: 1 * P },
-  { id: 'l_shape',  name: 'L字階段',    icon: '↳', defaultW: 2 * P, defaultD: 2 * P },
-  { id: 'u_shape',  name: 'U字折返し',  icon: '⇅', defaultW: 2 * P, defaultD: 2 * P },
-  { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 2 * P, defaultD: 2 * P },
-  { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 2 * P, defaultD: 2 * P },
+  { id: 'straight', name: '直進階段',   icon: '↑', defaultW: 3 * P_MM, defaultD: 1 * P_MM },
+  { id: 'l_shape',  name: 'L字階段',    icon: '↳', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
+  { id: 'u_shape',  name: 'U字折返し',  icon: '⇅', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
+  { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
+  { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
 ];
 
 export function getStairType(id) {
@@ -95,12 +94,32 @@ export function getStairType(id) {
 }
 
 // ---- 建具（窓・ドア）--------------------------------------------------------
-// sillMM=腰高, heightMM=開口高, widthMM=既定幅 (すべて mm)
+// sillMM=腰高, heightMM=開口高, widthMM=既定幅 (すべて mm)。1P = 910mm
 export const OPENING_TYPES = [
-  { id: 'window',  name: '窓',         sillMM: 800, heightMM: 1100, widthMM: 1650 },
-  { id: 'sliding', name: '掃き出し窓', sillMM: 0,   heightMM: 2000, widthMM: 1650 },
-  { id: 'door',    name: 'ドア',       sillMM: 0,   heightMM: 2000, widthMM: 900  },
+  { id: 'window',  name: '窓',              sillMM: 800, heightMM: 1100, widthMM: 1650 },
+  { id: 'sliding', name: '掃き出し窓',      sillMM: 0,   heightMM: 2000, widthMM: 1650 },
+  { id: 'door',    name: 'ドア',            sillMM: 0,   heightMM: 2000, widthMM: 900  },
+  { id: 'maguchi', name: '間口',            sillMM: 0,   heightMM: 2400, widthMM: P_MM    },
+  { id: 'kabe',    name: '壁',              sillMM: 0,   heightMM: 2400, widthMM: P_MM    },
+  { id: 'fix1',    name: 'FIX窓（1P）',     sillMM: 800, heightMM: 1100, widthMM: P_MM    },
+  { id: 'hikite',  name: '片引き（1.5P）',  sillMM: 0,   heightMM: 2000, widthMM: Math.round(P_MM * 1.5) },
+  { id: 'hikichigai2', name: '引違2枚（2P）', sillMM: 0, heightMM: 2000, widthMM: P_MM * 2 },
+  { id: 'hikichigai3', name: '引違3枚（3P）', sillMM: 0, heightMM: 2000, widthMM: P_MM * 3 },
 ];
+
+/** ガラス面を描画する建具か */
+export function openingHasGlass(type) {
+  return type === 'window' || type === 'sliding' || type === 'fix1'
+    || type === 'hikite' || type === 'hikichigai2' || type === 'hikichigai3';
+}
+
+/** 3D サッシ中央柱の本数（0=なし, 1=中央1本, 2=3等分） */
+export function openingMullionCount(type) {
+  if (type === 'sliding' || type === 'hikichigai2') return 1;
+  if (type === 'hikichigai3') return 2;
+  if (type === 'hikite') return 1;
+  return 0;
+}
 
 export function getOpeningType(id) {
   return OPENING_TYPES.find((o) => o.id === id) || OPENING_TYPES[0];
