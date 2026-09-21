@@ -18,6 +18,7 @@ import { InteriorMode } from './interiorMode.js';
 const MM = 0.001; // mm → m
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const CEILING_SLAB_M = 0.05; // 天井板厚（レイキャスト安定用）
+const FLOOR_SLAB_M = 0.05; // 影用の床板厚（上階の床がバルコニー等に落とす影の用）
 const ROOF_SLAB_M = 0.08; // 平板屋根の板厚
 const OCCLUDER_MAT = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
 
@@ -95,6 +96,9 @@ export class Viewer3D {
     // 3D 内容を入れるグループ（site.azimuth で回転）
     this.root = new THREE.Group();
     this.scene.add(this.root);
+    // 単階表示のとき、描かない上階の構造物が落とす影だけを担うグループ（root と同じ回転。表示範囲の計算には含めない）
+    this.shadowRoot = new THREE.Group();
+    this.scene.add(this.shadowRoot);
 
     // 日射の現在状態
     this._center = new THREE.Vector3(0, 0, 0);
@@ -130,6 +134,14 @@ export class Viewer3D {
         metalness: 0.04,
         side: THREE.DoubleSide,
         depthWrite: false,
+      }),
+      // 3D 表示専用：影だけを落とす不可視メッシュ（他階の構造物・床板用。深度も書かない）
+      shadowOnly: new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        colorWrite: false,
       }),
       // 3D 表示専用：影のみ落とす不可視屋根（日射 occluder とは別）
       roofShadow: new THREE.MeshStandardMaterial({
@@ -270,6 +282,11 @@ export class Viewer3D {
       });
       this.root.remove(obj);
     }
+    for (let i = this.shadowRoot.children.length - 1; i >= 0; i--) {
+      const obj = this.shadowRoot.children[i];
+      obj.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); // 材質は共有なので破棄しない
+      this.shadowRoot.remove(obj);
+    }
   }
 
   _floorMaterial(hex) {
@@ -303,6 +320,7 @@ export class Viewer3D {
 
     // site.azimuth（真北からの回転角）を建物全体に反映
     this.root.rotation.y = (plan.site?.azimuth || 0) * Math.PI / 180;
+    this.shadowRoot.rotation.y = this.root.rotation.y;
 
     const siteGroup = this._buildSite(plan);
     if (siteGroup) this.root.add(siteGroup);
@@ -344,6 +362,9 @@ export class Viewer3D {
       this.root.add(g);
     }
 
+    // 単階表示でも、上階（バルコニーの上に張り出した 3F など）の影は 3D に反映する
+    if (!showAll) this._buildUpperFloorShadowCasters(plan, selectedId);
+
     this._lastDisplayKey = displayKey;
 
     // 建物中心（太陽光ターゲット・影カメラ用）
@@ -361,6 +382,40 @@ export class Viewer3D {
     if (this.interior?.active) {
       this.interior.onRebuild();
     }
+  }
+
+  /**
+   * 単階表示用：選択階より上の階を「見えないが影だけ落とすメッシュ」として shadowRoot に置く。
+   * 選択階は y=0 に表示されるので、上階は階高の差だけ持ち上げる。日射計算の遮蔽物（occluder）と同じ形状を使う。
+   */
+  _buildUpperFloorShadowCasters(plan, selectedId) {
+    const sel = plan.floors.find((f) => f.id === selectedId);
+    if (!sel) return;
+    const baseOf = (f) => (f.level || 0) * (f.ceilingHeightMM || 2400) * MM;
+    for (const floor of plan.floors) {
+      if ((floor.level || 0) <= (sel.level || 0) || !floor.rooms?.length) continue;
+      const fg = new THREE.Group();
+      fg.position.y = baseOf(floor) - baseOf(sel);
+      this._populateFloorGeometry(fg, floor, 'occluder', plan);
+      fg.traverse((o) => {
+        if (!o.isMesh) return;
+        o.material = this._materials.shadowOnly;
+        o.castShadow = true;
+        o.receiveShadow = false;
+      });
+      this.shadowRoot.add(fg);
+    }
+  }
+
+  /** 上階の床が下（バルコニー等）へ落とす影用の板。床面のすぐ下に置き、床面自身への自己影を避ける */
+  _buildRoomFloorSlab(room, floor, plan) {
+    const shape = this._roomFloorShape(room, floor, plan);
+    if (!shape) return null;
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: FLOOR_SLAB_M, bevelEnabled: false });
+    geo.rotateX(Math.PI / 2);
+    const mesh = new THREE.Mesh(geo, this._materials.shadowOnly);
+    mesh.position.y = -0.01;
+    return mesh;
   }
 
   /** 敷地（site.boundary）の地面（薄い緑）と枠線。未設定なら null */
@@ -527,6 +582,17 @@ export class Viewer3D {
       if (floorMesh) {
         floorMesh.userData = { roomId: room.id, kind: 'floor' };
         fg.add(floorMesh);
+      }
+
+      // 2 階以上の床は下の階（バルコニー等）に影を落とす。床面は影を受けるだけなので、影用の板を別に置く
+      if (!isOcc && !isGroundFloor && this._roomHasFloor(room)) {
+        const slab = this._buildRoomFloorSlab(room, floor, planData);
+        if (slab) {
+          slab.userData = { roomId: room.id, kind: 'floor-shadow' };
+          slab.castShadow = true;
+          slab.receiveShadow = false;
+          fg.add(slab);
+        }
       }
 
       const ceilMesh = this._buildRoomCeiling(room, ceilingY, isOcc ? OCCLUDER_MAT : this._materials.ceiling, floor);
