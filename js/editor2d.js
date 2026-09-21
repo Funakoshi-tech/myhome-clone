@@ -6,6 +6,7 @@ import * as M from './model.js';
 import { getRoomType, getFurniture, getStairType, getOpeningType } from './catalog.js';
 import { drawStair2d } from './stairDraw2d.js';
 import { getFurnitureIcon, requestFurnitureIcon } from './furnitureIcon2d.js';
+import { vehicleBodyColor } from './vehicleTint.js';
 
 // ---- モジュールレベルのヘルパー（純粋関数） --------------------------------
 
@@ -2619,6 +2620,7 @@ export class Editor2D {
 
     if (modelPath) {
       const dims = { wMM: f.wMM, dMM: f.dMM, hMM: f.hMM };
+      if (cat?.kind === 'vehicle') dims.bodyColor = vehicleBodyColor(cat, f);
       const icon = getFurnitureIcon(modelPath, dims);
       if (icon) {
         ctx.save();

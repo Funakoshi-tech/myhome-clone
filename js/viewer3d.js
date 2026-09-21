@@ -9,6 +9,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import * as M from './model.js';
 import { getRoomType, getFurniture } from './catalog.js';
+import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
 
 const MM = 0.001; // mm → m
@@ -944,6 +945,9 @@ export class Viewer3D {
     model.position.x -= (fitted.min.x + fitted.max.x) / 2;
     model.position.y -= fitted.min.y;
     model.position.z -= (fitted.min.z + fitted.max.z) / 2;
+
+    const cat = getFurniture(f.catalogId);
+    if (cat?.kind === 'vehicle') tintVehicleBody(model, vehicleBodyColor(cat, f));
     return model;
   }
 

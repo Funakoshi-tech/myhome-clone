@@ -34,6 +34,7 @@ export function getRoomType(id) {
 // ---- 家具 -------------------------------------------------------------------
 // w=間口(X), d=奥行(Z), h=高さ(Y)（mm）。model3d は 3D 表示用（Kenney Furniture Kit）。
 const KENNEY_GLB = 'assets/kenney-furniture/Models/GLTF format';
+const KENNEY_CARS_GLB = 'assets/kenney-cars/models_glb';
 
 export const FURNITURE = [
   { id: 'kitchen', name: 'キッチン', wMM: 2580, dMM: 970, hMM: 850, color: '#4aa0a0', model3d: `${KENNEY_GLB}/kitchenBar.glb` },
@@ -48,8 +49,8 @@ export const FURNITURE = [
   { id: 'vanity', name: '洗面化粧台', wMM: 1200, dMM: 450, hMM: 1800, color: '#5b8aa6', model3d: `${KENNEY_GLB}/bathroomCabinetDrawer.glb` },
   { id: 'tansu', name: 'タンス', wMM: 900, dMM: 500, hMM: 800, color: '#6e2c00', model3d: `${KENNEY_GLB}/sideTableDrawers.glb` },
   { id: 'washer', name: '洗濯機', wMM: 600, dMM: 600, hMM: 1000, color: '#566573', model3d: `${KENNEY_GLB}/washer.glb` },
-  { id: 'carSuv', name: '車（SUV）', wMM: 1840, dMM: 4650, hMM: 1700, color: '#4a5568', kind: 'vehicle' },
-  { id: 'carKei', name: '車（軽自動車）', wMM: 1475, dMM: 3395, hMM: 1525, color: '#5a6270', kind: 'vehicle' },
+  { id: 'carSuv', name: '車（SUV）', wMM: 1840, dMM: 4650, hMM: 1700, color: '#1a1a1a', modelBodyColor: '#1a1a1a', kind: 'vehicle', model3d: `${KENNEY_CARS_GLB}/suv.glb` },
+  { id: 'carKei', name: '車（軽自動車）', wMM: 1475, dMM: 3395, hMM: 1525, color: '#fffffa', modelBodyColor: '#fffffa', kind: 'vehicle', model3d: `${KENNEY_CARS_GLB}/hatchback-sports.glb` },
   // その他
   { id: 'beddouble', name: 'ダブルベッド', wMM: 1400, dMM: 2000, hMM: 450, color: '#1a5276', model3d: `${KENNEY_GLB}/bedDouble.glb` },
   { id: 'sofa', name: 'ソファ', wMM: 1800, dMM: 800, hMM: 700, color: '#c0392b', model3d: `${KENNEY_GLB}/loungeSofa.glb` },

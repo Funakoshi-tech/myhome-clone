@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 
 const MM = 0.001;
 const ICON_PX = 256;
@@ -25,7 +26,8 @@ function iconCacheKey(modelPath, dims = {}) {
   const w = Math.round(dims.wMM ?? 500);
   const d = Math.round(dims.dMM ?? 500);
   const h = Math.round(dims.hMM ?? 500);
-  return `${modelPath}|${w}|${d}|${h}`;
+  const c = dims.bodyColor || '';
+  return `${modelPath}|${w}|${d}|${h}|${c}`;
 }
 
 function getRenderer() {
@@ -105,6 +107,7 @@ function fitModelToFootprint(template, dims) {
   model.position.x -= (fitted.min.x + fitted.max.x) / 2;
   model.position.y -= fitted.min.y;
   model.position.z -= (fitted.min.z + fitted.max.z) / 2;
+  if (dims.bodyColor) tintVehicleBody(model, dims.bodyColor);
   return model;
 }
 

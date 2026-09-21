@@ -1,0 +1,11 @@
+Source asset: Car Kit / Kenney
+Source page: https://kenney.nl/assets/car-kit
+Source download used: https://kenney.nl/media/pages/assets/car-kit/a9b1e99e92-1775131960/kenney_car-kit.zip
+Original creator/distributor: Kenney
+License stated in included License.txt: Creative Commons Zero (CC0)
+License URL: https://creativecommons.org/publicdomain/zero/1.0/
+License checked: 2026-05-09 JST
+
+The included License.txt states that the content may be used for personal,
+educational, and commercial purposes. Attribution is appreciated but not
+required by the source license text.
