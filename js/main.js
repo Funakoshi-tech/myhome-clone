@@ -3,7 +3,7 @@
 
 import { store } from './store.js';
 import * as M from './model.js';
-import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, getRoomType, getFurniture, getStairType, getOpeningType } from './catalog.js';
+import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, getOpeningType, flooringForRoom } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
@@ -621,6 +621,22 @@ function buildProps() {
       editor.applyToSelection((room) => { room.type = t.id; });
     });
     body.appendChild(field('種別', typeSel));
+
+    // 床材
+    const floorSel = document.createElement('select');
+    const currentFlooring = flooringForRoom(r);
+    for (const ft of FLOORING_TYPES) {
+      const o = document.createElement('option');
+      o.value = ft.id;
+      o.textContent = ft.name;
+      if (ft.id === currentFlooring.id) o.selected = true;
+      floorSel.appendChild(o);
+    }
+    floorSel.addEventListener('change', () => {
+      const id = floorSel.value;
+      editor.applyToSelection((room) => { room.flooringId = id; });
+    });
+    body.appendChild(field('床材', floorSel));
 
     // ラベル表示
     body.appendChild(checkRow('ラベルを表示', r.labelVisible !== false, (on) => {

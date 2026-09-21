@@ -2,6 +2,8 @@
 // 部屋種別・家具・建具・住設の定義（データ）。ここを増やせば項目が増える。
 // 実体は catalogId で結ぶ。
 
+import { P_MM } from './model.js';
+
 // ---- 部屋種別 ---------------------------------------------------------------
 // color は 2D の塗り／3D の床色に使う。
 export const ROOM_TYPES = [
@@ -118,4 +120,85 @@ export const EXTERIOR_TYPES = [
 
 export function getExteriorType(id) {
   return EXTERIOR_TYPES.find((e) => e.id === id) || EXTERIOR_TYPES[0];
+}
+
+// ---- 床材（3D・内観モード）--------------------------------------------------
+
+export const FLOORING_TYPES = [
+  {
+    id: 'whitewash_oak',
+    name: 'ホワイトオーク',
+    procedural: 'whitewash_oak',
+    plankWidthMM: 180,
+    plankLengthMM: 1200,
+    roughness: 0.72,
+  },
+  {
+    id: 'natural_oak',
+    name: 'ナチュラルオーク',
+    procedural: 'natural_oak',
+    plankWidthMM: 180,
+    plankLengthMM: 1200,
+    roughness: 0.7,
+  },
+  {
+    id: 'walnut',
+    name: 'ウォルナット',
+    procedural: 'walnut',
+    plankWidthMM: 180,
+    plankLengthMM: 1200,
+    roughness: 0.68,
+  },
+  {
+    id: 'tile_gray',
+    name: 'グレータイル',
+    procedural: 'tile_gray',
+    tileSizeMM: 1350,
+    roughness: 0.4,
+    metalness: 0.06,
+  },
+  {
+    id: 'tatami',
+    name: '畳',
+    procedural: 'tatami',
+    plankWidthMM: P_MM,
+    plankLengthMM: P_MM * 2,
+    roughness: 0.9,
+  },
+  {
+    id: 'tile_light',
+    name: 'ライトタイル',
+    color: '#e8ecef',
+    roughness: 0.38,
+    metalness: 0.04,
+  },
+  {
+    id: 'concrete',
+    name: 'コンクリート',
+    color: '#b8b8b8',
+    roughness: 0.92,
+  },
+];
+
+/** 部屋種別ごとの既定床材（未指定時） */
+export const DEFAULT_ROOM_FLOORING = {
+  genkan: 'tile_gray',
+  washitsu: 'tatami',
+  bath: 'tile_light',
+  toilet: 'tile_light',
+  washroom: 'tile_light',
+  garage: 'concrete',
+  doma: 'concrete',
+  parking: 'concrete',
+  porch: 'concrete',
+};
+
+export function getFlooring(id) {
+  return FLOORING_TYPES.find((f) => f.id === id) || FLOORING_TYPES[0];
+}
+
+/** 部屋に適用する床材定義を返す */
+export function flooringForRoom(room) {
+  const id = room?.flooringId || DEFAULT_ROOM_FLOORING[room?.type] || 'whitewash_oak';
+  return getFlooring(id);
 }

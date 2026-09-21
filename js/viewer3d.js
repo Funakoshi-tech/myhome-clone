@@ -8,8 +8,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import * as M from './model.js';
-import { getRoomType, getFurniture } from './catalog.js';
+import { getRoomType, getFurniture, flooringForRoom } from './catalog.js';
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
+import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
 
 const MM = 0.001; // mm → m
@@ -131,7 +132,16 @@ export class Viewer3D {
     this._gltfLoader = new GLTFLoader();
     this._objLoader = new OBJLoader();
     this._mtlLoader = new MTLLoader();
+    this._textureLoader = new THREE.TextureLoader();
+    this._flooringReady = false;
     this._furnitureLoadGen = 0;
+
+    preloadFlooringMaterials(this._textureLoader).then(() => {
+      this._flooringReady = true;
+      if (this.active) this.rebuild();
+    }).catch((err) => {
+      console.warn('[Viewer3D] flooring preload failed:', err);
+    });
 
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
@@ -332,7 +342,23 @@ export class Viewer3D {
     if (!shape) return null;
     const geo = new THREE.ShapeGeometry(shape);
     geo.rotateX(Math.PI / 2);
-    const useMat = mat || this._floorMaterial(opts.color || '#888');
+
+    let useMat = mat;
+    if (!useMat && !opts.isOcc) {
+      const flooring = opts.flooring || flooringForRoom(room);
+      const texMat = this._flooringReady ? getCachedFlooringMaterial(flooring) : null;
+      if (texMat && (flooring.procedural || flooring.texture)) {
+        applyFloorUvs(geo, flooring);
+        useMat = texMat;
+      } else if (texMat) {
+        useMat = texMat;
+      } else {
+        useMat = this._floorMaterial(opts.color || flooring.color || getRoomType(room.type).color);
+      }
+    } else if (!useMat) {
+      useMat = this._floorMaterial(opts.color || '#888');
+    }
+
     const mesh = new THREE.Mesh(geo, useMat);
     mesh.position.y = yM;
     if (opts.receiveShadow) mesh.receiveShadow = true;
@@ -356,7 +382,9 @@ export class Viewer3D {
         isOcc ? OCCLUDER_MAT : null,
         floor,
         planData,
-        isOcc ? {} : { color: getRoomType(room.type).color, receiveShadow: true },
+        isOcc
+          ? { isOcc: true }
+          : { flooring: flooringForRoom(room), receiveShadow: true },
       );
       if (floorMesh) {
         floorMesh.userData = { roomId: room.id, kind: 'floor' };
