@@ -228,11 +228,17 @@ function uniqueSorted(values) {
  * }
  */
 export function computeRoofRegions(floor, upperFloor) {
-  const empty = { supported: true, regions: [], hipRoomIds: new Set(), upperRects: [] };
-  const roofRooms = (floor?.rooms || []).filter(
+  const empty = { supported: true, regions: [], hipRoomIds: new Set(), upperRects: [], excludedCount: 0 };
+  const allRoofRooms = (floor?.rooms || []).filter(
     (r) => r.polygon?.length >= 3 && !M.NO_AUTO_ROOF_TYPES.has(r.type),
   );
-  if (!roofRooms.length) return empty;
+  if (!allRoofRooms.length) return empty;
+
+  // 斜めの壁を持つ部屋は寄棟の格子計算に使えないので除く。他の部屋（直交する壁）だけで寄棟を作り、
+  // 除いた部屋は従来どおり個別に平らな屋根にする（hipRoomIds に含めない）。全部屋が斜めなら階全体を諦める。
+  const roofRooms = allRoofRooms.filter((r) => isAxisAligned(r.polygon));
+  const excludedCount = allRoofRooms.length - roofRooms.length;
+  if (!roofRooms.length) return { ...empty, supported: false, reason: 'non-rectilinear', excludedCount };
 
   const upperPolys = [];
   if (upperFloor) {
@@ -241,16 +247,18 @@ export function computeRoofRegions(floor, upperFloor) {
     }
     for (const s of upperFloor.stairs || []) upperPolys.push(M.stairFootprintCorners(s));
   }
+  // 上階の構造が斜めだと、そこを避けて屋根をくり抜く計算ができない。この階は諦めて平らな屋根にする
+  if (!upperPolys.every((p) => isAxisAligned(p))) {
+    return { ...empty, supported: false, reason: 'non-rectilinear-upper', excludedCount };
+  }
 
   const allPolys = [...roofRooms.map((r) => r.polygon), ...upperPolys];
-  if (!allPolys.every((p) => isAxisAligned(p))) return { ...empty, supported: false, reason: 'non-rectilinear' };
-
   const xs = uniqueSorted(allPolys.flat().map((p) => p.x));
   const zs = uniqueSorted(allPolys.flat().map((p) => p.z));
   if (xs.length > MAX_GRID || zs.length > MAX_GRID) return { ...empty, supported: false, reason: 'too-complex' };
   const nx = xs.length - 1;
   const nz = zs.length - 1;
-  if (nx < 1 || nz < 1) return empty;
+  if (nx < 1 || nz < 1) return { ...empty, excludedCount };
 
   // 各セルの判定（中心点で、階の部屋・上階の構造のどちらに入るか）
   const inRoom = Array.from({ length: nx }, () => new Array(nz).fill(false));
@@ -333,7 +341,7 @@ export function computeRoofRegions(floor, upperFloor) {
     }
   }
 
-  return { supported: true, regions, hipRoomIds: new Set(roofRooms.map((r) => r.id)), upperRects };
+  return { supported: true, regions, hipRoomIds: new Set(roofRooms.map((r) => r.id)), upperRects, excludedCount };
 }
 
 const hipRoofCache = new Map();

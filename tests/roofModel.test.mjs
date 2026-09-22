@@ -240,3 +240,36 @@ test('floor.roof は normalizePlan で保たれ、範囲外の値は丸められ
   // 2 回読み込んでも変わらない（冪等）
   assert.deepEqual(M.normalizePlan(JSON.parse(JSON.stringify(loaded))).floors[2].roof, loaded.floors[2].roof);
 });
+
+// ---- 部分対応: 斜めの壁を持つ部屋が混在していても、他の部屋には寄棟を作る ----
+
+test('斜めの壁の部屋が 1 つ混ざっていても、他の部屋には寄棟が付く（除いた部屋は平らなまま）', () => {
+  const tri = { id: 'T', type: 'yoshitsu', name: 'T', labelVisible: true, polygon: [{ x: 8000, z: 0 }, { x: 12000, z: 0 }, { x: 8000, z: 4000 }] };
+  const floor = floorOf([rect('A', 'yoshitsu', 0, 0, 8000, 4000), tri]);
+  const res = R.computeRoofRegions(floor, null);
+  assert.equal(res.supported, true);
+  assert.equal(res.excludedCount, 1);
+  assert.ok(res.hipRoomIds.has('A'));
+  assert.ok(!res.hipRoomIds.has('T'));
+  const roof = R.computeHipRoof(floor, null, { pitchSun: 4, overhangMM: 0 });
+  assert.ok(roof);
+  near(R.roofHeightAt(roof.faces, 4000, 2000), 800); // A の棟。斜めの部屋があっても A は通常どおり寄棟になる
+});
+
+test('部屋がすべて斜めの壁のみのときは、従来どおり階全体が非対応（reason: non-rectilinear）', () => {
+  const tri = { id: 'T', type: 'yoshitsu', name: 'T', labelVisible: true, polygon: [{ x: 0, z: 0 }, { x: 5000, z: 0 }, { x: 0, z: 5000 }] };
+  const res = R.computeRoofRegions(floorOf([tri]), null);
+  assert.equal(res.supported, false);
+  assert.equal(res.reason, 'non-rectilinear');
+  assert.equal(res.excludedCount, 1);
+});
+
+test('上の階の構造が斜めのときは、現在の階が全て直交していても非対応（reason: non-rectilinear-upper）', () => {
+  const floor = floorOf([rect('A', 'yoshitsu', 0, 0, 8000, 4000)]);
+  const upperTri = { id: 'U', type: 'yoshitsu', name: 'U', labelVisible: true, polygon: [{ x: 0, z: 0 }, { x: 4000, z: 0 }, { x: 0, z: 4000 }] };
+  const res = R.computeRoofRegions(floor, floorOf([upperTri]));
+  assert.equal(res.supported, false);
+  assert.equal(res.reason, 'non-rectilinear-upper');
+  assert.equal(res.excludedCount, 0);
+  assert.equal(R.computeHipRoof(floor, floorOf([upperTri]), { pitchSun: 4, overhangMM: 450 }), null);
+});

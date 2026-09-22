@@ -438,10 +438,15 @@ function buildRoofTypeOptions() {
 function floorRoofStatus(floor, plan, settings) {
   if (settings.type !== 'hip') return '陸屋根';
   const res = computeRoofRegions(floor, M.getUpperFloor(plan, floor.id));
-  if (!res.supported) return '寄棟にできない（斜めの壁がある、または平面が複雑）ため平ら';
+  const excluded = res.excludedCount ? `（斜めの壁の部屋 ${res.excludedCount} 件は平ら）` : '';
+  if (!res.supported) {
+    return res.reason === 'non-rectilinear-upper'
+      ? '上の階に斜めの壁があるため、この階は寄棟にできない（平ら）'
+      : `寄棟にできる部屋がない（すべて斜めの壁）ため平ら${excluded}`;
+  }
   const visible = res.regions.filter((r) => r.visibleCells > 0).length;
-  if (!visible) return res.regions.length ? '上の階にすべて覆われている' : '屋根の対象の部屋がない';
-  return `寄棟 ${visible} か所`;
+  if (!visible) return (res.regions.length ? '上の階にすべて覆われている' : '屋根の対象の部屋がない') + excluded;
+  return `寄棟 ${visible} か所${excluded}`;
 }
 
 /** 屋根パネルの説明: 表示中の階の説明と、全階の状況一覧 */
