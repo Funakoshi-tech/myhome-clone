@@ -53,7 +53,7 @@ test('単純な長方形の部屋: 領域 1 つ・最大の長方形 1 つ・寄
   const res = R.computeRoofRegions(floorOf([rect('A', 'yoshitsu', 0, 0, 8000, 4000)]), null);
   assert.equal(res.supported, true);
   assert.equal(res.regions.length, 1);
-  assert.equal(res.regions[0].abuts, false);
+  assert.ok(res.regions[0].visibleCells > 0);
   assert.deepEqual(res.regions[0].rects, [{ x0: 0, x1: 8000, z0: 0, z1: 4000 }]);
   assert.ok(res.hipRoomIds.has('A'));
 });
@@ -82,23 +82,38 @@ test('離れた 2 つの部屋は別々の領域', () => {
   assert.equal(R.computeRoofRegions(floor, null).regions.length, 2);
 });
 
-test('上階の構造に一部が覆われた部屋: 覆われていない部分の領域は上階に接する（寄棟にしない）', () => {
+test('上階に一部が覆われた部屋: 部屋全体の寄棟から上階の部分をくり抜き、覆われていない部分に屋根が付く', () => {
   const floor = floorOf([rect('A', 'yoshitsu', 0, 0, 8000, 4000)]);
   const upper = floorOf([rect('U', 'yoshitsu', 0, 0, 8000, 2000)]);
-  const res = R.computeRoofRegions(floor, upper);
-  assert.equal(res.regions.length, 1);
-  assert.equal(res.regions[0].abuts, true);
-  assert.deepEqual(res.regions[0].rects, [{ x0: 0, x1: 8000, z0: 2000, z1: 4000 }]);
-  assert.ok(!res.hipRoomIds.has('A'));
-  assert.equal(R.computeHipRoof(floor, upper, { pitchSun: 4, overhangMM: 450 }), null);
+  const roof = R.computeHipRoof(floor, upper, { pitchSun: 4, overhangMM: 0 });
+  assert.ok(roof);
+  assert.ok(roof.hipRoomIds.has('A'));
+  // 部屋全体（8000 × 4000）の寄棟の棟は z = 2000。上階がある z < 2000 はくり抜かれ、z ≥ 2000 は屋根が残る
+  assert.equal(R.roofHeightAt(roof.faces, 4000, 1000), null);
+  near(R.roofHeightAt(roof.faces, 4000, 3000), 400); // 棟（800）から軒（0）へ下る途中
+  near(R.roofHeightAt(roof.faces, 4000, 3900), 40);
 });
 
-test('上階が全面を覆う部屋には屋根領域がない。上階のバルコニーは構造とみなさない', () => {
+test('階段状に重なった家: 各階の上が空いている部分に屋根が付き、上階が屋根を貫く', () => {
+  // 1F（0..8000 × 0..6000）の上に 2F（0..8000 × 0..3000）。1F の南半分（z 3000..6000）は上が空き
+  const f1 = floorOf([rect('A', 'yoshitsu', 0, 0, 8000, 6000)]);
+  const f2 = floorOf([rect('B', 'yoshitsu', 0, 0, 8000, 3000)]);
+  const roof1 = R.computeHipRoof(f1, f2, { pitchSun: 4, overhangMM: 450 });
+  assert.ok(roof1);
+  assert.equal(R.roofHeightAt(roof1.faces, 4000, 1500), null);   // 2F の下（くり抜き）
+  assert.ok(R.roofHeightAt(roof1.faces, 4000, 4500) !== null);    // 上が空いた部分には屋根
+  // 最上階（上階なし）は全体が屋根
+  const roof2 = R.computeHipRoof(f2, null, { pitchSun: 4, overhangMM: 450 });
+  assert.ok(R.roofHeightAt(roof2.faces, 4000, 1500) !== null);
+});
+
+test('上階が全面を覆う階には屋根が要らない。上階のバルコニーは構造とみなさない', () => {
   const floor = floorOf([rect('A', 'yoshitsu', 0, 0, 8000, 4000)]);
-  assert.equal(R.computeRoofRegions(floor, floorOf([rect('U', 'yoshitsu', 0, 0, 8000, 4000)])).regions.length, 0);
-  const res = R.computeRoofRegions(floor, floorOf([rect('U', 'balcony', 0, 0, 8000, 4000)]));
-  assert.equal(res.regions.length, 1);
-  assert.ok(res.hipRoomIds.has('A'));
+  const covered = floorOf([rect('U', 'yoshitsu', 0, 0, 8000, 4000)]);
+  assert.equal(R.computeHipRoof(floor, covered, { pitchSun: 4, overhangMM: 0 }), null);
+  const roof = R.computeHipRoof(floor, floorOf([rect('U', 'balcony', 0, 0, 8000, 4000)]), { pitchSun: 4, overhangMM: 0 });
+  assert.ok(roof);
+  assert.ok(R.roofHeightAt(roof.faces, 4000, 2000) !== null);
 });
 
 test('斜めの壁を含む平面は対象外（従来の平らな屋根に任せる）', () => {
@@ -196,7 +211,7 @@ test('複数の長方形を合成しても、屋根の面が重ならない（�
 });
 
 test('上階の構造の隅に軒が触れても、屋根が上階の構造の中に入り込まない', () => {
-  // A（0..4000 × 0..4000）と、対角に接する上階の U（4000..8000 × 4000..8000）。辺では接しないので寄棟になる
+  // A（0..4000 × 0..4000）と、対角に接する上階の U（4000..8000 × 4000..8000）
   const floor = floorOf([rect('A', 'yoshitsu', 0, 0, 4000, 4000)]);
   const upper = floorOf([rect('U', 'yoshitsu', 4000, 4000, 8000, 8000)]);
   const roof = R.computeHipRoof(floor, upper, { pitchSun: 4, overhangMM: 450 });

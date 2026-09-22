@@ -1,11 +1,13 @@
 // roofModel.js — 屋根（寄棟）の純粋幾何。DOM / Three.js 非依存。単位は mm。
 //
 // 考え方:
-//   1. 階の部屋（バルコニー等を除く）から、上の階の構造に覆われていない部分を「屋根領域」として求める。
-//      部屋・上階の壁が軸並行（直交する壁だけ）のときは、壁の座標で格子に分けて領域を作る。
+//   1. 階の部屋（バルコニー・吹抜け・ポーチを除く）全体の形を「屋根領域」とする。部屋・上階の壁が軸並行
+//      （直交する壁だけ）のときは、壁の座標で格子に分けて領域を作る。
 //   2. 領域を「最大の長方形」に分け、各長方形に 4 面の寄棟屋根を作る（壁の位置が高さ 0、軒先は下がる）。
 //   3. 複数の長方形の屋根は「各点で高いほうを残す」ことで合成する。これは、直交する壁だけの領域では
 //      「屋根の高さ = 勾配 × 領域の縁までの距離（L∞ 距離）」と一致し、L 字・T 字でも谷を含む正しい寄棟になる。
+//   4. 上の階の構造がある部分は屋根から「くり抜く」（上の階が屋根を貫く形になる）。上階に一部だけ覆われた
+//      部屋にも、階段状に重なった家の下の階にも、上が空いている部分には屋根が付く。
 // 屋根の高さは壁の上端（天井高の位置）を 0 とした相対値（y）で返す。
 
 import * as M from './model.js';
@@ -13,7 +15,7 @@ import { pitchTan } from './roofSettings.js';
 
 const EPS = 1e-6;
 const AREA_EPS = 1; // mm²。これ未満の面積の欠片は捨てる
-const MAX_GRID = 80; // 格子の分割数の上限（複雑すぎる平面は対象外にして重さを防ぐ）
+const MAX_GRID = 50; // 格子の分割数の上限（複雑すぎる平面は対象外にして重さを防ぐ）
 
 // ---- 凸多角形の切り取り ------------------------------------------------------
 
@@ -216,12 +218,12 @@ function uniqueSorted(values) {
 
 /**
  * 階の「屋根領域」を求める。
- * 部屋（バルコニー・吹抜け・ポーチを除く）のうち、上階の構造（部屋・階段。バルコニー等は構造とみなさない）に
- * 覆われていない部分を、つながりごとに領域にする。
+ * 領域 = 部屋（バルコニー・吹抜け・ポーチを除く）の形。上階の構造（部屋・階段。バルコニー等は構造とみなさない）に
+ * 覆われた部分は、寄棟の形には含めたまま、屋根の面から「くり抜く」（upperRects）。
  * 戻り値: {
  *   supported,                // 直交する壁だけの平面か（false のとき regions は空）
- *   regions: [{ rects, abuts }],  // rects: 最大の長方形の集まり、abuts: 上階の構造に接しているか
- *   hipRoomIds,               // 寄棟だけで覆える部屋（上階の構造に接しない領域の中に完全に収まる部屋）
+ *   regions: [{ rects, visibleCells }],  // つながりごと。rects: 最大の長方形、visibleCells: 上階に覆われていないセル数
+ *   hipRoomIds,               // 寄棟で覆う部屋（対応できる階では、屋根の対象の部屋すべて）
  *   upperRects,               // 上階の構造の位置（屋根から除く範囲）
  * }
  */
@@ -250,17 +252,16 @@ export function computeRoofRegions(floor, upperFloor) {
   const nz = zs.length - 1;
   if (nx < 1 || nz < 1) return empty;
 
-  // 各セルの判定（中心点で、どの部屋・上階の構造に入るか）
-  const cellRooms = Array.from({ length: nx }, () => Array.from({ length: nz }, () => []));
+  // 各セルの判定（中心点で、階の部屋・上階の構造のどちらに入るか）
+  const inRoom = Array.from({ length: nx }, () => new Array(nz).fill(false));
   const inUpper = Array.from({ length: nx }, () => new Array(nz).fill(false));
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < nz; j++) {
       const c = { x: (xs[i] + xs[i + 1]) / 2, z: (zs[j] + zs[j + 1]) / 2 };
-      roofRooms.forEach((r) => { if (M.pointInPolygon(c, r.polygon)) cellRooms[i][j].push(r.id); });
+      inRoom[i][j] = roofRooms.some((r) => M.pointInPolygon(c, r.polygon));
       inUpper[i][j] = upperPolys.some((p) => M.pointInPolygon(c, p));
     }
   }
-  const roofed = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz && cellRooms[i][j].length > 0 && !inUpper[i][j];
 
   // つながり（4 近傍）ごとに領域へ
   const regionOf = Array.from({ length: nx }, () => new Array(nz).fill(-1));
@@ -268,29 +269,30 @@ export function computeRoofRegions(floor, upperFloor) {
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   for (let i = 0; i < nx; i++) {
     for (let j = 0; j < nz; j++) {
-      if (!roofed(i, j) || regionOf[i][j] !== -1) continue;
+      if (!inRoom[i][j] || regionOf[i][j] !== -1) continue;
       const id = regions.length;
       const stack = [[i, j]];
       regionOf[i][j] = id;
-      let abuts = false;
+      let visibleCells = 0;
       while (stack.length) {
         const [ci, cj] = stack.pop();
+        if (!inUpper[ci][cj]) visibleCells++;
         for (const [di, dj] of dirs) {
           const ni = ci + di;
           const nj = cj + dj;
-          if (ni >= 0 && nj >= 0 && ni < nx && nj < nz && inUpper[ni][nj]) abuts = true;
-          if (roofed(ni, nj) && regionOf[ni][nj] === -1) {
+          if (ni >= 0 && nj >= 0 && ni < nx && nj < nz && inRoom[ni][nj] && regionOf[ni][nj] === -1) {
             regionOf[ni][nj] = id;
             stack.push([ni, nj]);
           }
         }
       }
-      regions.push({ id, abuts, rects: [] });
+      regions.push({ id, rects: [], visibleCells });
     }
   }
 
-  // 領域ごとの最大の長方形（これ以上どの方向にも広げられない長方形）
+  // 領域ごとの最大の長方形（これ以上どの方向にも広げられない長方形）。全面が上階に覆われた領域は屋根が要らないので省く
   for (const region of regions) {
+    if (region.visibleCells === 0) continue;
     const prefix = Array.from({ length: nx + 1 }, () => new Array(nz + 1).fill(0));
     for (let i = 0; i < nx; i++) {
       for (let j = 0; j < nz; j++) {
@@ -317,23 +319,7 @@ export function computeRoofRegions(floor, upperFloor) {
     }
   }
 
-  // 寄棟だけで覆える部屋: 部屋のセルがすべて、上階の構造に接しない領域に入っている
-  const hipRoomIds = new Set();
-  for (const room of roofRooms) {
-    let cells = 0;
-    let ok = true;
-    for (let i = 0; i < nx && ok; i++) {
-      for (let j = 0; j < nz && ok; j++) {
-        if (!cellRooms[i][j].includes(room.id)) continue;
-        cells++;
-        const rid = regionOf[i][j];
-        if (rid === -1 || regions[rid].abuts) ok = false;
-      }
-    }
-    if (ok && cells > 0) hipRoomIds.add(room.id);
-  }
-
-  // 上階の構造の範囲（行ごとの連続区間）。屋根の軒が上階の構造の中へ入り込まないよう除くのに使う
+  // 上階の構造の範囲（行ごとの連続区間）。屋根からくり抜く範囲で、軒が上階の構造の中へ入り込むのも防ぐ
   const upperRects = [];
   for (let j = 0; j < nz; j++) {
     let start = -1;
@@ -347,21 +333,38 @@ export function computeRoofRegions(floor, upperFloor) {
     }
   }
 
-  return { supported: true, regions, hipRoomIds, upperRects };
+  return { supported: true, regions, hipRoomIds: new Set(roofRooms.map((r) => r.id)), upperRects };
 }
 
+const hipRoofCache = new Map();
+
 /**
- * 階の寄棟屋根をまとめて求める。寄棟にできる領域（上階の構造に接しない領域）がなければ null。
+ * 階の寄棟屋根をまとめて求める。屋根が付く部分（上階に覆われていない部分）がなければ null。
  * 戻り値: { faces, hipRoomIds, regions }（faces は buildHipRoofFaces の結果）
+ * 同じ入力は再計算しない（3D の再構築・日射計算で何度も呼ばれるため）。
  */
 export function computeHipRoof(floor, upperFloor, settings) {
+  const key = JSON.stringify([
+    (floor?.rooms || []).map((r) => [r.id, r.type, r.polygon]),
+    upperFloor
+      ? [(upperFloor.rooms || []).map((r) => [r.type, r.polygon]), (upperFloor.stairs || []).map((s) => M.stairFootprintCorners(s))]
+      : null,
+    settings.pitchSun, settings.overhangMM,
+  ]);
+  if (hipRoofCache.has(key)) return hipRoofCache.get(key);
   const res = computeRoofRegions(floor, upperFloor);
-  if (!res.supported) return null;
-  const rects = res.regions.filter((r) => !r.abuts).flatMap((r) => r.rects);
-  if (!rects.length) return null;
-  return {
-    faces: buildHipRoofFaces(rects, settings, res.upperRects),
-    hipRoomIds: res.hipRoomIds,
-    regions: res.regions,
-  };
+  let result = null;
+  if (res.supported) {
+    const rects = res.regions.flatMap((r) => r.rects);
+    if (rects.length) {
+      result = {
+        faces: buildHipRoofFaces(rects, settings, res.upperRects),
+        hipRoomIds: res.hipRoomIds,
+        regions: res.regions,
+      };
+    }
+  }
+  if (hipRoofCache.size > 30) hipRoofCache.clear();
+  hipRoofCache.set(key, result);
+  return result;
 }

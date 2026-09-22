@@ -209,7 +209,7 @@ function syncRoofToggle() {
   if (!btn) return;
   btn.hidden = ui.view !== '3d';
   btn.classList.toggle('active', !ui.showRoof);
-  btn.textContent = ui.showRoof ? '屋根を隠す' : '屋根を表示';
+  btn.textContent = ui.showRoof ? '屋根: 表示中' : '屋根: 非表示';
 }
 
 function syncView3dAllFloorsButton() {
@@ -434,17 +434,25 @@ function buildRoofTypeOptions() {
   }
 }
 
-/** 表示中の階の屋根について、寄棟にならない事情（斜めの壁・上階に接する部分）を文章にする */
-function roofStatusText(floor, plan, settings) {
-  if (settings.type !== 'hip') return '陸屋根は、上に何もない部屋に平らな屋根板を作ります（屋根は半透明で、日射の影と遮蔽に使います）。';
+/** 1 つの階の屋根の状況（寄棟にならない事情も含む）を短い文にする */
+function floorRoofStatus(floor, plan, settings) {
+  if (settings.type !== 'hip') return '陸屋根';
   const res = computeRoofRegions(floor, M.getUpperFloor(plan, floor.id));
-  if (!res.supported) return '斜めの壁がある（または平面が複雑な）階は、寄棟にできないため、平らな屋根になります。';
-  const hipCount = res.regions.filter((r) => !r.abuts).length;
-  const abutCount = res.regions.filter((r) => r.abuts).length;
-  const parts = [`寄棟にする屋根: ${hipCount} か所（上に何もない部分）。`];
-  if (abutCount) parts.push(`上の階に接する部分 ${abutCount} か所は、平らな屋根のままです。`);
-  if (!res.regions.length) parts.push('この階には、寄棟にできる部分がありません。');
-  return parts.join(' ');
+  if (!res.supported) return '寄棟にできない（斜めの壁がある、または平面が複雑）ため平ら';
+  const visible = res.regions.filter((r) => r.visibleCells > 0).length;
+  if (!visible) return res.regions.length ? '上の階にすべて覆われている' : '屋根の対象の部屋がない';
+  return `寄棟 ${visible} か所`;
+}
+
+/** 屋根パネルの説明: 表示中の階の説明と、全階の状況一覧 */
+function roofStatusText(floor, plan, settings) {
+  const head = settings.type === 'hip'
+    ? '寄棟は、階の部屋全体の形で作り、上の階がある部分はくり抜きます（上に何もない部分に屋根が付きます）。'
+    : '陸屋根は、上に何もない部屋に平らな屋根板を作ります（半透明で、日射の影と遮蔽に使います）。';
+  const lines = plan.floors
+    .filter((f) => f.rooms?.length)
+    .map((f) => `${f.id}: ${floorRoofStatus(f, plan, normalizeRoofSettings(f.roof))}`);
+  return `${head}\n${lines.join(' ／ ')}`;
 }
 
 function syncRoofPanel() {
@@ -464,9 +472,12 @@ function syncRoofPanel() {
 }
 
 function updateRoofSetting(key, value) {
+  const applyAll = $('#roof-apply-all')?.checked;
   store.update((plan) => {
-    const floor = M.getFloor(plan, ui.floorId);
-    floor.roof = normalizeRoofSettings({ ...normalizeRoofSettings(floor.roof), [key]: value });
+    const current = M.getFloor(plan, ui.floorId);
+    const next = normalizeRoofSettings({ ...normalizeRoofSettings(current.roof), [key]: value });
+    // 「すべての階に適用」のときは、全階を同じ設定にそろえる（屋根は上が空いた部分にだけ付くので、階ごとに変える必要は少ない）
+    for (const f of applyAll ? plan.floors : [current]) f.roof = { ...next };
   });
 }
 
