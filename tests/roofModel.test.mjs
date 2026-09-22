@@ -228,17 +228,26 @@ test('faceVertices3D: 頂点の高さが平面式どおり', () => {
   }
 });
 
-// ---- 保存（floor.roof は読み込みで消えない） ----
+// ---- 保存（屋根の設定は建物全体で 1 つ。plan.roofSettings） ----
 
-test('floor.roof は normalizePlan で保たれ、範囲外の値は丸められる。未設定の階には roof を作らない', () => {
+test('屋根の設定は plan.roofSettings に 1 つだけ持ち、normalizePlan で範囲外の値も丸められる', () => {
   const plan = M.createEmptyPlan('t');
-  plan.floors[2].roof = { type: 'hip', pitchSun: 99, overhangMM: 600 };
+  assert.deepEqual(M.normalizePlan(plan).roofSettings, S.DEFAULT_ROOF); // 新規プランは既定（陸屋根）
+  plan.roofSettings = { type: 'hip', pitchSun: 99, overhangMM: 600 };
   const loaded = M.normalizePlan(JSON.parse(JSON.stringify(plan)));
-  assert.deepEqual(loaded.floors[2].roof, { type: 'hip', pitchSun: S.MAX_PITCH_SUN, overhangMM: 600 });
-  assert.equal('roof' in loaded.floors[0], false);
-  assert.equal('roof' in loaded.floors[1], false);
+  assert.deepEqual(loaded.roofSettings, { type: 'hip', pitchSun: S.MAX_PITCH_SUN, overhangMM: 600 });
   // 2 回読み込んでも変わらない（冪等）
-  assert.deepEqual(M.normalizePlan(JSON.parse(JSON.stringify(loaded))).floors[2].roof, loaded.floors[2].roof);
+  assert.deepEqual(M.normalizePlan(JSON.parse(JSON.stringify(loaded))).roofSettings, loaded.roofSettings);
+});
+
+test('旧データ（バージョンごとの floor.roof）は、最初に見つかった設定を plan.roofSettings として引き継ぐ', () => {
+  const plan = M.createEmptyPlan('t');
+  delete plan.roofSettings; // 移行前のプランを模す（plan.roofSettings が無い）
+  plan.floors[0].roof = { type: 'hip', pitchSun: 5, overhangMM: 300 }; // 1F だけに設定が残っている状態
+  const loaded = M.normalizePlan(JSON.parse(JSON.stringify(plan)));
+  assert.deepEqual(loaded.roofSettings, { type: 'hip', pitchSun: 5, overhangMM: 300 });
+  // 他の階の floor.roof が未設定でも、全階が同じ plan.roofSettings を使う（floorRoofStatus 相当）ので階ごとの食い違いは起きない
+  for (const f of loaded.floors) assert.equal('roof' in f, false);
 });
 
 // ---- 部分対応: 斜めの壁を持つ部屋が混在していても、他の部屋には寄棟を作る ----

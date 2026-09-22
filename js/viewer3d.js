@@ -600,7 +600,7 @@ export class Viewer3D {
     const upper = planData ? M.getUpperFloor(planData, floor.id) : null;
     const isGroundFloor = planData ? !M.getLowerFloor(planData, floor.id) : (floor.level || 0) === 0;
     // 寄棟を選んだ階: 上に何もない領域だけ寄棟にし、寄棟で覆える部屋は平らな屋根板を作らない
-    const roofSettings = normalizeRoofSettings(floor.roof);
+    const roofSettings = normalizeRoofSettings(planData?.roofSettings);
     const roofPlan = roofSettings.type === 'hip' && planData ? computeHipRoof(floor, upper, roofSettings) : null;
 
     // 最下階（1F）の階段下に床板

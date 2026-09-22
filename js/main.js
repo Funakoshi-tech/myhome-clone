@@ -449,14 +449,14 @@ function floorRoofStatus(floor, plan, settings) {
   return `寄棟 ${visible} か所${excluded}`;
 }
 
-/** 屋根パネルの説明: 表示中の階の説明と、全階の状況一覧 */
-function roofStatusText(floor, plan, settings) {
+/** 屋根パネルの説明: 建物全体の設定と、階ごとの状況一覧（屋根は上が空いた部分にだけ付くため、階により結果が違う） */
+function roofStatusText(plan, settings) {
   const head = settings.type === 'hip'
     ? '寄棟は、階の部屋全体の形で作り、上の階がある部分はくり抜きます（上に何もない部分に屋根が付きます）。'
     : '陸屋根は、上に何もない部屋に平らな屋根板を作ります（半透明で、日射の影と遮蔽に使います）。';
   const lines = plan.floors
     .filter((f) => f.rooms?.length)
-    .map((f) => `${f.id}: ${floorRoofStatus(f, plan, normalizeRoofSettings(f.roof))}`);
+    .map((f) => `${f.id}: ${floorRoofStatus(f, plan, settings)}`);
   return `${head}\n${lines.join(' ／ ')}`;
 }
 
@@ -465,24 +465,21 @@ function syncRoofPanel() {
   if (!typeSel) return;
   buildRoofTypeOptions();
   const plan = store.current();
-  const floor = M.getFloor(plan, ui.floorId);
-  const s = normalizeRoofSettings(floor.roof);
+  const s = normalizeRoofSettings(plan.roofSettings);
   typeSel.value = s.type;
   $('#roof-pitch').value = s.pitchSun;
   $('#roof-overhang').value = s.overhangMM;
   $('#roof-detail').hidden = s.type !== 'hip';
-  $('#roof-floor-label').textContent = `${floor.id} の屋根の設定`;
-  $('#roof-note').textContent = roofStatusText(floor, plan, s)
+  $('#roof-floor-label').textContent = '屋根の設定（建物全体で共通）';
+  $('#roof-note').textContent = roofStatusText(plan, s)
     + (s.type === 'hip' ? ` 勾配 ${s.pitchSun} 寸 ≒ ${pitchDeg(s.pitchSun).toFixed(1)}°` : '');
 }
 
+/** 屋根の設定は建物全体で 1 つ（plan.roofSettings）。階ごとに設定できるようにはしていない
+ * （以前は階ごとに持たせていたが、変更した階にしか反映されず、他の階が古い設定のまま残る不具合があった）。 */
 function updateRoofSetting(key, value) {
-  const applyAll = $('#roof-apply-all')?.checked;
   store.update((plan) => {
-    const current = M.getFloor(plan, ui.floorId);
-    const next = normalizeRoofSettings({ ...normalizeRoofSettings(current.roof), [key]: value });
-    // 「すべての階に適用」のときは、全階を同じ設定にそろえる（屋根は上が空いた部分にだけ付くので、階ごとに変える必要は少ない）
-    for (const f of applyAll ? plan.floors : [current]) f.roof = { ...next };
+    plan.roofSettings = normalizeRoofSettings({ ...normalizeRoofSettings(plan.roofSettings), [key]: value });
   });
 }
 

@@ -1072,9 +1072,11 @@ export function normalizePlan(plan) {
     furniture: Array.isArray(f.furniture) ? f.furniture : [],
     stairs: Array.isArray(f.stairs) ? f.stairs : [],
     partitions: Array.isArray(f.partitions) ? f.partitions : [],
-    // 屋根の設定（未設定の階は既定＝陸屋根）。列挙しないと読み込み時に消えてしまう
-    ...(f.roof ? { roof: normalizeRoofSettings(f.roof) } : {}),
   }));
+  // 屋根の設定は建物全体で 1 つ（既定は陸屋根）。
+  // 旧データ（バージョンごとの floor.roof）が残っていれば、最初に見つかった値を引き継ぐ（後方互換）。
+  const legacyFloorRoof = (Array.isArray(plan.floors) ? plan.floors : []).map((f) => f?.roof).find(Boolean);
+  out.roofSettings = normalizeRoofSettings(plan.roofSettings ?? legacyFloorRoof);
   ensureWallRoomIds(out);
   for (const floor of out.floors) {
     if (!floor.rooms.length) continue;
