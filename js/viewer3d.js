@@ -9,6 +9,8 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import * as M from './model.js';
 import * as SITE from './sitePolygon.js';
+import { computeHipRoof, faceVertices3D } from './roofModel.js';
+import { normalizeRoofSettings } from './roofSettings.js';
 import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, flooringForRoom } from './catalog.js';
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
@@ -19,6 +21,7 @@ const MM = 0.001; // mm → m
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const CEILING_SLAB_M = 0.05; // 天井板厚（レイキャスト安定用）
 const FLOOR_SLAB_M = 0.05; // 影用の床板厚（上階の床がバルコニー等に落とす影の用）
+const ROOF_LIFT_M = 0.02; // 寄棟屋根を壁の上端よりわずかに持ち上げる量（壁の上面との Z ファイティング回避）
 const ROOF_SLAB_M = 0.08; // 平板屋根の板厚
 const OCCLUDER_MAT = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
 
@@ -134,6 +137,13 @@ export class Viewer3D {
         metalness: 0.04,
         side: THREE.DoubleSide,
         depthWrite: false,
+      }),
+      // 寄棟屋根の見える面（不透明。表示の切り替えで隠せる。影は別の不可視メッシュが落とす）
+      roofSolid: new THREE.MeshStandardMaterial({
+        color: 0x6f7480,
+        roughness: 0.85,
+        metalness: 0.05,
+        side: THREE.DoubleSide,
       }),
       // 3D 表示専用：影だけを落とす不可視メッシュ（他階の構造物・床板用。深度も書かない）
       shadowOnly: new THREE.MeshBasicMaterial({
@@ -385,6 +395,43 @@ export class Viewer3D {
   }
 
   /**
+   * 寄棟屋根の面を 1 つのメッシュにして fg に追加する（壁の上端 = ceilingY を高さ 0 とする）。
+   * 日射計算の遮蔽用（isOcc）は不可視の 1 枚。表示用は「見える屋根」と「影だけ落とす不可視メッシュ」の 2 枚にし、
+   * 屋根の表示を切り替えても影（日射）が変わらないようにする。
+   */
+  _addHipRoof(fg, roofPlan, ceilingY, isOcc) {
+    const positions = [];
+    for (const face of roofPlan.faces) {
+      const v = faceVertices3D(face);
+      for (let i = 1; i + 1 < v.length; i++) { // 凸多角形を扇状に三角形へ
+        for (const p of [v[0], v[i], v[i + 1]]) positions.push(p.x * MM, ceilingY + ROOF_LIFT_M + p.y * MM, p.z * MM);
+      }
+    }
+    if (!positions.length) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.computeVertexNormals(); // 頂点を共有しないので、面ごとの法線（平らな面）になる
+
+    if (isOcc) {
+      const occ = new THREE.Mesh(geo, OCCLUDER_MAT);
+      occ.userData = { roomId: null, kind: 'roof' };
+      fg.add(occ);
+      return;
+    }
+    const visual = new THREE.Mesh(geo, this._materials.roofSolid);
+    visual.userData = { roomId: null, kind: 'roof-hip' };
+    visual.castShadow = false;
+    visual.receiveShadow = false; // 影用メッシュが同じ形なので、受けると自己影で全体が暗くなる
+    visual.visible = this.ui?.showRoof !== false;
+    fg.add(visual);
+    const shadow = new THREE.Mesh(geo, this._materials.shadowOnly);
+    shadow.userData = { roomId: null, kind: 'roof-shadow' };
+    shadow.castShadow = true;
+    shadow.receiveShadow = false;
+    fg.add(shadow);
+  }
+
+  /**
    * 単階表示用：選択階より上の階を「見えないが影だけ落とすメッシュ」として shadowRoot に置く。
    * 選択階は y=0 に表示されるので、上階は階高の差だけ持ち上げる。日射計算の遮蔽物（occluder）と同じ形状を使う。
    */
@@ -552,6 +599,9 @@ export class Viewer3D {
     const isOcc = mode === 'occluder';
     const upper = planData ? M.getUpperFloor(planData, floor.id) : null;
     const isGroundFloor = planData ? !M.getLowerFloor(planData, floor.id) : (floor.level || 0) === 0;
+    // 寄棟を選んだ階: 上に何もない領域だけ寄棟にし、寄棟で覆える部屋は平らな屋根板を作らない
+    const roofSettings = normalizeRoofSettings(floor.roof);
+    const roofPlan = roofSettings.type === 'hip' && planData ? computeHipRoof(floor, upper, roofSettings) : null;
 
     // 最下階（1F）の階段下に床板
     if (isGroundFloor) {
@@ -618,7 +668,7 @@ export class Viewer3D {
         }
       }
 
-      if (this._roomNeedsRoof(room, floor, planData)) {
+      if (this._roomNeedsRoof(room, floor, planData) && !roofPlan?.hipRoomIds.has(room.id)) {
         if (isOcc) {
           const roofMesh = this._buildRoomRoof(room, ceilingY, OCCLUDER_MAT, floor);
           if (roofMesh) {
@@ -645,6 +695,8 @@ export class Viewer3D {
         }
       }
     }
+
+    if (roofPlan) this._addHipRoof(fg, roofPlan, ceilingY, isOcc);
 
     for (const { wall, ops } of M.wallsToRender(floor)) {
       const wallGroup = this._buildWallWithOpenings(wall, ops, isOcc ? OCCLUDER_MAT : null, { occluder: isOcc });
@@ -902,7 +954,8 @@ export class Viewer3D {
     if (heightMM < 50) return false;
     const sill = sillMM * MM;
     const h = heightMM * MM;
-    const outDist = (wall.thicknessMM || 120) * MM * 2.5 + 0.15;
+    // 光線の出発点は壁の外面のすぐ外側（壁厚の半分＋5cm）。遠いと、壁から出た軒の影（先端より内側）を拾えない
+    const outDist = (wall.thicknessMM || 120) * MM * 0.5 + 0.05;
     const widthFracs = [0.25, 0.5, 0.75];
     const heightFracs = this._openingHeightSampleFracs(opening, wall);
 

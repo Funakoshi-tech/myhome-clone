@@ -4,6 +4,8 @@
 import { store } from './store.js';
 import * as M from './model.js';
 import * as SITE from './sitePolygon.js';
+import { ROOF_TYPES, normalizeRoofSettings, pitchDeg } from './roofSettings.js';
+import { computeRoofRegions } from './roofModel.js';
 import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, flooringForRoom } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
@@ -29,6 +31,7 @@ const ui = {
   furnitureWallMagnet: true,
   view3dAllFloors: false, // 3D: true=全階積み上げ表示, false=選択階のみ
   interiorMode: false,    // 3D: 内観（一人称）モード
+  showRoof: true,         // 3D: 寄棟屋根を表示するか（隠しても影・日射は変わらない）
   // 日射シミュレーション（フェーズB）
   sun: { doy: 172, hour: 12, playing: false },
   daylight: {},          // { [roomId]: 直射時間 }
@@ -112,6 +115,7 @@ function setView(view) {
   }
   syncView3dAllFloorsButton();
   syncInteriorUIButton();
+  syncRoofToggle();
   syncDisplayBar();
   updateHint();
 }
@@ -198,6 +202,14 @@ function wireFloatingPanels() {
   document.addEventListener('click', () => closeFloatingPanels());
   floorPop?.addEventListener('click', (e) => e.stopPropagation());
   bgMenu?.addEventListener('click', (e) => e.stopPropagation());
+}
+
+function syncRoofToggle() {
+  const btn = $('#roof-toggle');
+  if (!btn) return;
+  btn.hidden = ui.view !== '3d';
+  btn.classList.toggle('active', !ui.showRoof);
+  btn.textContent = ui.showRoof ? '屋根を隠す' : '屋根を表示';
 }
 
 function syncView3dAllFloorsButton() {
@@ -405,8 +417,57 @@ function refreshPanels() {
   syncLowerFloorRefToggle();
   syncBgPanel();
   syncSitePanel();
+  syncRoofPanel();
   if (ui.view === '2d') editor.draw();
   if (ui.view === '3d') viewer.rebuild();
+}
+
+// ---- 屋根（表示中の階） -------------------------------------------------------
+function buildRoofTypeOptions() {
+  const sel = $('#roof-type');
+  if (!sel || sel.options.length) return;
+  for (const t of ROOF_TYPES) {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.name;
+    sel.appendChild(o);
+  }
+}
+
+/** 表示中の階の屋根について、寄棟にならない事情（斜めの壁・上階に接する部分）を文章にする */
+function roofStatusText(floor, plan, settings) {
+  if (settings.type !== 'hip') return '陸屋根は、上に何もない部屋に平らな屋根板を作ります（屋根は半透明で、日射の影と遮蔽に使います）。';
+  const res = computeRoofRegions(floor, M.getUpperFloor(plan, floor.id));
+  if (!res.supported) return '斜めの壁がある（または平面が複雑な）階は、寄棟にできないため、平らな屋根になります。';
+  const hipCount = res.regions.filter((r) => !r.abuts).length;
+  const abutCount = res.regions.filter((r) => r.abuts).length;
+  const parts = [`寄棟にする屋根: ${hipCount} か所（上に何もない部分）。`];
+  if (abutCount) parts.push(`上の階に接する部分 ${abutCount} か所は、平らな屋根のままです。`);
+  if (!res.regions.length) parts.push('この階には、寄棟にできる部分がありません。');
+  return parts.join(' ');
+}
+
+function syncRoofPanel() {
+  const typeSel = $('#roof-type');
+  if (!typeSel) return;
+  buildRoofTypeOptions();
+  const plan = store.current();
+  const floor = M.getFloor(plan, ui.floorId);
+  const s = normalizeRoofSettings(floor.roof);
+  typeSel.value = s.type;
+  $('#roof-pitch').value = s.pitchSun;
+  $('#roof-overhang').value = s.overhangMM;
+  $('#roof-detail').hidden = s.type !== 'hip';
+  $('#roof-floor-label').textContent = `${floor.id} の屋根の設定`;
+  $('#roof-note').textContent = roofStatusText(floor, plan, s)
+    + (s.type === 'hip' ? ` 勾配 ${s.pitchSun} 寸 ≒ ${pitchDeg(s.pitchSun).toFixed(1)}°` : '');
+}
+
+function updateRoofSetting(key, value) {
+  store.update((plan) => {
+    const floor = M.getFloor(plan, ui.floorId);
+    floor.roof = normalizeRoofSettings({ ...normalizeRoofSettings(floor.roof), [key]: value });
+  });
 }
 
 // ---- 敷地 -------------------------------------------------------------------
@@ -1311,6 +1372,15 @@ function wireEvents() {
     setInteriorMode(!ui.interiorMode);
   });
   $('#site-draw').addEventListener('click', () => startSiteDrawing());
+  buildRoofTypeOptions();
+  $('#roof-type').addEventListener('change', (e) => updateRoofSetting('type', e.target.value));
+  $('#roof-pitch').addEventListener('change', (e) => updateRoofSetting('pitchSun', e.target.value));
+  $('#roof-overhang').addEventListener('change', (e) => updateRoofSetting('overhangMM', e.target.value));
+  $('#roof-toggle').addEventListener('click', () => {
+    ui.showRoof = !ui.showRoof;
+    syncRoofToggle();
+    if (ui.view === '3d') viewer.rebuild();
+  });
   $('#site-select').addEventListener('click', () => {
     setTool('select');
     editor.selectSite();

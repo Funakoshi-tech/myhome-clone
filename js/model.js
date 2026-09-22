@@ -2,6 +2,8 @@
 // データ構造の定義／座標変換／面積・畳の計算（純粋関数中心）。
 // 描画には一切依存しない。editor2d / viewer3d は同じ store の同じデータを読むだけ。
 
+import { normalizeRoofSettings } from './roofSettings.js';
+
 // 1P = 910mm（1マス）
 export const P_MM = 910;
 export const DEFAULT_CEILING_MM = 2400;
@@ -1070,6 +1072,8 @@ export function normalizePlan(plan) {
     furniture: Array.isArray(f.furniture) ? f.furniture : [],
     stairs: Array.isArray(f.stairs) ? f.stairs : [],
     partitions: Array.isArray(f.partitions) ? f.partitions : [],
+    // 屋根の設定（未設定の階は既定＝陸屋根）。列挙しないと読み込み時に消えてしまう
+    ...(f.roof ? { roof: normalizeRoofSettings(f.roof) } : {}),
   }));
   ensureWallRoomIds(out);
   for (const floor of out.floors) {
