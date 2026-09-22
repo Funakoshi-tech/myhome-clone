@@ -649,10 +649,12 @@ export class Viewer3D {
       if (ceilMesh) {
         ceilMesh.userData = { roomId: room.id, kind: 'ceiling' };
         if (!isOcc) {
-          // 表示用：半透明で室内が見える
+          // 表示用：半透明で室内が見える。「屋根: 非表示」のときは、寄棟と同様にこれも隠す
+          // （影を落とす下の shadowCeil は不可視のまま常に残すので、日射・実時間の影は変わらない）
           ceilMesh.castShadow = false;
           ceilMesh.receiveShadow = false;
           ceilMesh.renderOrder = 2;
+          ceilMesh.visible = this.ui?.showRoof !== false;
           fg.add(ceilMesh);
           // 影用：不可視だが castShadow で上からの直射を床に遮る
           const shadowCeil = this._buildRoomCeiling(room, ceilingY, this._materials.ceilingShadow, floor);
@@ -682,6 +684,7 @@ export class Viewer3D {
             roofMesh.castShadow = false;
             roofMesh.receiveShadow = false;
             roofMesh.renderOrder = 3;
+            roofMesh.visible = this.ui?.showRoof !== false;
             fg.add(roofMesh);
             const shadowRoof = this._buildRoomRoof(room, ceilingY, this._materials.roofShadow, floor);
             if (shadowRoof) {
