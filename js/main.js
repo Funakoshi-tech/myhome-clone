@@ -227,6 +227,7 @@ function setView3dAllFloors(on) {
   if (on && ui.interiorMode) setInteriorMode(false);
   ui.view3dAllFloors = !!on;
   syncView3dAllFloorsButton();
+  syncInteriorUIButton();
   if (ui.view === '3d') {
     viewer.rebuild({ fitCamera: true });
     updateHint();
@@ -249,7 +250,9 @@ function setFloor(floorId) {
   document.querySelectorAll('#floor-tabs .seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.floor === floorId));
   syncView3dAllFloorsButton();
+  syncInteriorUIButton();
   if (ui.view === '2d') editor.draw();
+  else updateHint();
   refreshPanels();
 }
 
