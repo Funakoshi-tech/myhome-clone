@@ -1388,7 +1388,7 @@ export class Editor2D {
           if (o && wall) this._syncDoorSwingFromFlips(o, wall);
         }
         if (d.kind === 'move-stair' || d.kind === 'move-stair-edge' || d.kind === 'rotate-stair') {
-          M.syncStairWallOpenings(floor);
+          M.syncStairWallOpenings(floor, this._plan());
         }
       });
       return;
@@ -1841,7 +1841,7 @@ export class Editor2D {
       };
       floor.stairs.push(s);
       this.ui.selection = { kind: 'stair', id: s.id };
-      M.syncStairWallOpenings(floor);
+      M.syncStairWallOpenings(floor, this._plan());
     });
     this._afterPlace();
   }
@@ -2078,7 +2078,7 @@ export class Editor2D {
         if (!floor.stairs) floor.stairs = [];
         floor.stairs.push(data);
         this.ui.selection = { kind: 'stair', id: data.id };
-        M.syncStairWallOpenings(floor);
+        M.syncStairWallOpenings(floor, this._plan());
         pasted = true;
       } else if (kind === 'opening') {
         const wall = this._findWallForOpeningPaste(floor, data, dx, dz);
@@ -2137,7 +2137,7 @@ export class Editor2D {
       const floor = M.getFloor(plan, this.ui.floorId);
       const s = (floor.stairs || []).find((x) => x.id === sel.id);
       if (s) s.rotationDeg = (((s.rotationDeg || 0) + deg) % 360 + 360) % 360;
-      M.syncStairWallOpenings(floor);
+      M.syncStairWallOpenings(floor, this._plan());
     });
     this.onUI();
   }
@@ -2166,7 +2166,7 @@ export class Editor2D {
         if (f) mutator(f);
       } else if (sel.kind === 'stair') {
         const s = (floor.stairs || []).find((x) => x.id === sel.id);
-        if (s) { mutator(s); M.syncStairWallOpenings(floor); }
+        if (s) { mutator(s); M.syncStairWallOpenings(floor, this._plan()); }
       } else if (sel.kind === 'partition') {
         const p = (floor.partitions || []).find((x) => x.id === sel.id);
         if (p) mutator(p);
@@ -2789,7 +2789,10 @@ export class Editor2D {
       if (!wl) continue;
       this._drawOpeningSymbol(ctx, op);
     }
-    for (const s of (floor.stairs || [])) this._drawStair(ctx, s, false);
+    for (const s of (floor.stairs || [])) {
+      this._drawStairExteriorWalls(ctx, floor, s);
+      this._drawStair(ctx, s, false);
+    }
     const furn = floor.furniture || [];
     for (const f of furn) {
       if (!this._isWallMountedFurn(f)) this._drawFurniture(ctx, f);
@@ -4539,6 +4542,38 @@ export class Editor2D {
   _drawStair(ctx, stair, isRef = false, opts = {}) {
     const sc = this.worldToScreen(stair.x, stair.z);
     drawStair2d(ctx, stair, sc.x, sc.y, this.cam.scale, { isRef, ...opts });
+  }
+
+  /** 階段の外に面する辺の外壁（3D と同じ区間）を壁と同じ線で描く */
+  _drawStairExteriorWalls(ctx, floor, stair) {
+    const spans = M.stairExteriorWallSpans(stair, floor);
+    if (!spans.length) return;
+    const tMM = M.wallThicknessPreset(this._plan(), true);
+    const corners = M.stairFootprintCorners(stair);
+    ctx.lineCap = 'square';
+    ctx.lineWidth = Math.max(2, tMM * this.cam.scale);
+    ctx.strokeStyle = '#4a5260';
+    for (const { edge, t0, t1 } of spans) {
+      const a = corners[edge];
+      const b = corners[(edge + 1) % 4];
+      const len = Math.hypot(b.x - a.x, b.z - a.z);
+      if (len < 1) continue;
+      let nx = -(b.z - a.z) / len;
+      let nz = (b.x - a.x) / len;
+      if (((a.x + b.x) / 2 - stair.x) * nx + ((a.z + b.z) / 2 - stair.z) * nz < 0) {
+        nx = -nx;
+        nz = -nz;
+      }
+      // 外壁は辺の外側に立つので、線の中心を壁厚の半分だけ外へずらす
+      const at = (t) => this.worldToScreen(
+        a.x + (b.x - a.x) * t + nx * tMM / 2,
+        a.z + (b.z - a.z) * t + nz * tMM / 2,
+      );
+      const sa = at(t0);
+      const sb = at(t1);
+      ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
   }
 
   // #rrggbb → rgba

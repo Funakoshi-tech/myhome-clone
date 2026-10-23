@@ -826,7 +826,7 @@ export function rebuildFloorWalls(floor, plan = null) {
   applyWallHeights(floor);
   remapOpeningWallIds(floor, oldWalls);
   pruneRemovedWallEdges(floor);
-  syncStairWallOpenings(floor);
+  syncStairWallOpenings(floor, plan);
 }
 
 // ポリゴン全体を平行移動
@@ -946,6 +946,90 @@ export function stairOpenEdgeSegments(stair) {
   }));
 }
 
+const STAIR_EXT_SAMPLE_MM = 50;     // 辺を調べる刻み
+const STAIR_EXT_PROBE_MM = 300;     // 辺の外側を調べる距離（壁厚＋余裕）
+const STAIR_EXT_COVER_TOL_MM = 200; // この距離内に平行な部屋壁があれば、その壁が外壁を担う
+
+/** 階段の辺の近くにある、外壁の代わりになる壁（室内の部屋の壁・追加壁）の線分 */
+function _stairCoverSegments(floor) {
+  const roomById = new Map((floor.rooms || []).map((r) => [r.id, r]));
+  const segs = [];
+  for (const w of floor.walls || []) {
+    if (isWallEdgeRemoved(floor, w)) continue;
+    const room = roomById.get(inferWallRoomId(w));
+    if (!room || isOutdoorRoom(room) || isFloorOnlyRoom(room)) continue;
+    segs.push({ start: w.start, end: w.end });
+  }
+  for (const p of floor.partitions || []) {
+    const rad = (p.rotationDeg || 0) * Math.PI / 180;
+    const hx = Math.cos(rad) * (p.lengthMM || 0) / 2;
+    const hz = Math.sin(rad) * (p.lengthMM || 0) / 2;
+    segs.push({ start: { x: p.x - hx, z: p.z - hz }, end: { x: p.x + hx, z: p.z + hz } });
+  }
+  return segs;
+}
+
+/** 点が線分の真横（端より外側を除く）で、線分から tolMM 以内にあるか */
+function _alongsideSegment(p, seg, tolMM) {
+  const dx = seg.end.x - seg.start.x;
+  const dz = seg.end.z - seg.start.z;
+  const len2 = dx * dx + dz * dz;
+  if (len2 < 1) return false;
+  const t = ((p.x - seg.start.x) * dx + (p.z - seg.start.z) * dz) / len2;
+  if (t < 0 || t > 1) return false;
+  return Math.abs((p.x - seg.start.x) * dz - (p.z - seg.start.z) * dx) / Math.sqrt(len2) <= tolMM;
+}
+
+/**
+ * 階段の辺のうち、外（部屋の無い側・バルコニー等の屋外）に面していて、
+ * 部屋の壁も無い区間。3D ではここに外壁を立てる。
+ * 辺の番号は stairOpenEdgeIndices と同じ（0 = −Z, 1 = +X, 2 = +Z, 3 = −X）。
+ * t0 / t1 は辺の始点（stairFootprintCorners[edge]）からの割合（0〜1）。
+ * @returns {{ edge: number, t0: number, t1: number }[]}
+ */
+export function stairExteriorWallSpans(stair, floor) {
+  const corners = stairFootprintCorners(stair);
+  const indoorRooms = (floor.rooms || []).filter(
+    (r) => r.polygon?.length >= 3 && !isOutdoorRoom(r) && !isFloorOnlyRoom(r),
+  );
+  const covers = _stairCoverSegments(floor);
+  const spans = [];
+  for (let edge = 0; edge < 4; edge++) {
+    const a = corners[edge];
+    const b = corners[(edge + 1) % 4];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len < 1) continue;
+    const ux = (b.x - a.x) / len;
+    const uz = (b.z - a.z) / len;
+    // 外向き法線（階段の中心から離れる向き）
+    let nx = -uz;
+    let nz = ux;
+    if (((a.x + b.x) / 2 - stair.x) * nx + ((a.z + b.z) / 2 - stair.z) * nz < 0) {
+      nx = -nx;
+      nz = -nz;
+    }
+    const covered = covers.filter((c) => _segmentsParallel(a, b, c.start, c.end));
+    const n = Math.max(1, Math.ceil(len / STAIR_EXT_SAMPLE_MM));
+    const isExterior = (i) => {
+      const t = (i + 0.5) / n;
+      const p = { x: a.x + ux * len * t, z: a.z + uz * len * t };
+      if (covered.some((c) => _alongsideSegment(p, c, STAIR_EXT_COVER_TOL_MM))) return false;
+      const probe = { x: p.x + nx * STAIR_EXT_PROBE_MM, z: p.z + nz * STAIR_EXT_PROBE_MM };
+      return !indoorRooms.some((r) => pointInPolygon(probe, r.polygon));
+    };
+    let start = null;
+    for (let i = 0; i <= n; i++) {
+      const ext = i < n && isExterior(i);
+      if (ext && start === null) start = i;
+      if (!ext && start !== null) {
+        if ((i - start) / n * len >= 100) spans.push({ edge, t0: start / n, t1: i / n });
+        start = null;
+      }
+    }
+  }
+  return spans;
+}
+
 /** 壁と階段出入り口辺の重なり（あれば offsetMM / widthMM） */
 function _wallOpeningOverlapForSegment(wall, seg, tolMM = 180) {
   const wdx = wall.end.x - wall.start.x;
@@ -984,8 +1068,22 @@ function _wallOpeningOverlapForSegment(wall, seg, tolMM = 180) {
   return { offsetMM, widthMM: Math.min(widthMM, wlen - 1) };
 }
 
-/** 階段の出入り口に接する部屋壁へ自動間口（maguchi）を付与・更新 */
-export function syncStairWallOpenings(floor) {
+/**
+ * 階段から見て、この壁の向こうが外か（自動間口を開けると外へ抜けてしまうか）。
+ * 階段がこの壁の部屋の中にあり、壁が外壁（建物外周・敷地境界・屋外に面する壁）のとき true。
+ * 部屋の外に置いた階段から部屋へ入る壁は、部屋の外周でも外へは抜けないので false。
+ */
+export function stairOpeningLeadsOutside(stair, wall, floor, plan = null) {
+  const room = (floor.rooms || []).find((r) => r.id === inferWallRoomId(wall));
+  if (!room?.polygon || !pointInPolygon({ x: stair.x, z: stair.z }, room.polygon)) return false;
+  return isExteriorWall(wall, floor, plan);
+}
+
+/**
+ * 階段の出入り口に接する部屋壁へ自動間口（maguchi）を付与・更新。
+ * 外へ抜けてしまう壁（stairOpeningLeadsOutside）には開けない。
+ */
+export function syncStairWallOpenings(floor, plan = null) {
   const stairs = floor.stairs || [];
   const liveStairIds = new Set(stairs.map((s) => s.id));
   floor.openings = (floor.openings || []).filter(
@@ -1000,6 +1098,7 @@ export function syncStairWallOpenings(floor) {
         if (isWallEdgeRemoved(floor, wall)) continue;
         const key = wallEdgeKeyFromWall(wall);
         if (seenEdgeKeys.has(key)) continue;
+        if (stairOpeningLeadsOutside(stair, wall, floor, plan)) continue;
         const hit = _wallOpeningOverlapForSegment(wall, seg);
         if (!hit) continue;
         seenEdgeKeys.add(key);
@@ -1091,6 +1190,13 @@ export function normalizePlan(plan) {
   }
   for (const floor of out.floors) {
     applyWallHeights(floor);
+    // 旧データ: 外壁に開いてしまった階段の自動間口を取り除く
+    floor.openings = floor.openings.filter((op) => {
+      if (!op.autoStairId) return true;
+      const w = floor.walls.find((wl) => wl.id === op.wallId);
+      const s = floor.stairs.find((st) => st.id === op.autoStairId);
+      return !w || !s || !stairOpeningLeadsOutside(s, w, floor, out);
+    });
     for (const op of floor.openings || []) {
       if (op.wallEdgeKey) continue;
       const w = floor.walls.find((wl) => wl.id === op.wallId);

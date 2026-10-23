@@ -730,6 +730,15 @@ export class Viewer3D {
         mesh.rotation.y = -((s.rotationDeg || 0) * Math.PI) / 180;
         mesh.userData = { roomId: null, kind: 'stair' };
         fg.add(mesh);
+        // 外に面する辺の外壁も日射を遮る
+        const extGroup = new THREE.Group();
+        extGroup.position.set(s.x * MM, 0, s.z * MM);
+        extGroup.rotation.y = -((s.rotationDeg || 0) * Math.PI) / 180;
+        this._addStairExteriorWalls(extGroup, s, riseMM * MM, floor, OCCLUDER_MAT);
+        extGroup.traverse((o) => {
+          if (o.isMesh) o.userData = { roomId: null, kind: 'wall' };
+        });
+        if (extGroup.children.length) fg.add(extGroup);
       } else {
         const obj = this._buildStair(s, riseMM, floor);
         if (obj) fg.add(obj);
@@ -1504,36 +1513,83 @@ export class Viewer3D {
     group.add(post);
   }
 
-  /** 登り口・降り口以外を壁で囲む */
-  _addStairEnclosureWalls(group, w, d, h, stairType, wallMat) {
+  /**
+   * 階段の辺のうち外に面する区間へ外壁（外壁の厚さ・階段の高さ）を立てる（階段ローカル座標）。
+   * @returns {Set<number>} 辺の全長が外壁になった辺の番号（0 = −Z, 1 = +X, 2 = +Z, 3 = −X）
+   */
+  _addStairExteriorWalls(group, stair, h, floor, mat) {
+    const full = new Set();
+    if (!floor) return full;
+    const spans = M.stairExteriorWallSpans(stair, floor);
+    if (!spans.length) return full;
+    const w = stair.widthMM * MM;
+    const d = stair.depthMM * MM;
+    const t = M.wallThicknessPreset(this.store.current(), true) * MM;
+    const corners = [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]];
+    const normals = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+    const eps = 1e-6;
+    // 角で隣の辺も外壁なら、角のすき間（t × t）を埋めるよう延ばす
+    const reachesStart = (edge) => spans.some((s) => s.edge === edge && s.t0 < eps);
+    const reachesEnd = (edge) => spans.some((s) => s.edge === edge && s.t1 > 1 - eps);
+    for (const { edge, t0, t1 } of spans) {
+      if (t0 < eps && t1 > 1 - eps) full.add(edge);
+      const [ax, az] = corners[edge];
+      const [bx, bz] = corners[(edge + 1) % 4];
+      const [nx, nz] = normals[edge];
+      const len = Math.hypot(bx - ax, bz - az);
+      const extStart = t0 < eps && reachesEnd((edge + 3) % 4) ? t : 0;
+      const extEnd = t1 > 1 - eps && reachesStart((edge + 1) % 4) ? t : 0;
+      const ux = (bx - ax) / len;
+      const uz = (bz - az) / len;
+      const s0 = t0 * len - extStart;
+      const s1 = t1 * len + extEnd;
+      const cx = ax + ux * (s0 + s1) / 2 + nx * t / 2;
+      const cz = az + uz * (s0 + s1) / 2 + nz * t / 2;
+      const along = s1 - s0;
+      if (nx !== 0) this._addWallPanel(group, cx, h / 2, cz, t, h, along, mat);
+      else this._addWallPanel(group, cx, h / 2, cz, along, h, t, mat);
+    }
+    return full;
+  }
+
+  /**
+   * 登り口・降り口以外を壁で囲む。
+   * @param {Set<number>} [skipEdges] 外壁を立てた辺（内側の囲い壁は省く）
+   */
+  _addStairEnclosureWalls(group, w, d, h, stairType, wallMat, skipEdges = new Set()) {
     const t = 0.12;
     const wh = h;
+    // edge: この囲い壁が沿う階段の辺（0 = −Z, 1 = +X, 2 = +Z, 3 = −X）
+    const panel = (edge, cx, cz, pw, pd) => {
+      if (skipEdges.has(edge)) return;
+      this._addWallPanel(group, cx, wh / 2, cz, pw, wh, pd, wallMat);
+    };
 
     if (stairType === 'straight') {
-      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, 0, t, wh, d, wallMat);
-      this._addWallPanel(group, w / 2 + t / 2, wh / 2, 0, t, wh, d, wallMat);
+      panel(3, -w / 2 - t / 2, 0, t, d);
+      panel(1, w / 2 + t / 2, 0, t, d);
       return;
     }
 
     if (stairType === 'l_shape') {
       // 登り口 +Z・出口 −X は開口。−Z 背壁と +X 上段のみ囲う
-      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, d / 4, t, wh, d / 2, wallMat);
-      this._addWallPanel(group, w / 2 + t / 2, wh / 2, -d / 4, t, wh, d / 2, wallMat);
-      this._addWallPanel(group, -w / 4, wh / 2, -d / 2 - t / 2, w / 2, wh, t, wallMat);
+      panel(3, -w / 2 - t / 2, d / 4, t, d / 2);
+      panel(1, w / 2 + t / 2, -d / 4, t, d / 2);
+      panel(0, -w / 4, -d / 2 - t / 2, w / 2, t);
       return;
     }
 
     if (stairType === 'u_shape') {
-      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, 0, t, wh, d, wallMat);
-      this._addWallPanel(group, w / 2 + t / 2, wh / 2, 0, t, wh, d, wallMat);
-      this._addWallPanel(group, 0, wh / 2, -d / 2 - t / 2, w, wh, t, wallMat);
+      panel(3, -w / 2 - t / 2, 0, t, d);
+      panel(1, w / 2 + t / 2, 0, t, d);
+      panel(0, 0, -d / 2 - t / 2, w, t);
       return;
     }
 
     if (stairType === 'winding') {
       // 登り口 +Z は開口。−Z 出口側も開口
-      this._addWallPanel(group, w / 2 + t / 2, wh / 2, 0, t, wh, d, wallMat);
-      this._addWallPanel(group, -w / 2 - t / 2, wh / 2, -d / 4, t, wh, d * 0.75, wallMat);
+      panel(1, w / 2 + t / 2, 0, t, d);
+      panel(3, -w / 2 - t / 2, -d / 4, t, d * 0.75);
       return;
     }
 
@@ -1584,7 +1640,8 @@ export class Viewer3D {
         break;
     }
 
-    this._addStairEnclosureWalls(group, w, d, h, stairType, wallMat);
+    const exteriorEdges = this._addStairExteriorWalls(group, stair, h, sourceFloor, this._materials.wall);
+    this._addStairEnclosureWalls(group, w, d, h, stairType, wallMat, exteriorEdges);
     return group;
   }
 
