@@ -4,6 +4,7 @@
 import { store } from './store.js';
 import * as M from './model.js';
 import * as SITE from './sitePolygon.js';
+import * as ORI from './siteOrientation.js';
 import { ROOF_TYPES, normalizeRoofSettings, pitchDeg } from './roofSettings.js';
 import { computeRoofRegions } from './roofModel.js';
 import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, flooringForRoom } from './catalog.js';
@@ -36,6 +37,7 @@ const ui = {
   sun: { doy: 172, hour: 12, playing: false },
   daylight: {},          // { [roomId]: 直射時間 }
   bgCalib: false,        // 敷地写真：基準線モード中
+  bgPick: null,          // 下絵：'align'（線で水平合わせ）| 'north'（北の指定）中
 };
 let sunTimer = null;
 
@@ -512,6 +514,15 @@ function syncBgPanel() {
   $('#bg-recalib').hidden = !hasBg;
   $('#bg-position').hidden = !hasBg || !M.isBackgroundImageScaled(bg);
   $('#bg-delete').hidden = !hasBg;
+  $('#bg-orient').hidden = !hasBg || !M.isBackgroundImageScaled(bg);
+  const azimuth = store.current()?.site?.azimuth || 0;
+  $('#bg-north-status').textContent = ORI.azimuthLabel(azimuth);
+  $('#sun-azimuth').value = Math.round(azimuth);
+  if (hasBg && document.activeElement !== $('#bg-rotation')) {
+    const r = ORI.normalizeDeg(bg.rotationDeg || 0);
+    $('#bg-rotation').value = String(Math.round((r > 180 ? r - 360 : r) * 10) / 10);
+  }
+  updateHint();
   $('#bg-visible').closest('.row.check').hidden = !hasBg;
   $('#bg-opacity').closest('.row').hidden = !hasBg;
   if (hasBg) {
@@ -641,6 +652,25 @@ function wireBgPanel() {
 
   $('#bg-position').addEventListener('click', () => showBgPosModal());
 
+  $('#bg-align').addEventListener('click', () => {
+    editor.startBgPick('align');
+    updateHint();
+  });
+  $('#bg-north').addEventListener('click', () => {
+    editor.startBgPick('north');
+    updateHint();
+  });
+  // 回転角の直接入力（下絵の中心まわり。敷地と方位も一緒に回る）
+  $('#bg-rotation').addEventListener('change', (e) => {
+    const bg = store.current()?.site?.backgroundImage;
+    const v = Number(e.target.value);
+    if (!bg || Number.isNaN(v)) return;
+    let delta = ORI.normalizeDeg(v - (bg.rotationDeg || 0));
+    if (delta > 180) delta -= 360;
+    editor.rotateSite(delta);
+    e.target.blur();
+  });
+
   $('#bg-delete').addEventListener('click', async () => {
     if (!store.current()?.site?.backgroundImage?.dataUrl) return;
     const ok = await showConfirm({
@@ -654,6 +684,7 @@ function wireBgPanel() {
       plan.site.backgroundImage = null;
     });
     editor.cancelBgCalibration();
+    editor.cancelBgPick();
     editor.invalidateBgImage();
     hideBgScaleModal();
     hideBgPosModal();
@@ -1247,6 +1278,14 @@ function updateHint() {
     hint.textContent = '基準線モード：寸法のわかる2点を下絵上でクリックしてください';
     return;
   }
+  if (ui.bgPick === 'align') {
+    hint.textContent = '水平合わせ：水平（または垂直）にしたい線を2点でクリック → 下絵・敷地・方位が一緒に回ります。右クリック/Esc で中止';
+    return;
+  }
+  if (ui.bgPick === 'north') {
+    hint.textContent = '北の指定：下絵の方位記号を 根元 → 先端（北）の順にクリック。右クリック/Esc で中止';
+    return;
+  }
   const map = {
     select: '選択：壁クリックで壁選択（Shift+クリックで複数 / ドラッグで範囲選択）。Delete で削除。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。Shift+壁クリックで部屋選択中も壁選択可。階段・ドアは緑丸で90°回転。追加壁は緑丸で自由回転 / ドラッグで移動 / R で90°回転。敷地は枠線をクリックで選択（頂点ドラッグ・右クリックで頂点の追加/削除）',
     site: '敷地作図：下絵に沿って頂点を順にクリック → Enter または始点クリック（ダブルクリックでも可）で確定。Shift で 45° 刻み・右クリック/Backspace で直前の点を取り消し・Esc で中止。確定後は右のプロパティで辺の長さを数値で修正できます',
@@ -1515,6 +1554,7 @@ function afterPlanChange() {
   ui.selection = null;
   ui.floorId = '1F';
   ui.bgCalib = false;
+  editor.cancelBgPick();
   editor.invalidateBgImage();
   setFloor('1F');
   viewer._fitted = false;

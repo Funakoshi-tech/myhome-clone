@@ -403,6 +403,10 @@ body.plan-list-mode { overflow: auto; }
 .display-dropdown-panel[hidden] { display: none !important; }
 .display-dropdown-panel .row { margin: 6px 0; }
 .display-dropdown-panel .pane-hint { margin: 8px 0 0; font-size: 11px; }
+#bg-orient { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+#bg-orient .btn { margin-top: 4px; }
+#bg-orient .row { display: flex; align-items: center; gap: 6px; }
+#bg-rotation { width: 80px; }
 .display-dropdown-btn[aria-expanded="true"] {
   background: var(--accent);
   color: #fff;

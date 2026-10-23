@@ -14,6 +14,7 @@ import {
   openingWallFor, openingWallAxes, applyOpeningToWall as applyOpeningToWallModel,
 } from './openingModel.js';
 import * as SITE from './sitePolygon.js';
+import * as ORI from './siteOrientation.js';
 
 // 緑丸回転ハンドルのクリック判定半径（px）
 const ROTATE_HANDLE_HIT_PX = 16;
@@ -203,6 +204,7 @@ export class Editor2D {
     this._bgImgCache = null;
     this._bgImgUrl = null;
     this._bgCalib = null; // { step: 1|2, p1?: {px,py}, p2?: {px,py} }
+    this._bgPick = null;  // 下絵の2点指定 { mode: 'align'|'north', p1?: {x,z}, cur?: {x,z} }
     this._siteDraft = null; // 敷地作図中 { pts: [{x,z}], cur: {x,z} }
     this._clipboard = null;
     this._bind();
@@ -688,6 +690,11 @@ export class Editor2D {
 
     // 敷地写真：基準線モード
     if (this.ui.bgCalib && e.button === 0 && this._onBgCalibClick(sx, sy)) return;
+    // 下絵：水平合わせ／北の指定（右クリックで中止）
+    if (this._bgPick && (e.button === 0 || e.button === 2)) {
+      this._onBgPickDown(e, sx, sy);
+      return;
+    }
 
     const w = this.screenToWorld(sx, sy);
     const tool = this.ui.tool;
@@ -1108,6 +1115,12 @@ export class Editor2D {
     const w = this.screenToWorld(sx, sy);
     const d = this.drag;
 
+    if (!d && this._bgPick) {
+      this.canvas.style.cursor = 'crosshair';
+      this._bgPick.cur = w;
+      if (this._bgPick.p1) this.draw();
+      return;
+    }
     if (!d && this.ui.tool === 'site') { this._siteToolMove(e, w); return; }
     if (!d) { this._updateHover(sx, sy); return; }
 
@@ -1387,6 +1400,7 @@ export class Editor2D {
     const tag = (e.target?.tagName) || '';
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag) || e.target?.isContentEditable) return;
     if (e.code === 'Space') { this._space = true; }
+    if (this._bgPick && e.key === 'Escape') { this.cancelBgPick(); e.preventDefault(); return; }
     if (this.ui.tool === 'site') {
       if (this._siteDraft) {
         if (e.key === 'Enter') { this.finishSiteDraft(); e.preventDefault(); return; }
@@ -2487,6 +2501,153 @@ export class Editor2D {
     return true;
   }
 
+  // ---- 下絵の回転（水平合わせ）と北の指定 -------------------------------------
+  /** mode: 'align'（2点の線を水平/垂直に）| 'north'（方位記号を根元→先端の順に） */
+  startBgPick(mode) {
+    this.cancelBgCalibration();
+    this._bgPick = { mode };
+    this.ui.bgPick = mode;
+    this.draw();
+    if (this.onUI) this.onUI();
+  }
+
+  cancelBgPick() {
+    if (!this._bgPick) return;
+    this._bgPick = null;
+    this.ui.bgPick = null;
+    this.canvas.style.cursor = '';
+    this.draw();
+    if (this.onUI) this.onUI();
+  }
+
+  _onBgPickDown(e, sx, sy) {
+    const pick = this._bgPick;
+    if (e.button === 2) {
+      // 1点目があれば取り消し、なければ中止
+      if (pick.p1) { pick.p1 = null; this.draw(); } else this.cancelBgPick();
+      return;
+    }
+    const w = this.screenToWorld(sx, sy);
+    if (!pick.p1) {
+      pick.p1 = w;
+      pick.cur = w;
+      this.draw();
+      return;
+    }
+    const a = pick.p1;
+    if (Math.hypot(sx - this.worldToScreen(a.x, a.z).x, sy - this.worldToScreen(a.x, a.z).y) < 6) return;
+    const mode = pick.mode;
+    this._bgPick = null;
+    this.ui.bgPick = null;
+    this.canvas.style.cursor = '';
+    if (mode === 'align') {
+      const delta = ORI.straightenDeltaDeg(a, w);
+      if (delta) {
+        const pivot = { x: (a.x + w.x) / 2, z: (a.z + w.z) / 2 };
+        this.rotateSite(delta, pivot);
+      }
+    } else {
+      const az = ORI.azimuthFromNorthLine(a, w);
+      if (az !== null) this.store.update((plan) => { plan.site.azimuth = Math.round(az * 10) / 10; });
+    }
+    this.draw();
+    if (this.onUI) this.onUI();
+  }
+
+  /** 下絵・敷地・方位をまとめて回す（pivot 省略時は下絵の中心）。下絵が未スケールなら何もしない */
+  rotateSite(deltaDeg, pivot = null) {
+    const bg = this._plan().site?.backgroundImage;
+    const p = pivot || ORI.backgroundCenter(bg);
+    if (!p || !deltaDeg) return;
+    this.store.update((plan) => { ORI.rotateSiteAbout(plan.site, p, deltaDeg); });
+    this.draw();
+  }
+
+  _drawBgPickOverlay(ctx) {
+    const pick = this._bgPick;
+    if (!pick) return;
+    const msg = pick.mode === 'align'
+      ? (pick.p1 ? '2点目をクリック（この線が水平/垂直になるよう下絵を回します）' : '水平にしたい線（敷地の辺など）の1点目をクリック')
+      : (pick.p1 ? '方位記号の先端（北側）をクリック' : '下絵の方位記号の根元（南側）をクリック');
+    ctx.save();
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.strokeText(msg, 12, 24);
+    ctx.fillStyle = 'rgba(44, 123, 229, 0.95)';
+    ctx.fillText(msg, 12, 24);
+    if (pick.p1) {
+      const a = this.worldToScreen(pick.p1.x, pick.p1.z);
+      const b = pick.cur ? this.worldToScreen(pick.cur.x, pick.cur.z) : a;
+      const color = pick.mode === 'align' ? '#f5a623' : '#d0342c';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (pick.mode === 'north' && Math.hypot(b.x - a.x, b.y - a.y) > 12) {
+        const ang = Math.atan2(b.y - a.y, b.x - a.x);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x - 12 * Math.cos(ang - 0.4), b.y - 12 * Math.sin(ang - 0.4));
+        ctx.lineTo(b.x - 12 * Math.cos(ang + 0.4), b.y - 12 * Math.sin(ang + 0.4));
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** 右下の方位マーク（site.azimuth = 図面の上から真北への時計回り角）。右上はフロア情報ボタンと重なるため */
+  _drawNorthArrow(ctx) {
+    const az = (this._plan().site?.azimuth || 0) * Math.PI / 180;
+    const r = 20;
+    const cx = this.cssW - 36;
+    const cy = this.cssH - 40;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(31,39,51,0.25)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.rotate(az);
+    // 北半分（塗り）と南半分（白抜き）
+    ctx.beginPath();
+    ctx.moveTo(0, -r); ctx.lineTo(6, 0); ctx.lineTo(-6, 0); ctx.closePath();
+    ctx.fillStyle = '#d0342c';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(0, r); ctx.lineTo(6, 0); ctx.lineTo(-6, 0); ctx.closePath();
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.strokeStyle = '#1f2733';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#1f2733';
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.translate(0, -r - 11);
+    ctx.rotate(-az);
+    ctx.fillText('N', 0, 0);
+    ctx.restore();
+  }
+
   _drawBackground(ctx) {
     const bg = this._plan().site?.backgroundImage;
     if (!bg?.dataUrl || bg.visible === false) return;
@@ -2649,6 +2810,8 @@ export class Editor2D {
     this._drawSiteDraft(ctx);
     if (this.ui.showDimensions) this._drawWallDimensions(ctx, floor);
     this._drawBgCalibOverlay(ctx);
+    this._drawBgPickOverlay(ctx);
+    this._drawNorthArrow(ctx);
   }
 
   // ---- 敷地の描画 -------------------------------------------------------------
