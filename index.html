@@ -416,5 +416,11 @@
   </div>
 
   <script type="module" src="js/main.js"></script>
+  <!-- 公開した新しい版がすぐ反映されるよう、毎回サーバーに更新を確かめる service worker（sw.js）を登録 -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch((err) => console.warn('service worker の登録に失敗', err));
+    }
+  </script>
 </body>
 </html>
