@@ -24,6 +24,9 @@ const FLOOR_SLAB_M = 0.05; // 影用の床板厚（上階の床がバルコニ�
 const ROOF_LIFT_M = 0.02; // 寄棟屋根を壁の上端よりわずかに持ち上げる量（壁の上面との Z ファイティング回避）
 const ROOF_SLAB_M = 0.08; // 平板屋根の板厚
 const OCCLUDER_MAT = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+// 壁・屋根の輪郭線（形を読みやすくする表示専用。影は落とさない）
+const OUTLINE_MAT = new THREE.LineBasicMaterial({ color: 0x3c4452, transparent: true, opacity: 0.6 });
+const OUTLINE_ANGLE_DEG = 30; // これより緩い折れ目には線を引かない（寄棟の面の継ぎ目などは引く）
 
 // 床板なし（上下貫通）: 吹抜け
 const NO_FLOOR_TYPES = new Set(['fukinuke']);
@@ -68,11 +71,20 @@ export class Viewer3D {
     this._onWheel = (e) => this._handleWheel(e);
     this.renderer.domElement.addEventListener('wheel', this._onWheel, { passive: false, capture: true });
 
-    // 環境光（夜でも残す）
-    this.ambient = new THREE.AmbientLight(0xffffff, 0.55);
+    // 環境光（夜でも残す）。弱めにして、面の向きによる明暗が出るようにする
+    this.ambient = new THREE.AmbientLight(0xffffff, 0.3);
     this.scene.add(this.ambient);
-    this.hemi = new THREE.HemisphereLight(0xbfd4ff, 0x33302c, 0.45);
+    this.hemi = new THREE.HemisphereLight(0xbfd4ff, 0x33302c, 0.4);
     this.scene.add(this.hemi);
+
+    // 見やすさ用の補助光：カメラの左上から常に当て、日陰の面でも向きごとに明暗を付ける。
+    // 影は落とさないので、日射（影・日照時間）には影響しない
+    this.fill = new THREE.DirectionalLight(0xffffff, 0.75);
+    this.fill.position.set(-4, 6, 2); // カメラ座標系（左・上・やや手前）
+    this.fill.target.position.set(0, 0, -10);
+    this.camera.add(this.fill);
+    this.camera.add(this.fill.target);
+    this.scene.add(this.camera);
 
     // 太陽光（DirectionalLight + 影）
     this.sun = new THREE.DirectionalLight(0xfff4e0, 1.0);
@@ -109,7 +121,11 @@ export class Viewer3D {
 
     this._materials = {
       floor: new Map(),
-      wall: new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.9, metalness: 0.0 }),
+      // polygonOffset: 面を少し奥へずらし、同じ位置に重なる輪郭線が面に隠れないようにする
+      wall: new THREE.MeshStandardMaterial({
+        color: 0xdfe3e8, roughness: 0.9, metalness: 0.0,
+        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+      }),
       ceiling: new THREE.MeshStandardMaterial({
         color: 0xd8e4ef,
         transparent: true,
@@ -144,6 +160,9 @@ export class Viewer3D {
         roughness: 0.85,
         metalness: 0.05,
         side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       }),
       // 3D 表示専用：影だけを落とす不可視メッシュ（他階の構造物・床板用。深度も書かない）
       shadowOnly: new THREE.MeshBasicMaterial({
@@ -299,6 +318,24 @@ export class Viewer3D {
     }
   }
 
+  /**
+   * 壁（階段まわりの壁を含む）と寄棟屋根に輪郭線を付ける。線はメッシュの子にするので、
+   * 位置・回転と表示/非表示（「屋根: 非表示」など）がメッシュと一緒に変わる。
+   */
+  _addOutlines(group) {
+    const targets = [];
+    group.traverse((o) => {
+      if (!o.isMesh || !o.geometry) return;
+      if (o.material === this._materials.wall || o.material === this._materials.roofSolid) targets.push(o);
+    });
+    for (const mesh of targets) {
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, OUTLINE_ANGLE_DEG), OUTLINE_MAT);
+      line.userData = { kind: 'outline' };
+      line.raycast = () => {};
+      mesh.add(line);
+    }
+  }
+
   _floorMaterial(hex) {
     if (!this._materials.floor.has(hex)) {
       const m = new THREE.MeshStandardMaterial({
@@ -376,6 +413,8 @@ export class Viewer3D {
     if (!showAll) this._buildUpperFloorShadowCasters(plan, selectedId);
 
     this._lastDisplayKey = displayKey;
+
+    this._addOutlines(this.root);
 
     // 建物中心（太陽光ターゲット・影カメラ用）
     const box = new THREE.Box3().setFromObject(this.root);
