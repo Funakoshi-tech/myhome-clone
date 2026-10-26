@@ -1030,6 +1030,21 @@ export function stairExteriorWallSpans(stair, floor) {
   return spans;
 }
 
+/**
+ * 下の階から上がってくる階段のうち、この階の同じ場所に階段が無いもの。
+ * 最上階や特殊な間取りでは、上がってきた先の空間をこの階の高さで外壁で囲う（stairExteriorWallSpans をこの階に対して使う）。
+ * この階に重なる階段があるときは、その階段が自分の階の外壁を受け持つので対象外。
+ */
+export function stairsEndingOnFloor(plan, floor) {
+  const lower = plan && floor ? getLowerFloor(plan, floor.id) : null;
+  if (!lower?.stairs?.length) return [];
+  const own = (floor.stairs || []).map(stairFootprintCorners);
+  return lower.stairs.filter((s) => {
+    const fp = stairFootprintCorners(s);
+    return !own.some((o) => polygonsOverlapXZ(fp, o));
+  });
+}
+
 /** 壁と階段出入り口辺の重なり（あれば offsetMM / widthMM） */
 function _wallOpeningOverlapForSegment(wall, seg, tolMM = 180) {
   const wdx = wall.end.x - wall.start.x;

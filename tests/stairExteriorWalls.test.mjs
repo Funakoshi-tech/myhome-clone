@@ -87,6 +87,48 @@ test('部屋の外に置いた階段から部屋へ入る壁（部屋の外周�
   assert.deepEqual(M.stairExteriorWallSpans(floor.stairs[0], floor).map((s) => s.edge).sort(), [0, 1]);
 });
 
+test('上の階に階段が無いとき、上がってきた階段の上の外に面する辺を、上の階の部屋に対して外壁にする', () => {
+  const plan = M.createEmptyPlan('t');
+  const [f1, f2] = plan.floors;
+  // 1F: L 字の切り欠きに階段。2F: 同じ L 字で、階段の場所は部屋なし（階段なし）
+  for (const f of [f1, f2]) {
+    f.rooms.push(rect(`${f.id}a`, 'yoshitsu', 0, 0, 5460, 5460), rect(`${f.id}b`, 'yoshitsu', 5460, 2730, 7280, 5460));
+  }
+  f1.stairs = [stair(5915, 1365)];
+  for (const f of [f1, f2]) M.rebuildFloorWalls(f, plan);
+  const ending = M.stairsEndingOnFloor(plan, f2);
+  assert.deepEqual(ending.map((s) => s.id), ['s1']);
+  // 2F では −X は部屋 2Fa、+Z は部屋 2Fb の壁が受け持つので、外に面する −Z・+X に外壁
+  assert.deepEqual(M.stairExteriorWallSpans(ending[0], f2).map((s) => s.edge).sort(), [0, 1]);
+  assert.deepEqual(M.stairsEndingOnFloor(plan, f1), [], '最下階には下から上がってくる階段が無い');
+});
+
+test('上の階の同じ場所に階段があるときは、上の階の外壁はその階段に任せる', () => {
+  const plan = M.createEmptyPlan('t');
+  const [f1, f2] = plan.floors;
+  f1.stairs = [stair(5915, 1365)];
+  f2.stairs = [stair(5915, 1365, { id: 's2' })];
+  assert.deepEqual(M.stairsEndingOnFloor(plan, f2), []);
+  // 一部だけ重なる場合も上の階の階段に任せる
+  f2.stairs = [stair(5915, 2000, { id: 's2' })];
+  assert.deepEqual(M.stairsEndingOnFloor(plan, f2), []);
+  // 離れた場所の階段なら、上がってきた階段の上は外壁で囲う
+  f2.stairs = [stair(1000, 1365, { id: 's2' })];
+  assert.deepEqual(M.stairsEndingOnFloor(plan, f2).map((s) => s.id), ['s1']);
+});
+
+test('上の階で部屋が階段の上を覆っていれば、追加の外壁は無い', () => {
+  const plan = M.createEmptyPlan('t');
+  const [f1, f2] = plan.floors;
+  f1.rooms.push(rect('a', 'yoshitsu', 0, 0, 5460, 5460));
+  f1.stairs = [stair(5915, 1365)];
+  f2.rooms.push(rect('b', 'yoshitsu', 0, 0, 7280, 5460));
+  for (const f of [f1, f2]) M.rebuildFloorWalls(f, plan);
+  const ending = M.stairsEndingOnFloor(plan, f2);
+  assert.equal(ending.length, 1);
+  assert.deepEqual(M.stairExteriorWallSpans(ending[0], f2), []);
+});
+
 test('読み込み時: 旧データで外壁に開いた自動間口を取り除く', () => {
   const { plan, floor } = floorWith(
     [rect('R', 'yoshitsu', 0, 0, 3640, 2730), rect('H', 'rouka', 0, 2730, 3640, 4550)],

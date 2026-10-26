@@ -760,6 +760,18 @@ export class Viewer3D {
       }
     }
 
+    // 下の階から上がってきた階段の上（この階に階段が無い場所）: この階の高さで外に面する辺を外壁で囲う
+    for (const s of M.stairsEndingOnFloor(planData, floor)) {
+      const extGroup = new THREE.Group();
+      extGroup.position.set(s.x * MM, 0, s.z * MM);
+      extGroup.rotation.y = -((s.rotationDeg || 0) * Math.PI) / 180;
+      this._addStairExteriorWalls(extGroup, s, ceilingY, floor, isOcc ? OCCLUDER_MAT : this._materials.wall);
+      extGroup.traverse((o) => {
+        if (o.isMesh) o.userData = { roomId: null, kind: 'wall' };
+      });
+      if (extGroup.children.length) fg.add(extGroup);
+    }
+
     for (const s of (floor.stairs || [])) {
       const riseMM = M.stairRiseHeightMM(floor, upper);
       if (isOcc) {

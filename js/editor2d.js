@@ -2789,6 +2789,7 @@ export class Editor2D {
       if (!wl) continue;
       this._drawOpeningSymbol(ctx, op);
     }
+    for (const s of M.stairsEndingOnFloor(this._plan(), floor)) this._drawStairExteriorWalls(ctx, floor, s);
     for (const s of (floor.stairs || [])) {
       this._drawStairExteriorWalls(ctx, floor, s);
       this._drawStair(ctx, s, false);
