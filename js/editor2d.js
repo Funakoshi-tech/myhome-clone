@@ -715,7 +715,8 @@ export class Editor2D {
     // ---- 右クリック ----
     if (e.button === 2) {
       this._hideContextMenu();
-      if (tool === 'select' && this.ui.selection) {
+      if (tool !== 'select') return;
+      if (this.ui.selection) {
         const sel = this.ui.selection;
         // 部屋：追加頂点上なら削除 → 辺上なら頂点挿入（メニューより優先）
         if (sel.kind === 'room') {
@@ -744,11 +745,28 @@ export class Editor2D {
           const ei = this._siteEdgeAt(w);
           if (ei >= 0) { this._siteInsertVertex(ei, w); return; }
         }
-        // 選択済みパーツ上 → コンテキストメニュー
-        if (this._isOnSelection(w, sx, sy)) {
-          this._showContextMenu(e.clientX, e.clientY);
-          return;
+      }
+      // 選択していない家具の上 → その家具を選び、プロパティ欄（寸法）を見せてメニューも出す
+      const furn = this._furnitureAt(sx, sy);
+      const onSelection = this._isOnSelection(w, sx, sy);
+      if (furn && !(onSelection && this.ui.selection?.kind === 'furniture')) {
+        this.ui.selection = { kind: 'furniture', id: furn.id };
+        this.hoverVertex = null;
+        this.hoverEdge = null;
+        this.hoverWallKey = null;
+        this.onUI();
+        this.draw();
+        document.getElementById('props-pane')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        this._showContextMenu(e.clientX, e.clientY);
+        return;
+      }
+      // 選択済みパーツ上 → コンテキストメニュー
+      if (onSelection) {
+        if (this.ui.selection?.kind === 'furniture') {
+          document.getElementById('props-pane')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
+        this._showContextMenu(e.clientX, e.clientY);
+        return;
       }
       return;
     }
