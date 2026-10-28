@@ -3,7 +3,7 @@
 // store の同じデータを読み書きするだけ（描画専用ロジック）。
 
 import * as M from './model.js';
-import { getRoomType, getFurniture, getStairType, getOpeningType, isWallMountedFurniture } from './catalog.js';
+import { getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, isWallMountedFurniture } from './catalog.js';
 import { drawStair2d } from './stairDraw2d.js';
 import { getFurnitureIcon, requestFurnitureIcon } from './furnitureIcon2d.js';
 import { vehicleBodyColor } from './vehicleTint.js';
@@ -241,7 +241,7 @@ export class Editor2D {
     }
     if (sel.kind === 'stair') {
       const s = (this._floor().stairs || []).find((x) => x.id === sel.id);
-      if (s?.type === 'l_winder') items.push({ label: '左右反転', action: () => this.flipSelectedStair() });
+      if (stairCanMirror(s?.type)) items.push({ label: '左右反転', action: () => this.flipSelectedStair() });
     }
     items.push({ label: '削除', action: () => this._deleteSelection(), danger: true });
     return items;
@@ -2164,7 +2164,7 @@ export class Editor2D {
     this.onUI();
   }
 
-  /** L字（回り段）の曲がる向き（右 ⇔ 左）を切り替える */
+  /** L字階段（上で回る・下で回る）の曲がる向き（右 ⇔ 左）を切り替える */
   flipSelectedStair() {
     const sel = this.ui.selection;
     if (!sel || sel.kind !== 'stair') return;

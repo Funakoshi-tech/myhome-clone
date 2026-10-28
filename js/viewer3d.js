@@ -1475,6 +1475,39 @@ export class Viewer3D {
     winders.forEach((pts, j) => this._addStairPolyTread(group, pts, stepH * (nStraight + 1 + j), mat, treadThick));
   }
 
+  /**
+   * L字（下で回る）: +X 辺の下端から入り、最下部の正方形（一辺 = 短辺）を回り段 3 段で曲がって −Z へ直進する。
+   * 最後の直進の段が上階の床と同じ高さ。mirror なら −X 辺から入る（左右反転）。
+   */
+  _buildLWinderBottomStair3D(group, w, d, h, mat, riserMat, mirror) {
+    const s = Math.min(w, d);
+    const straightLen = d - s;
+    const nStraight = straightLen > 0.05 ? straightStairStepCount(straightLen / MM) : 0;
+    const nSteps = nStraight + 3;
+    const stepH = h / nSteps;
+    const stepD = nStraight ? straightLen / nStraight : 0;
+    const treadThick = 0.04;
+    const treadW = w * 0.96;
+
+    const sx = mirror ? -1 : 1;
+    const p = (x, z) => ({ x: x * sx, z });
+    const yW = d / 2 - s; // 直進部と回り段の境
+    const pivot = p(w / 2, yW); // 内側の角（登り口側の辺の、回り段の上端）
+    const winders = [
+      [pivot, p(w / 2, d / 2), p(0, d / 2)],
+      [pivot, p(0, d / 2), p(-w / 2, d / 2), p(-w / 2, d / 2 - s / 2)],
+      [pivot, p(-w / 2, d / 2 - s / 2), p(-w / 2, yW)],
+    ];
+    winders.forEach((pts, j) => this._addStairPolyTread(group, pts, stepH * (j + 1), mat, treadThick));
+
+    for (let i = 0; i < nStraight; i++) {
+      const y = stepH * (4 + i) - treadThick / 2;
+      const z = yW - stepD * (i + 0.5);
+      this._addStairTread(group, 0, y, z, treadW, stepD * 0.92, mat, treadThick);
+      this._addStairRiser(group, 0, stepH * (3 + i) + stepH / 2, yW - stepD * i, treadW, stepH, 0.012, riserMat);
+    }
+  }
+
   _buildStraightStair3D(group, w, d, h, mat, riserMat) {
     const nSteps = straightStairStepCount(d / MM); // 2D の記号と同じ段の数
     const stepH = h / nSteps;
@@ -1682,6 +1715,17 @@ export class Viewer3D {
       return;
     }
 
+    if (stairType === 'l_winder_bottom') {
+      // 登り口（横の辺の下端）と上の辺は開口。反対側の辺・下の辺・登り口側の辺の上側を囲う
+      const s = Math.min(w, d);
+      const sx = mirror ? -1 : 1;
+      const [outerEdge, entryEdge] = mirror ? [1, 3] : [3, 1];
+      panel(outerEdge, -sx * (w / 2 + t / 2), 0, t, d);
+      panel(2, 0, d / 2 + t / 2, w, t);
+      if (d - s > 0.01) panel(entryEdge, sx * (w / 2 + t / 2), -s / 2, t, d - s);
+      return;
+    }
+
     if (stairType === 'l_shape') {
       // 登り口 +Z・出口 −X は開口。−Z 背壁と +X 上段のみ囲う
       panel(3, -w / 2 - t / 2, d / 4, t, d / 2);
@@ -1736,6 +1780,9 @@ export class Viewer3D {
     switch (stairType) {
       case 'l_winder':
         this._buildLWinderStair3D(group, w, d, h, mat, riserMat, !!stair.mirror);
+        break;
+      case 'l_winder_bottom':
+        this._buildLWinderBottomStair3D(group, w, d, h, mat, riserMat, !!stair.mirror);
         break;
       case 'l_shape':
         this._buildLStair3D(group, w, d, h, mat);

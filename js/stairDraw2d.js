@@ -1,6 +1,6 @@
 // stairDraw2d.js — 2D 階段シンボル描画（エディタ・サムネイル共通）
 
-import { getStairType, straightStairStepCount } from './catalog.js';
+import { getStairType, straightStairStepCount, stairCanMirror } from './catalog.js';
 
 function arrowPx(ctx, x1, y1, x2, y2) {
   ctx.strokeStyle = 'rgba(60,40,20,0.85)';
@@ -107,6 +107,44 @@ function stairLWinder(ctx, hw, hd, n) {
   ctx.beginPath();
   ctx.arc(0, hd * 0.9, 2.5, 0, Math.PI * 2);
   ctx.fill();
+}
+
+/**
+ * L字（下で回る）: +X 辺の下端から入り、最下部の正方形（一辺 s = 短辺）を回り段 3 段で曲がって、
+ * 上（−Z）へ直進して上の辺から抜ける。左から入る形（stair.mirror）は呼び出し側で左右反転して描く。
+ */
+function stairLWinderBottom(ctx, hw, hd, n) {
+  const col = 'rgba(100,80,45,0.72)';
+  const s = Math.min(hw * 2, hd * 2);
+  const yW = hd - s; // 直進部と回り段の境
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = col;
+  const k = Math.max(1, Math.round(n * (yW + hd) / (hd * 2)));
+  for (let i = 1; i <= k; i++) {
+    const y = -hd + ((yW + hd) * i) / k;
+    ctx.beginPath();
+    ctx.moveTo(-hw, y);
+    ctx.lineTo(hw, y);
+    ctx.stroke();
+  }
+  // 回り段：内側の角（+X 辺の回り段の上端）から、左辺の中ほどと下辺の中ほどへ
+  ctx.beginPath();
+  ctx.moveTo(-hw, hd - s / 2);
+  ctx.lineTo(hw, yW);
+  ctx.lineTo(0, hd);
+  ctx.stroke();
+  // 上り方向：+X 辺の登り口から入り、中央で曲がって上へ
+  const turnY = hd - s * 0.45;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(60,40,20,0.85)';
+  ctx.beginPath();
+  ctx.moveTo(hw * 0.9, turnY);
+  ctx.lineTo(0, turnY);
+  ctx.stroke();
+  arrowPx(ctx, 0, turnY, 0, -hd);
+  ctx.beginPath();
+  ctx.arc(hw * 0.9, turnY, 2.5, 0, Math.PI * 2);
+  ctx.fill(); // arrowPx が塗りの色を設定済み
 }
 
 function stairUShape(ctx, hw, hd, n) {
@@ -239,11 +277,12 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
 
   if (!isRef) {
     ctx.save();
-    if (stair.type === 'l_winder' && stair.mirror) ctx.scale(-1, 1); // 左に曲がる形
+    if (stairCanMirror(stair.type) && stair.mirror) ctx.scale(-1, 1); // 左に曲がる形
     switch (stair.type) {
       case 'straight': stairStraight(ctx, hw, hd, straightStairStepCount(stair.depthMM)); break;
       case 'l_shape': stairLShape(ctx, hw, hd, n); break;
       case 'l_winder': stairLWinder(ctx, hw, hd, n); break;
+      case 'l_winder_bottom': stairLWinderBottom(ctx, hw, hd, straightStairStepCount(stair.depthMM)); break;
       case 'u_shape': stairUShape(ctx, hw, hd, n); break;
       case 'winding': stairWinding(ctx, hw, hd); break;
       case 'spiral': stairSpiral(ctx, hw, hd); break;
@@ -262,6 +301,11 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
       if (isStraight && !opts.fromLowerFloor) {
         ctx.font = `${Math.max(9, Math.min(16, hw * 0.45))}px system-ui, sans-serif`;
         ctx.fillText('UP', 0, hd - 6); // 登り口の点に重ならないよう少し上
+      } else if (stair.type === 'l_winder_bottom' && !opts.fromLowerFloor) {
+        // 登り口（横の辺の下端）の矢印の上に「UP」
+        const s = Math.min(hw * 2, hd * 2);
+        ctx.font = `${Math.max(9, Math.min(16, hw * 0.4))}px system-ui, sans-serif`;
+        ctx.fillText('UP', (stair.mirror ? -1 : 1) * hw * 0.45, hd - s * 0.45 - 3);
       } else {
         ctx.fillText(prefix + def.name, 0, hd - 2);
       }

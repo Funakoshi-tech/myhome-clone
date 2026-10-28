@@ -7,7 +7,7 @@ import * as SITE from './sitePolygon.js';
 import * as ORI from './siteOrientation.js';
 import { ROOF_TYPES, normalizeRoofSettings, pitchDeg } from './roofSettings.js';
 import { computeRoofRegions } from './roofModel.js';
-import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, flooringForRoom } from './catalog.js';
+import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, flooringForRoom } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { Viewer3D } from './viewer3d.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
@@ -942,7 +942,7 @@ function buildProps() {
     rotWrap.append(rl, rr);
     body.appendChild(field(`向き（${s.rotationDeg || 0}°）`, rotWrap));
 
-    if (s.type === 'l_winder') {
+    if (stairCanMirror(s.type)) {
       const flip = document.createElement('button');
       flip.className = 'btn';
       flip.textContent = '左右反転';
