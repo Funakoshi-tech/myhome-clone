@@ -82,7 +82,7 @@ export function isWallMountedFurniture(item) {
 // defaultW=間口(X mm), defaultD=奥行(Z mm)
 // 直線系: 3P×1P / 折返し系: 2P×2P
 export const STAIR_TYPES = [
-  { id: 'straight', name: '直進階段',   icon: '↑', defaultW: 3 * P_MM, defaultD: 1 * P_MM },
+  { id: 'straight', name: '直進階段',   icon: '↑', defaultW: 1 * P_MM, defaultD: 3 * P_MM },
   { id: 'l_shape',  name: 'L字階段',    icon: '↳', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
   // 直進のあと最上部の回り段（3 段）で 90° 曲がり、横の辺の上端から抜ける。stair.mirror で左に曲がる
   { id: 'l_winder', name: 'L字階段（回り段）', icon: '↱', defaultW: 1 * P_MM, defaultD: 3 * P_MM },
@@ -90,6 +90,11 @@ export const STAIR_TYPES = [
   { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
   { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
 ];
+
+/** 直進階段の段の数（3P = 2730mm で 15 段。2D の記号と 3D で共通） */
+export function straightStairStepCount(depthMM) {
+  return Math.max(3, Math.min(20, Math.round(depthMM / 182)));
+}
 
 export function getStairType(id) {
   return STAIR_TYPES.find((s) => s.id === id) || STAIR_TYPES[0];

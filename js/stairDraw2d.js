@@ -1,6 +1,6 @@
 // stairDraw2d.js — 2D 階段シンボル描画（エディタ・サムネイル共通）
 
-import { getStairType } from './catalog.js';
+import { getStairType, straightStairStepCount } from './catalog.js';
 
 function arrowPx(ctx, x1, y1, x2, y2) {
   ctx.strokeStyle = 'rgba(60,40,20,0.85)';
@@ -20,6 +20,7 @@ function arrowPx(ctx, x1, y1, x2, y2) {
   ctx.fill();
 }
 
+/** 直進: 段（約 182mm ごと）と、登り口の点から上端の矢印まで通した線 */
 function stairStraight(ctx, hw, hd, n) {
   const col = 'rgba(100,80,45,0.72)';
   ctx.lineWidth = 1;
@@ -31,15 +32,11 @@ function stairStraight(ctx, hw, hd, n) {
     ctx.lineTo(hw, y);
     ctx.stroke();
   }
-  const cutY = -hd + hd * 2 * 0.4;
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(100,80,45,0.95)';
-  ctx.beginPath();
-  ctx.moveTo(-hw, cutY - hw * 0.35);
-  ctx.lineTo(hw, cutY + hw * 0.35);
-  ctx.stroke();
   ctx.lineWidth = 1.5;
-  arrowPx(ctx, 0, hd * 0.65, 0, -hd * 0.65);
+  arrowPx(ctx, 0, hd, 0, -hd);
+  ctx.beginPath();
+  ctx.arc(0, hd, 2.5, 0, Math.PI * 2);
+  ctx.fill(); // arrowPx が塗りの色を設定済み
 }
 
 function stairLShape(ctx, hw, hd, n) {
@@ -244,13 +241,13 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
     ctx.save();
     if (stair.type === 'l_winder' && stair.mirror) ctx.scale(-1, 1); // 左に曲がる形
     switch (stair.type) {
-      case 'straight': stairStraight(ctx, hw, hd, n); break;
+      case 'straight': stairStraight(ctx, hw, hd, straightStairStepCount(stair.depthMM)); break;
       case 'l_shape': stairLShape(ctx, hw, hd, n); break;
       case 'l_winder': stairLWinder(ctx, hw, hd, n); break;
       case 'u_shape': stairUShape(ctx, hw, hd, n); break;
       case 'winding': stairWinding(ctx, hw, hd); break;
       case 'spiral': stairSpiral(ctx, hw, hd); break;
-      default: stairStraight(ctx, hw, hd, n); break;
+      default: stairStraight(ctx, hw, hd, straightStairStepCount(stair.depthMM)); break;
     }
     ctx.restore();
     if (opts.showLabel !== false && scale * stair.widthMM > 50) {
@@ -260,7 +257,14 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       const prefix = opts.fromLowerFloor ? `${opts.fromLowerFloor}↑ ` : '';
-      ctx.fillText(prefix + def.name, 0, hd - 2);
+      // 直進階段は登り口に「UP」（上の階に出す参考表示は、どの階からの階段か分かるよう名前のまま）
+      const isStraight = (stair.type || 'straight') === 'straight';
+      if (isStraight && !opts.fromLowerFloor) {
+        ctx.font = `${Math.max(9, Math.min(16, hw * 0.45))}px system-ui, sans-serif`;
+        ctx.fillText('UP', 0, hd - 6); // 登り口の点に重ならないよう少し上
+      } else {
+        ctx.fillText(prefix + def.name, 0, hd - 2);
+      }
     }
   }
 

@@ -11,7 +11,7 @@ import * as M from './model.js';
 import * as SITE from './sitePolygon.js';
 import { computeHipRoof, faceVertices3D } from './roofModel.js';
 import { normalizeRoofSettings } from './roofSettings.js';
-import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, flooringForRoom } from './catalog.js';
+import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, flooringForRoom, straightStairStepCount } from './catalog.js';
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
@@ -1476,7 +1476,7 @@ export class Viewer3D {
   }
 
   _buildStraightStair3D(group, w, d, h, mat, riserMat) {
-    const nSteps = Math.max(4, Math.min(16, Math.round(d / 0.23)));
+    const nSteps = straightStairStepCount(d / MM); // 2D の記号と同じ段の数
     const stepH = h / nSteps;
     const stepD = d / nSteps;
     const treadThick = 0.04;
