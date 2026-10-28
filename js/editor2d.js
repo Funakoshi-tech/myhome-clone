@@ -239,6 +239,10 @@ export class Editor2D {
       items.push({ label: '左右反転', action: () => this.flipSelectedFurniture('flipLR') });
       items.push({ label: '上下反転', action: () => this.flipSelectedFurniture('flipUD') });
     }
+    if (sel.kind === 'stair') {
+      const s = (this._floor().stairs || []).find((x) => x.id === sel.id);
+      if (s?.type === 'l_winder') items.push({ label: '左右反転', action: () => this.flipSelectedStair() });
+    }
     items.push({ label: '削除', action: () => this._deleteSelection(), danger: true });
     return items;
   }
@@ -2155,6 +2159,19 @@ export class Editor2D {
       const floor = M.getFloor(plan, this.ui.floorId);
       const s = (floor.stairs || []).find((x) => x.id === sel.id);
       if (s) s.rotationDeg = (((s.rotationDeg || 0) + deg) % 360 + 360) % 360;
+      M.syncStairWallOpenings(floor, this._plan());
+    });
+    this.onUI();
+  }
+
+  /** L字（回り段）の曲がる向き（右 ⇔ 左）を切り替える */
+  flipSelectedStair() {
+    const sel = this.ui.selection;
+    if (!sel || sel.kind !== 'stair') return;
+    this.store.update((plan) => {
+      const floor = M.getFloor(plan, this.ui.floorId);
+      const s = (floor.stairs || []).find((x) => x.id === sel.id);
+      if (s) s.mirror = !s.mirror;
       M.syncStairWallOpenings(floor, this._plan());
     });
     this.onUI();

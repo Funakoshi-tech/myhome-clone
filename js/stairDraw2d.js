@@ -73,6 +73,45 @@ function stairLShape(ctx, hw, hd, n) {
   arrowPx(ctx, -hw * 0.5, hd * 0.65, -hw * 0.5, -hd * 0.5);
 }
 
+/**
+ * L字（回り段）: +Z（下）から直進し、最上部の正方形（一辺 s = 短辺）を回り段 3 段で右へ曲がって +X 辺の上端から抜ける。
+ * 左に曲がる形（stair.mirror）は呼び出し側で左右反転して描く。
+ */
+function stairLWinder(ctx, hw, hd, n) {
+  const col = 'rgba(100,80,45,0.72)';
+  const s = Math.min(hw * 2, hd * 2);
+  const yW = -hd + s; // 直進部と回り段の境
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = col;
+  const k = Math.max(1, Math.round(n * (hd - yW) / (hd * 2)));
+  for (let i = 0; i < k; i++) {
+    const y = yW + ((hd - yW) * i) / k;
+    ctx.beginPath();
+    ctx.moveTo(-hw, y);
+    ctx.lineTo(hw, y);
+    ctx.stroke();
+  }
+  // 回り段：内側の角（+X 辺の回り段の下端）から、左辺の中ほどと上辺の中ほどへ
+  ctx.beginPath();
+  ctx.moveTo(-hw, -hd + s / 2);
+  ctx.lineTo(hw, yW);
+  ctx.lineTo(0, -hd);
+  ctx.stroke();
+  // 上り方向：中央を上がり、回り段で右へ
+  const turnY = -hd + s * 0.45;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(60,40,20,0.85)';
+  ctx.beginPath();
+  ctx.moveTo(0, hd * 0.9);
+  ctx.lineTo(0, turnY);
+  ctx.stroke();
+  arrowPx(ctx, 0, turnY, hw * 0.9, turnY);
+  ctx.fillStyle = 'rgba(60,40,20,0.85)';
+  ctx.beginPath();
+  ctx.arc(0, hd * 0.9, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function stairUShape(ctx, hw, hd, n) {
   const col = 'rgba(100,80,45,0.72)';
   ctx.lineWidth = 1.5;
@@ -202,14 +241,18 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
   ctx.stroke();
 
   if (!isRef) {
+    ctx.save();
+    if (stair.type === 'l_winder' && stair.mirror) ctx.scale(-1, 1); // 左に曲がる形
     switch (stair.type) {
       case 'straight': stairStraight(ctx, hw, hd, n); break;
       case 'l_shape': stairLShape(ctx, hw, hd, n); break;
+      case 'l_winder': stairLWinder(ctx, hw, hd, n); break;
       case 'u_shape': stairUShape(ctx, hw, hd, n); break;
       case 'winding': stairWinding(ctx, hw, hd); break;
       case 'spiral': stairSpiral(ctx, hw, hd); break;
       default: stairStraight(ctx, hw, hd, n); break;
     }
+    ctx.restore();
     if (opts.showLabel !== false && scale * stair.widthMM > 50) {
       const def = getStairType(stair.type);
       ctx.fillStyle = 'rgba(70,50,25,0.85)';

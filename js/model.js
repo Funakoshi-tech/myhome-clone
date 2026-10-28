@@ -932,18 +932,41 @@ export function stairOpenEdgeIndices(stair) {
     case 'u_shape': return [0, 2];       // 出口 −Z / 登り口 +Z
     case 'winding': return [0, 2];
     case 'spiral': return [2];           // 登り口 +Z のみ（上階へ抜ける）
+    case 'l_winder': return [2, stair.mirror ? 3 : 1]; // 登り口 +Z / 出口は横の辺の上端（stairOpenEdgeSpans）
     case 'straight':
     default: return [0, 2];
   }
 }
 
+/** L字（回り段）の回り段の正方形の一辺（mm）。幅と奥行の短いほう */
+export function stairWinderSizeMM(stair) {
+  return Math.min(stair.widthMM || 0, stair.depthMM || 0);
+}
+
+/**
+ * 階段の出入り口になる辺の区間。t0 / t1 は辺の始点（stairFootprintCorners[edge]）からの割合（0〜1）。
+ * ほとんどの種類は辺の全長。L字（回り段）の出口は、横の辺のうち回り段の正方形に面する上端だけ。
+ * @returns {{ edge: number, t0: number, t1: number }[]}
+ */
+export function stairOpenEdgeSpans(stair) {
+  if ((stair.type || 'straight') === 'l_winder') {
+    const frac = Math.min(1, stairWinderSizeMM(stair) / (stair.depthMM || 1));
+    // +X 辺は −Z（上端）→ +Z、−X 辺は +Z → −Z（上端）の向き
+    const exit = stair.mirror ? { edge: 3, t0: 1 - frac, t1: 1 } : { edge: 1, t0: 0, t1: frac };
+    return [{ edge: 2, t0: 0, t1: 1 }, exit];
+  }
+  return stairOpenEdgeIndices(stair).map((edge) => ({ edge, t0: 0, t1: 1 }));
+}
+
 /** 階段の出入り口辺を世界座標の線分で返す */
 export function stairOpenEdgeSegments(stair) {
   const corners = stairFootprintCorners(stair);
-  return stairOpenEdgeIndices(stair).map((i) => ({
-    start: corners[i],
-    end: corners[(i + 1) % 4],
-  }));
+  const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
+  return stairOpenEdgeSpans(stair).map(({ edge, t0, t1 }) => {
+    const a = corners[edge];
+    const b = corners[(edge + 1) % 4];
+    return { start: lerp(a, b, t0), end: lerp(a, b, t1) };
+  });
 }
 
 const STAIR_EXT_SAMPLE_MM = 50;     // 辺を調べる刻み

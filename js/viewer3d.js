@@ -1427,6 +1427,54 @@ export class Viewer3D {
     group.add(mesh);
   }
 
+  /** 多角形の段（回り段用）。pts は階段ローカルの {x, z}、topY は段の上面の高さ */
+  _addStairPolyTread(group, pts, topY, mat, treadThick = 0.04) {
+    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    const cz = pts.reduce((a, p) => a + p.z, 0) / pts.length;
+    const k = 0.96; // 隣の段とのすき間
+    const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(cx + (p.x - cx) * k, cz + (p.z - cz) * k)));
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: treadThick, bevelEnabled: false });
+    geo.rotateX(Math.PI / 2); // 形の (x, y) → (x, z)、厚みは下向き
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = topY;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+
+  /**
+   * L字（回り段）: +Z から直進し、最上部の正方形（一辺 = 短辺）を回り段 3 段で +X へ曲がる。
+   * 最後の回り段が上階の床と同じ高さ。mirror なら −X へ曲がる（左右反転）。
+   */
+  _buildLWinderStair3D(group, w, d, h, mat, riserMat, mirror) {
+    const s = Math.min(w, d);
+    const straightLen = d - s;
+    const nStraight = straightLen > 0.05 ? Math.max(1, Math.round(straightLen / 0.23)) : 0;
+    const nSteps = nStraight + 3;
+    const stepH = h / nSteps;
+    const stepD = nStraight ? straightLen / nStraight : 0;
+    const treadThick = 0.04;
+    const treadW = w * 0.96;
+
+    for (let i = 0; i < nStraight; i++) {
+      const y = stepH * (i + 1) - treadThick / 2;
+      const z = d / 2 - stepD * (i + 0.5);
+      this._addStairTread(group, 0, y, z, treadW, stepD * 0.92, mat, treadThick);
+      if (i > 0) this._addStairRiser(group, 0, stepH * i + stepH / 2, d / 2 - stepD * i, treadW, stepH, 0.012, riserMat);
+    }
+
+    const sx = mirror ? -1 : 1;
+    const p = (x, z) => ({ x: x * sx, z });
+    const yW = -d / 2 + s; // 直進部と回り段の境
+    const pivot = p(w / 2, yW); // 内側の角（出口側の辺の、回り段の下端）
+    const winders = [
+      [pivot, p(-w / 2, yW), p(-w / 2, -d / 2 + s / 2)],
+      [pivot, p(-w / 2, -d / 2 + s / 2), p(-w / 2, -d / 2), p(0, -d / 2)],
+      [pivot, p(0, -d / 2), p(w / 2, -d / 2)],
+    ];
+    winders.forEach((pts, j) => this._addStairPolyTread(group, pts, stepH * (nStraight + 1 + j), mat, treadThick));
+  }
+
   _buildStraightStair3D(group, w, d, h, mat, riserMat) {
     const nSteps = Math.max(4, Math.min(16, Math.round(d / 0.23)));
     const stepH = h / nSteps;
@@ -1606,8 +1654,9 @@ export class Viewer3D {
   /**
    * 登り口・降り口以外を壁で囲む。
    * @param {Set<number>} [skipEdges] 外壁を立てた辺（内側の囲い壁は省く）
+   * @param {boolean} [mirror] L字（回り段）を左右反転しているか
    */
-  _addStairEnclosureWalls(group, w, d, h, stairType, wallMat, skipEdges = new Set()) {
+  _addStairEnclosureWalls(group, w, d, h, stairType, wallMat, skipEdges = new Set(), mirror = false) {
     const t = 0.12;
     const wh = h;
     // edge: この囲い壁が沿う階段の辺（0 = −Z, 1 = +X, 2 = +Z, 3 = −X）
@@ -1619,6 +1668,17 @@ export class Viewer3D {
     if (stairType === 'straight') {
       panel(3, -w / 2 - t / 2, 0, t, d);
       panel(1, w / 2 + t / 2, 0, t, d);
+      return;
+    }
+
+    if (stairType === 'l_winder') {
+      // 登り口 +Z と、出口側の辺の上端（回り段の正方形）は開口。反対側の辺・上の辺・出口側の辺の下側を囲う
+      const s = Math.min(w, d);
+      const sx = mirror ? -1 : 1;
+      const [outerEdge, exitEdge] = mirror ? [1, 3] : [3, 1];
+      panel(outerEdge, -sx * (w / 2 + t / 2), 0, t, d);
+      panel(0, 0, -d / 2 - t / 2, w, t);
+      if (d - s > 0.01) panel(exitEdge, sx * (w / 2 + t / 2), s / 2, t, d - s);
       return;
     }
 
@@ -1674,6 +1734,9 @@ export class Viewer3D {
     });
 
     switch (stairType) {
+      case 'l_winder':
+        this._buildLWinderStair3D(group, w, d, h, mat, riserMat, !!stair.mirror);
+        break;
       case 'l_shape':
         this._buildLStair3D(group, w, d, h, mat);
         break;
@@ -1692,7 +1755,7 @@ export class Viewer3D {
     }
 
     const exteriorEdges = this._addStairExteriorWalls(group, stair, h, sourceFloor, this._materials.wall);
-    this._addStairEnclosureWalls(group, w, d, h, stairType, wallMat, exteriorEdges);
+    this._addStairEnclosureWalls(group, w, d, h, stairType, wallMat, exteriorEdges, !!stair.mirror);
     return group;
   }
 

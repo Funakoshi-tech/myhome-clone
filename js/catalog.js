@@ -84,6 +84,8 @@ export function isWallMountedFurniture(item) {
 export const STAIR_TYPES = [
   { id: 'straight', name: '直進階段',   icon: '↑', defaultW: 3 * P_MM, defaultD: 1 * P_MM },
   { id: 'l_shape',  name: 'L字階段',    icon: '↳', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
+  // 直進のあと最上部の回り段（3 段）で 90° 曲がり、横の辺の上端から抜ける。stair.mirror で左に曲がる
+  { id: 'l_winder', name: 'L字階段（回り段）', icon: '↱', defaultW: 1 * P_MM, defaultD: 3 * P_MM },
   { id: 'u_shape',  name: 'U字折返し',  icon: '⇅', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
   { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
   { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 2 * P_MM, defaultD: 2 * P_MM },

@@ -942,6 +942,14 @@ function buildProps() {
     rotWrap.append(rl, rr);
     body.appendChild(field(`向き（${s.rotationDeg || 0}°）`, rotWrap));
 
+    if (s.type === 'l_winder') {
+      const flip = document.createElement('button');
+      flip.className = 'btn';
+      flip.textContent = '左右反転';
+      flip.addEventListener('click', () => editor.flipSelectedStair());
+      body.appendChild(field(`曲がる向き（${s.mirror ? '左' : '右'}）`, flip));
+    }
+
     body.appendChild(deleteButton('この階段を削除'));
 
   } else if (sel.kind === 'opening') {
