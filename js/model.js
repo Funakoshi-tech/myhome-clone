@@ -1075,6 +1075,23 @@ export function stairsEndingOnFloor(plan, floor) {
   });
 }
 
+/**
+ * 上がってきた階段の上（stairsEndingOnFloor のうち、この階の部屋が覆っていない所）に、
+ * 天井と屋根を付けるための仮の部屋。床・壁・面積の計算には使わず、天井と屋根だけに使う（stairCap: true）。
+ */
+export function stairTopCapRooms(plan, floor) {
+  const rooms = (floor?.rooms || []).filter((r) => r.polygon?.length >= 3);
+  return stairsEndingOnFloor(plan, floor)
+    .filter((s) => !rooms.some((r) => pointInPolygon({ x: s.x, z: s.z }, r.polygon)))
+    .map((s) => ({ id: `stair-top-${s.id}`, type: 'rouka', name: '', polygon: stairFootprintCorners(s), stairCap: true }));
+}
+
+/** 屋根の計算用に、階段の上の仮の部屋（stairTopCapRooms）を加えた階 */
+export function floorWithStairCaps(plan, floor) {
+  const caps = stairTopCapRooms(plan, floor);
+  return caps.length ? { ...floor, rooms: [...(floor.rooms || []), ...caps] } : floor;
+}
+
 /** 壁と階段出入り口辺の重なり（あれば offsetMM / widthMM） */
 function _wallOpeningOverlapForSegment(wall, seg, tolMM = 180) {
   const wdx = wall.end.x - wall.start.x;

@@ -442,7 +442,7 @@ function buildRoofTypeOptions() {
 /** 1 つの階の屋根の状況（寄棟にならない事情も含む）を短い文にする */
 function floorRoofStatus(floor, plan, settings) {
   if (settings.type !== 'hip') return '陸屋根';
-  const res = computeRoofRegions(floor, M.getUpperFloor(plan, floor.id));
+  const res = computeRoofRegions(M.floorWithStairCaps(plan, floor), M.getUpperFloor(plan, floor.id));
   const excluded = res.excludedCount ? `（斜めの壁の部屋 ${res.excludedCount} 件は平ら）` : '';
   if (!res.supported) {
     return res.reason === 'non-rectilinear-upper'

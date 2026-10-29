@@ -246,6 +246,8 @@ export function computeRoofRegions(floor, upperFloor) {
       if (!M.UPPER_OPEN_ROOF_TYPES.has(ur.type) && ur.polygon?.length >= 3) upperPolys.push(ur.polygon);
     }
     for (const s of upperFloor.stairs || []) upperPolys.push(M.stairFootprintCorners(s));
+    // この階の階段は上の階へ抜けるので、その上には屋根を掛けない（上がった先は上の階の部屋か、階段の上の天井・屋根が覆う）
+    for (const s of floor.stairs || []) upperPolys.push(M.stairFootprintCorners(s));
   }
   // 上階の構造が斜めだと、そこを避けて屋根をくり抜く計算ができない。この階は諦めて平らな屋根にする
   if (!upperPolys.every((p) => isAxisAligned(p))) {
@@ -354,6 +356,7 @@ const hipRoofCache = new Map();
 export function computeHipRoof(floor, upperFloor, settings) {
   const key = JSON.stringify([
     (floor?.rooms || []).map((r) => [r.id, r.type, r.polygon]),
+    (floor?.stairs || []).map((s) => M.stairFootprintCorners(s)),
     upperFloor
       ? [(upperFloor.rooms || []).map((r) => [r.type, r.polygon]), (upperFloor.stairs || []).map((s) => M.stairFootprintCorners(s))]
       : null,

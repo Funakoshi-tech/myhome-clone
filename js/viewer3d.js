@@ -640,7 +640,10 @@ export class Viewer3D {
     const isGroundFloor = planData ? !M.getLowerFloor(planData, floor.id) : (floor.level || 0) === 0;
     // 寄棟を選んだ階: 上に何もない領域だけ寄棟にし、寄棟で覆える部屋は平らな屋根板を作らない
     const roofSettings = normalizeRoofSettings(planData?.roofSettings);
-    const roofPlan = roofSettings.type === 'hip' && planData ? computeHipRoof(floor, upper, roofSettings) : null;
+    // 上がってきた階段の上（この階の部屋が覆っていない所）にも天井と屋根を付ける（床は作らない）
+    const stairCaps = M.stairTopCapRooms(planData, floor);
+    const roofFloor = stairCaps.length ? { ...floor, rooms: [...floor.rooms, ...stairCaps] } : floor;
+    const roofPlan = roofSettings.type === 'hip' && planData ? computeHipRoof(roofFloor, upper, roofSettings) : null;
 
     // 最下階（1F）の階段下に床板
     if (isGroundFloor) {
@@ -657,8 +660,8 @@ export class Viewer3D {
       }
     }
 
-    for (const room of floor.rooms) {
-      const floorMesh = this._buildRoomFloor(
+    for (const room of [...floor.rooms, ...stairCaps]) {
+      const floorMesh = room.stairCap ? null : this._buildRoomFloor(
         room,
         isOcc ? 0 : 0.005,
         isOcc ? OCCLUDER_MAT : null,
@@ -674,7 +677,7 @@ export class Viewer3D {
       }
 
       // 2 階以上の床は下の階（バルコニー等）に影を落とす。床面は影を受けるだけなので、影用の板を別に置く
-      if (!isOcc && !isGroundFloor && this._roomHasFloor(room)) {
+      if (!isOcc && !isGroundFloor && !room.stairCap && this._roomHasFloor(room)) {
         const slab = this._buildRoomFloorSlab(room, floor, planData);
         if (slab) {
           slab.userData = { roomId: room.id, kind: 'floor-shadow' };
