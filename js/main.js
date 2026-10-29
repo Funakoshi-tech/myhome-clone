@@ -786,7 +786,30 @@ function updateFurnitureMountY(value) {
   if (ui.view === '3d') viewer.rebuild();
 }
 
+/**
+ * プロパティ欄を作り直す。入力欄に打ち込み中なら、作り直した後も同じ欄にフォーカスと打ち込み途中の文字を戻す
+ * （数値の即時反映で欄が作り直されても、続けて入力できるように）
+ */
 function buildProps() {
+  const body = $('#props-body');
+  const active = document.activeElement;
+  let restore = null;
+  if (active?.tagName === 'INPUT' && body.contains(active)) {
+    const row = active.closest('.prop-row');
+    const label = row?.querySelector('label')?.textContent;
+    if (label != null) restore = { label, value: active.value };
+  }
+  buildPropsContent();
+  if (!restore) return;
+  for (const row of body.querySelectorAll('.prop-row')) {
+    if (row.querySelector('label')?.textContent !== restore.label) continue;
+    const input = row.querySelector('input');
+    if (input) { input.value = restore.value; input.focus(); }
+    break;
+  }
+}
+
+function buildPropsContent() {
   const body = $('#props-body');
   const sel = ui.selection;
   const floor = M.getFloor(store.current(), ui.floorId);
@@ -872,7 +895,7 @@ function buildProps() {
     })));
     body.appendChild(field('奥行 (mm)', inputNumberLive(f.dMM, (v) => {
       updateFurnitureDimension('dMM', v);
-    })));
+    }, { min: 200 })));
     body.appendChild(field('高さ (mm)', inputNumberLive(f.hMM, (v) => {
       updateFurnitureDimension('hMM', v);
     })));
@@ -1161,12 +1184,19 @@ function inputNumberLive(value, onChange, { min = 100, max = null } = {}) {
   const i = document.createElement('input');
   i.type = 'number'; i.value = value; i.step = '10'; i.min = String(min);
   if (max != null) i.max = String(max);
-  const fire = () => {
+  const inRange = (v) => v >= min && (max == null || v <= max);
+  // 打ち込み途中（空欄や「7」「75」など最小値未満）は反映せず、範囲内になった時だけ即時反映する
+  i.addEventListener('input', () => {
+    if (i.value === '') return;
     const v = Number(i.value);
-    if (!Number.isNaN(v)) onChange(v);
-  };
-  i.addEventListener('change', fire);
-  i.addEventListener('input', fire);
+    if (!Number.isNaN(v) && inRange(v)) onChange(v);
+  });
+  // 確定時（Enter・フォーカスを外した時）は範囲に収めて反映。空欄なら元の値に戻す
+  i.addEventListener('change', () => {
+    const v = Number(i.value);
+    if (i.value === '' || Number.isNaN(v)) { i.value = value; return; }
+    onChange(Math.min(max ?? Infinity, Math.max(min, v)));
+  });
   return i;
 }
 function inputColor(value, onChange) {
