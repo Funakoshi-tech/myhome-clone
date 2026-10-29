@@ -1029,6 +1029,13 @@ function buildProps() {
       body.appendChild(field('開口高 (mm)', inputNumber(op.heightMM, (v) => {
         editor.applyToSelection((o) => { o.heightMM = Math.max(100, v); });
       })));
+      if (op.type === 'hikite') {
+        const flip = document.createElement('button');
+        flip.className = 'btn';
+        flip.textContent = '左右反転';
+        flip.addEventListener('click', () => editor.flipSelectedHikite());
+        body.appendChild(field(`戸の位置（${op.mirror ? '右' : '左'}）`, flip));
+      }
     }
     body.appendChild(readonlyRow('壁中心からの距離', `${Math.round(op.offsetMM)}mm`));
 

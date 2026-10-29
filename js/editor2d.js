@@ -234,6 +234,9 @@ export class Editor2D {
         items.push({ label: '左右反転', action: () => this._toggleDoorFlip('flipLR') });
         items.push({ label: '上下反転', action: () => this._toggleDoorFlip('flipUD') });
       }
+      if (op?.type === 'hikite') {
+        items.push({ label: '左右反転', action: () => this.flipSelectedHikite() });
+      }
     }
     if (sel.kind === 'furniture') {
       items.push({ label: '左右反転', action: () => this.flipSelectedFurniture('flipLR') });
@@ -2155,6 +2158,14 @@ export class Editor2D {
     this.applyToSelection((f) => { f[field] = !f[field]; });
   }
 
+  /** 片引きの戸と引き込み側（左 ⇔ 右）を切り替える */
+  flipSelectedHikite() {
+    const sel = this.ui.selection;
+    if (!sel || sel.kind !== 'opening') return;
+    this.applyToSelection((o) => { if (o.type === 'hikite') o.mirror = !o.mirror; });
+    this.onUI();
+  }
+
   rotateSelectedStair(deg) {
     const sel = this.ui.selection;
     if (!sel || sel.kind !== 'stair') return;
@@ -3744,20 +3755,27 @@ export class Editor2D {
     const { ax, az, ux, uz, nx, nz, halfT, oStart, oEnd } = g;
     const style = this._openingPanelStyle(opening, opts);
     const w = oEnd - oStart;
-    const slideEnd = oStart + w * (M.P_MM / (M.P_MM * 1.5));
+    // mirror なら戸と引き込み側を壁方向に入れ替える（左右反転）
+    const doorW = w * (M.P_MM / (M.P_MM * 1.5));
+    const doorS = opening.mirror ? oEnd - doorW : oStart;
+    const doorE = doorS + doorW;
+    const slideEnd = opening.mirror ? doorS : doorE;
+    const pocketS = opening.mirror ? oStart : doorE;
+    const pocketE = opening.mirror ? doorS : oEnd;
+    const pocketFar = opening.mirror ? oStart : oEnd;
     const nOut = halfT * 0.94;
     const nIn = halfT * 0.06;
 
-    this._drawWallLocalRect(ctx, ax, az, ux, uz, nx, nz, oStart, slideEnd, -nOut, nOut, {
+    this._drawWallLocalRect(ctx, ax, az, ux, uz, nx, nz, doorS, doorE, -nOut, nOut, {
       fill: style.fill, stroke: style.stroke, lineWidth: style.lineWidth,
     });
-    this._drawWallLocalRect(ctx, ax, az, ux, uz, nx, nz, slideEnd, oEnd, nIn, nOut * 0.55, {
+    this._drawWallLocalRect(ctx, ax, az, ux, uz, nx, nz, pocketS, pocketE, nIn, nOut * 0.55, {
       fill: 'rgba(255,255,255,0.55)', stroke: style.stroke, lineWidth: 1,
     });
     ctx.strokeStyle = style.glassStroke || style.stroke;
     ctx.lineWidth = 1;
     this._drawWallLocalSeg(ctx, ax, az, ux, uz, nx, nz, slideEnd, nIn, slideEnd, nOut * 0.55, { stroke: style.stroke });
-    this._drawWallLocalSeg(ctx, ax, az, ux, uz, nx, nz, slideEnd, (nIn + nOut * 0.55) / 2, oEnd, (nIn + nOut * 0.55) / 2, {
+    this._drawWallLocalSeg(ctx, ax, az, ux, uz, nx, nz, slideEnd, (nIn + nOut * 0.55) / 2, pocketFar, (nIn + nOut * 0.55) / 2, {
       stroke: style.glassStroke || style.stroke, dash: [4, 3],
     });
   }

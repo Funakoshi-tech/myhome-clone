@@ -1227,7 +1227,7 @@ export class Viewer3D {
             const mullionH = oHgtMM * MM - FW * 2;
             if (mullions === 1) {
               let mx = cx;
-              if (op.type === 'hikite') mx = cx - oW / 6;
+              if (op.type === 'hikite') mx = op.mirror ? cx + oW / 6 : cx - oW / 6;
               addSeg(mullionW, mullionH, FT * 0.95, frameMat, mx, midY, 0, 2);
             } else if (mullions === 2) {
               addSeg(mullionW, mullionH, FT * 0.95, frameMat, cx - oW / 3, midY, 0, 2);
