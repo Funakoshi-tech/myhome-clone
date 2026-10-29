@@ -331,6 +331,10 @@ body.plan-list-mode { overflow: auto; }
   flex-direction: column;
   height: 100%;
 }
+/* ボタンを素早く続けてクリックした時などに文字選択が画面全体へ広がり、キャンバスが青く塗られたように見えるのを防ぐ。
+   入力欄だけは文字を選択・編集できるようにしておく */
+#editor-screen { -webkit-user-select: none; user-select: none; }
+#editor-screen input, #editor-screen textarea, #editor-screen [contenteditable] { -webkit-user-select: text; user-select: text; }
 .editor-plan-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #back-to-list { font-weight: 600; }
 
