@@ -979,7 +979,16 @@ function buildProps() {
     }
 
     if (op.type === 'door') {
-      // ドア：開き方反転のみ（サイズ変更なし）
+      // ドア：幅と開き方反転
+      body.appendChild(field('幅 (mm)', inputNumber(op.widthMM, (v) => {
+        editor.applyToSelection((o) => {
+          o.widthMM = Math.max(100, v);
+          if (wall) {
+            const halfW = o.widthMM / 2;
+            o.offsetMM = Math.max(halfW, Math.min(wallLen - halfW, o.offsetMM));
+          }
+        });
+      })));
       const flipWrap = document.createElement('div');
       flipWrap.className = 'btn-row';
       const lr = document.createElement('button');

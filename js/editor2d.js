@@ -868,18 +868,19 @@ export class Editor2D {
             return;
           }
         }
-        if (wall && op.type !== 'door' && op.type !== 'maguchi') {
-          if (this._openingRotateHandleHit(op, wall, sx, sy)) {
-            const g = this._openingRotateLayout(wall, op);
-            this.drag = {
-              kind: 'rotate-opening',
-              id: op.id,
-              wallId: wall.id,
-              centerW: g ? { ...g.centerW } : null,
-              origWallFaceSign: op.wallFaceSign ?? 1,
-            };
-            return;
-          }
+        if (wall && op.type !== 'door' && op.type !== 'maguchi'
+          && this._openingRotateHandleHit(op, wall, sx, sy)) {
+          const g = this._openingRotateLayout(wall, op);
+          this.drag = {
+            kind: 'rotate-opening',
+            id: op.id,
+            wallId: wall.id,
+            centerW: g ? { ...g.centerW } : null,
+            origWallFaceSign: op.wallFaceSign ?? 1,
+          };
+          return;
+        }
+        if (wall) {
           const handle = this._openingHandleAt(op, wall, sx, sy);
           if (handle) {
             const lenMM = Math.hypot(wall.end.x - wall.start.x, wall.end.z - wall.start.z);
@@ -1776,6 +1777,8 @@ export class Editor2D {
         this.canvas.style.cursor = 'grab';
       } else if (op && op.type !== 'door' && op.type !== 'maguchi' && wall && this._openingRotateHandleHit(op, wall, sx, sy)) {
         this.canvas.style.cursor = 'grab';
+      } else if (op && wall && this._openingHandleAt(op, wall, sx, sy)) {
+        this.canvas.style.cursor = 'ew-resize';
       } else {
         this.canvas.style.cursor = '';
       }
@@ -3611,6 +3614,19 @@ export class Editor2D {
 
       // 回転ハンドル（開口中心から垂直な青線＋緑丸）
       this._drawGreenRotateHandle(ctx, g.centerW, g.handleW);
+
+      // 端点ハンドル（幅調整）
+      const pts = this._openingWorldPoints(wall, opening);
+      if (pts) {
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#2c7be5';
+        ctx.lineWidth = 2;
+        for (const pw of [pts.start, pts.end]) {
+          const pt = this.worldToScreen(pw.x, pw.z);
+          ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+        }
+      }
     }
   }
 
