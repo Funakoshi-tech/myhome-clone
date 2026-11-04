@@ -307,6 +307,8 @@ export class PlanList {
     wrap.className = 'plan-card-notes';
 
     const ratios = M.planRatioStats(plan);
+    wrap.appendChild(this._siteAreaField(id, plan, ratios));
+
     const ratioRow = document.createElement('div');
     ratioRow.className = 'plan-card-ratios';
     ratioRow.append(
@@ -317,7 +319,7 @@ export class PlanList {
     if (ratios.siteM2 <= 0) {
       const hint = document.createElement('div');
       hint.className = 'plan-card-ratio-hint';
-      hint.textContent = '敷地を描くと現在の建蔽率・容積率を計算します';
+      hint.textContent = '敷地面積を入れるか敷地を描くと、現在の建蔽率・容積率を計算します';
       wrap.appendChild(hint);
     }
 
@@ -381,6 +383,41 @@ export class PlanList {
       if (e.key === 'Enter') { e.preventDefault(); startEdit(); }
     });
     return wrap;
+  }
+
+  /**
+   * 「敷地面積 [120] ㎡（36.30坪・74.1畳）」。空欄で敷地を描いてあれば、描いた面積を薄く出してそれで換算する
+   */
+  _siteAreaField(id, plan, ratios) {
+    const el = document.createElement('label');
+    el.className = 'plan-card-site-area';
+    const name = document.createElement('span');
+    name.textContent = '敷地面積';
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = '0.01';
+    const entered = plan.meta.siteAreaM2;
+    input.value = entered ?? '';
+    input.placeholder = ratios.drawnSiteM2 > 0 ? ratios.drawnSiteM2.toFixed(2) : '—';
+    if (ratios.drawnSiteM2 > 0) input.title = '空欄のときは描いた敷地の面積を使います';
+    input.addEventListener('change', () => {
+      const v = input.value === '' ? null : Number(input.value);
+      if (v !== null && (Number.isNaN(v) || v < 0)) { input.value = entered ?? ''; return; }
+      this.store.updatePlanMeta({ siteAreaM2: v || null }, id);
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+    const unit = document.createElement('span');
+    unit.textContent = '㎡';
+    el.append(name, input, unit);
+    if (ratios.siteM2 > 0) {
+      const conv = document.createElement('span');
+      conv.className = 'plan-card-site-area-conv';
+      const tatami = plan.meta.tatamiM2 || 1.62;
+      conv.textContent = `（${M.tsuboCount(ratios.siteM2).toFixed(2)}坪・${M.tatamiCount(ratios.siteM2, tatami).toFixed(1)}畳）`;
+      el.appendChild(conv);
+    }
+    return el;
   }
 
   /** 「建蔽率 [60]% 現在 48.0%」の1項目。上限を超えていたら赤字 */

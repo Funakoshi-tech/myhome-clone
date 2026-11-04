@@ -313,11 +313,13 @@ const RATIO_EXCLUDED_ROOM_TYPES = new Set(['porch', 'balcony', 'fukinuke']);
 /**
  * 建蔽率・容積率の概算（プラン一覧用）。
  * 建築面積 ≒ 床面積が最も大きい階の面積、延床面積 = 全階の合計（ポーチ・バルコニー・吹抜けは除く、ガレージは含む）。
- * 敷地が未設定なら siteM2 = 0 で、率は null。
+ * 敷地面積は手入力（meta.siteAreaM2）を優先し、無ければ描いた敷地の面積。どちらも無ければ siteM2 = 0 で、率は null。
  */
 export function planRatioStats(plan) {
   const boundary = plan.site?.boundary || [];
-  const siteM2 = boundary.length >= 3 ? polygonAreaM2(boundary) : 0;
+  const drawnSiteM2 = boundary.length >= 3 ? polygonAreaM2(boundary) : 0;
+  const enteredSiteM2 = Number(plan.meta?.siteAreaM2) > 0 ? Number(plan.meta.siteAreaM2) : 0;
+  const siteM2 = enteredSiteM2 || drawnSiteM2;
   let buildingM2 = 0;
   let floorM2 = 0;
   for (const floor of plan.floors) {
@@ -334,6 +336,7 @@ export function planRatioStats(plan) {
   const ok = siteM2 > 0;
   return {
     siteM2,
+    drawnSiteM2,
     buildingM2,
     floorM2,
     coveragePct: ok ? (buildingM2 / siteM2) * 100 : null,
@@ -913,6 +916,8 @@ export function createEmptyPlan(name = '新しいプラン') {
       constructionMethod: 'two_by_six',
       // プラン一覧のメモ（周辺環境・土地の感想など自由記述）
       memo: '',
+      // 敷地面積（㎡）の手入力。未入力は null（敷地を描いていればその面積を使う）
+      siteAreaM2: null,
       // 建蔽率・容積率の上限（%）。未入力は null
       coverageLimitPct: null,
       farLimitPct: null,
