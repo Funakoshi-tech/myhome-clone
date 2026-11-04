@@ -307,6 +307,40 @@ export function planStats(plan) {
   };
 }
 
+/** 建蔽率・容積率の計算で床面積に数えない部屋（屋外・床の無い所） */
+const RATIO_EXCLUDED_ROOM_TYPES = new Set(['porch', 'balcony', 'fukinuke']);
+
+/**
+ * 建蔽率・容積率の概算（プラン一覧用）。
+ * 建築面積 ≒ 床面積が最も大きい階の面積、延床面積 = 全階の合計（ポーチ・バルコニー・吹抜けは除く、ガレージは含む）。
+ * 敷地が未設定なら siteM2 = 0 で、率は null。
+ */
+export function planRatioStats(plan) {
+  const boundary = plan.site?.boundary || [];
+  const siteM2 = boundary.length >= 3 ? polygonAreaM2(boundary) : 0;
+  let buildingM2 = 0;
+  let floorM2 = 0;
+  for (const floor of plan.floors) {
+    let a = 0;
+    for (const room of floor.rooms) {
+      if (!RATIO_EXCLUDED_ROOM_TYPES.has(room.type)) a += polygonAreaM2(room.polygon);
+    }
+    for (const stair of floor.stairs || []) {
+      if (!stairInsideRoom(stair, floor)) a += stairFootprintAreaM2(stair);
+    }
+    buildingM2 = Math.max(buildingM2, a);
+    floorM2 += a;
+  }
+  const ok = siteM2 > 0;
+  return {
+    siteM2,
+    buildingM2,
+    floorM2,
+    coveragePct: ok ? (buildingM2 / siteM2) * 100 : null,
+    farPct: ok ? (floorM2 / siteM2) * 100 : null,
+  };
+}
+
 // ---- 幾何 -------------------------------------------------------------------
 // 矩形ポリゴン（時計回り）を 2点から作る。
 export function rectPolygon(x1, z1, x2, z2) {
@@ -877,6 +911,11 @@ export function createEmptyPlan(name = '新しいプラン') {
       lat: 35.775,
       lng: 139.679,
       constructionMethod: 'two_by_six',
+      // プラン一覧のメモ（周辺環境・土地の感想など自由記述）
+      memo: '',
+      // 建蔽率・容積率の上限（%）。未入力は null
+      coverageLimitPct: null,
+      farLimitPct: null,
     },
     site: {
       boundary: [],

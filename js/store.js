@@ -224,6 +224,16 @@ export class Store {
     }
   }
 
+  /** プランの meta を部分更新（メモ・建蔽率/容積率の上限など。元に戻すの対象外） */
+  updatePlanMeta(patch, id = this.currentId) {
+    if (this.plans[id]) {
+      Object.assign(this.plans[id].meta, patch);
+      this._touchUpdated(this.plans[id]);
+      this._persist();
+      this.notify();
+    }
+  }
+
   /** プラン一覧の表示順を更新（id の配列） */
   setOrder(ids) {
     const valid = ids.filter((id) => this.plans[id]);

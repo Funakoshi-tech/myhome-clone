@@ -44,6 +44,7 @@ export class PlanList {
     this.sortSelect = document.getElementById('plan-list-sort');
     this.newBtn = document.getElementById('plan-list-new');
     this.expandedFloorIds = new Set();
+    this.expandedMemoIds = new Set();
 
     this._wire();
     this._wireDrag();
@@ -80,7 +81,10 @@ export class PlanList {
     const ids = this.store.order.slice();
     const q = this.searchQuery.toLowerCase();
     const filtered = q
-      ? ids.filter((id) => (this.store.plans[id]?.meta?.name || '').toLowerCase().includes(q))
+      ? ids.filter((id) => {
+        const meta = this.store.plans[id]?.meta;
+        return `${meta?.name || ''}\n${meta?.memo || ''}`.toLowerCase().includes(q);
+      })
       : ids;
 
     if (this.sortKey === 'order-manual') return filtered;
@@ -199,6 +203,7 @@ export class PlanList {
     });
     head.appendChild(menuBtn);
     card.appendChild(head);
+    card.appendChild(this._buildNotes(id, plan));
 
     const thumbWrap = document.createElement('button');
     thumbWrap.type = 'button';
@@ -294,6 +299,119 @@ export class PlanList {
     card._actions = actions;
 
     return card;
+  }
+
+  /** タイトル下のメモ欄（建蔽率・容積率の上限と現在値、自由記述メモ） */
+  _buildNotes(id, plan) {
+    const wrap = document.createElement('div');
+    wrap.className = 'plan-card-notes';
+
+    const ratios = M.planRatioStats(plan);
+    const ratioRow = document.createElement('div');
+    ratioRow.className = 'plan-card-ratios';
+    ratioRow.append(
+      this._ratioField(id, '建蔽率', 'coverageLimitPct', plan.meta.coverageLimitPct, ratios.coveragePct),
+      this._ratioField(id, '容積率', 'farLimitPct', plan.meta.farLimitPct, ratios.farPct),
+    );
+    wrap.appendChild(ratioRow);
+    if (ratios.siteM2 <= 0) {
+      const hint = document.createElement('div');
+      hint.className = 'plan-card-ratio-hint';
+      hint.textContent = '敷地を描くと現在の建蔽率・容積率を計算します';
+      wrap.appendChild(hint);
+    }
+
+    const memo = plan.meta.memo || '';
+    const view = document.createElement('div');
+    view.className = 'plan-card-memo';
+    view.tabIndex = 0;
+    view.title = 'クリックしてメモを編集';
+    // 行数の制限は内側の要素にかける（外側の余白に4行目がはみ出して見えないように）
+    const text = document.createElement('div');
+    text.className = 'plan-card-memo-text';
+    if (memo) {
+      text.textContent = memo;
+    } else {
+      view.classList.add('empty');
+      text.textContent = 'メモを追加（周辺環境・土地について思ったことなど）';
+    }
+    view.appendChild(text);
+    const expanded = this.expandedMemoIds.has(id);
+    view.classList.toggle('expanded', expanded);
+    wrap.appendChild(view);
+
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'plan-card-memo-more';
+    more.hidden = true;
+    more.textContent = expanded ? '折りたたむ' : '…続きを表示';
+    more.addEventListener('click', () => {
+      if (this.expandedMemoIds.has(id)) this.expandedMemoIds.delete(id);
+      else this.expandedMemoIds.add(id);
+      this.render();
+    });
+    wrap.appendChild(more);
+    // 3行に収まらない時だけ「続きを表示」を出す（描画後でないと高さが分からない）
+    requestAnimationFrame(() => {
+      more.hidden = !memo || (!expanded && text.scrollHeight <= text.clientHeight + 1);
+    });
+
+    const startEdit = () => {
+      const ta = document.createElement('textarea');
+      ta.className = 'plan-card-memo-input';
+      ta.value = memo;
+      ta.placeholder = '建蔽率・容積率以外の条件、周辺環境、土地について思ったことなど';
+      const fit = () => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight}px`; };
+      ta.addEventListener('input', fit);
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { ta.value = memo; ta.blur(); }
+      });
+      ta.addEventListener('blur', () => {
+        if (ta.value !== memo) this.store.updatePlanMeta({ memo: ta.value }, id);
+        else this.render();
+      });
+      view.replaceWith(ta);
+      more.hidden = true;
+      fit();
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    };
+    view.addEventListener('click', startEdit);
+    view.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); startEdit(); }
+    });
+    return wrap;
+  }
+
+  /** 「建蔽率 [60]% 現在 48.0%」の1項目。上限を超えていたら赤字 */
+  _ratioField(id, label, key, limit, current) {
+    const el = document.createElement('label');
+    el.className = 'plan-card-ratio';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = '10';
+    input.placeholder = '—';
+    input.value = limit ?? '';
+    input.addEventListener('change', () => {
+      const v = input.value === '' ? null : Number(input.value);
+      if (v !== null && (Number.isNaN(v) || v < 0)) { input.value = limit ?? ''; return; }
+      this.store.updatePlanMeta({ [key]: v }, id);
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+    const unit = document.createElement('span');
+    unit.textContent = '%';
+    el.append(name, input, unit);
+    if (current != null) {
+      const now = document.createElement('span');
+      now.className = 'plan-card-ratio-now';
+      if (limit != null && current > limit) now.classList.add('over');
+      now.textContent = `現在 ${current.toFixed(1)}%`;
+      el.appendChild(now);
+    }
+    return el;
   }
 
   _toggleMenu(card) {
