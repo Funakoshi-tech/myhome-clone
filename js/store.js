@@ -174,7 +174,7 @@ export class Store {
   newPlan(name = `マイプラン${this.order.length + 1}`) {
     const id = uid('plan');
     this.plans[id] = createEmptyPlan(name);
-    this.order.push(id);
+    this.order.unshift(id); // 新しいプランは一覧の先頭に
     this.currentId = id;
     this._persist();
     this.notify();
@@ -281,7 +281,7 @@ export class Store {
     const plan = normalizePlan(obj);
     const id = uid('plan');
     this.plans[id] = plan;
-    this.order.push(id);
+    this.order.unshift(id); // 新規作成と同じく一覧の先頭に
     this.currentId = id;
     this._persist();
     this.notify();
