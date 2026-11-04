@@ -31,6 +31,8 @@
         <span class="logo">🏠</span>
         <span class="title">My Home Clone</span>
       </div>
+      <div class="spacer"></div>
+      <button id="reload-app-list" class="btn" title="最新の版を読み込み直す">↻ 再読み込み</button>
     </header>
     <main class="plan-list-main">
       <div class="plan-list-title-row">
@@ -90,6 +92,7 @@
 
     <!-- JSON入出力 -->
     <div class="io-bar">
+      <button id="reload-app" class="btn" title="再読み込み（最新の版にする。開いているプランと階はそのまま）" aria-label="再読み込み">↻</button>
       <button id="json-export" class="btn">JSON書出</button>
       <button id="json-import" class="btn">JSON読込</button>
       <input id="json-file" type="file" accept="application/json,.json" hidden />

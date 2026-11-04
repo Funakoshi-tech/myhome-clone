@@ -87,6 +87,40 @@ function scheduleEditorLayout() {
   });
 }
 
+/**
+ * ページを読み込み直して最新の版にする。編集中なら、読み込み直した後に同じプラン・階・2D/3D を開き直す
+ * （ホーム画面に追加したアプリ表示など、ブラウザの再読み込みボタンが無い時のため）
+ */
+const RELOAD_REOPEN_KEY = 'myhome-clone-reopen';
+function reloadApp() {
+  store.save();
+  try {
+    if (screen === 'editor') {
+      sessionStorage.setItem(RELOAD_REOPEN_KEY, JSON.stringify({
+        planId: store.currentId, floorId: ui.floorId, view: ui.view,
+      }));
+    } else {
+      sessionStorage.removeItem(RELOAD_REOPEN_KEY);
+    }
+  } catch { /* 保存できなくても再読み込みはする（一覧に戻るだけ） */ }
+  location.reload();
+}
+
+/** reloadApp で覚えておいたプランを開き直す。開き直したら true */
+function reopenAfterReload() {
+  let saved = null;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(RELOAD_REOPEN_KEY) || 'null');
+    sessionStorage.removeItem(RELOAD_REOPEN_KEY);
+  } catch { return false; }
+  if (!saved?.planId || !store.plans[saved.planId]) return false;
+  openPlanEditor(saved.planId);
+  const plan = store.current();
+  if (plan.floors.some((f) => f.id === saved.floorId)) setFloor(saved.floorId);
+  if (saved.view === '3d') ui.view = '3d'; // scheduleEditorLayout が次のフレームでこの表示にする
+  return true;
+}
+
 function returnToPlanList() {
   store.save();
   showPlanList();
@@ -1555,6 +1589,8 @@ function wireEvents() {
   $('#back-to-list').addEventListener('click', () => returnToPlanList());
 
   // JSON 入出力
+  $('#reload-app').addEventListener('click', reloadApp);
+  $('#reload-app-list').addEventListener('click', reloadApp);
   $('#json-export').addEventListener('click', () => store.exportCurrentJSON());
   $('#json-import').addEventListener('click', () => $('#json-file').click());
   $('#json-file').addEventListener('change', async (e) => {
@@ -1652,7 +1688,7 @@ function boot() {
   setFloor('1F');
   setView('2d');
   markChips();
-  showPlanList();
+  if (!reopenAfterReload()) showPlanList();
 }
 
 boot();
