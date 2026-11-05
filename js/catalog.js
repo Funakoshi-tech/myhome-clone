@@ -88,6 +88,7 @@ export const STAIR_TYPES = [
   { id: 'l_winder', name: 'L字階段（上で回る）', icon: '↱', defaultW: 1 * P_MM, defaultD: 3 * P_MM },
   // 横の辺の下端から入り、最下部の回り段（3 段）で 90° 曲がって直進し、上の辺から抜ける。stair.mirror で左から入る
   { id: 'l_winder_bottom', name: 'L字階段（下で回る）', icon: '⤴', defaultW: 1 * P_MM, defaultD: 3 * P_MM },
+  // 向かって左側から登り、踊り場で折り返して右側を登る。stair.mirror で右側から登る
   { id: 'u_shape',  name: 'U字折返し',  icon: '⇅', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
   { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
   { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
@@ -98,9 +99,9 @@ export function straightStairStepCount(depthMM) {
   return Math.max(3, Math.min(20, Math.round(depthMM / 182)));
 }
 
-/** 左右反転（曲がる向きの切り替え）ができる階段の種類 */
+/** 左右反転（曲がる向き・登り口の切り替え）ができる階段の種類 */
 export function stairCanMirror(type) {
-  return type === 'l_winder' || type === 'l_winder_bottom';
+  return type === 'l_winder' || type === 'l_winder_bottom' || type === 'u_shape';
 }
 
 export function getStairType(id) {

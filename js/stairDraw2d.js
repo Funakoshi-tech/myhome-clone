@@ -277,7 +277,7 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
 
   if (!isRef) {
     ctx.save();
-    if (stairCanMirror(stair.type) && stair.mirror) ctx.scale(-1, 1); // 左に曲がる形
+    if (stairCanMirror(stair.type) && stair.mirror) ctx.scale(-1, 1); // 左に曲がる形・右側から登る形
     switch (stair.type) {
       case 'straight': stairStraight(ctx, hw, hd, straightStairStepCount(stair.depthMM)); break;
       case 'l_shape': stairLShape(ctx, hw, hd, n); break;

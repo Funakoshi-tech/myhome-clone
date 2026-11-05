@@ -1562,7 +1562,9 @@ export class Viewer3D {
     this._addStairTread(group, -w / 2 + stepW2 * 0.46, h - treadThick / 2, 0, stepW2 * 0.88, runW * 0.88, mat, treadThick);
   }
 
-  _buildUStair3D(group, w, d, h, mat) {
+  /** U字折返し: 向かって左側から登り、踊り場で折り返して右側を登る。mirror なら右側から登る（左右反転） */
+  _buildUStair3D(group, w, d, h, mat, mirror) {
+    const sx = mirror ? -1 : 1;
     const nSteps = Math.max(6, Math.min(18, Math.round(d * 2 / 0.23)));
     const nHalf = Math.max(3, Math.round(nSteps / 2));
     const stepH = h / nSteps;
@@ -1574,7 +1576,7 @@ export class Viewer3D {
     for (let i = 0; i < nHalf; i++) {
       const y = stepH * (i + 1) - treadThick / 2;
       const z = d / 2 - runDepth * (i + 0.5);
-      this._addStairTread(group, -w / 4, y, z, runW, runDepth * 0.92, mat, treadThick);
+      this._addStairTread(group, -sx * w / 4, y, z, runW, runDepth * 0.92, mat, treadThick);
     }
 
     const landY = stepH * nHalf - treadThick / 2;
@@ -1584,9 +1586,9 @@ export class Viewer3D {
       const stepIdx = nHalf + i + 1;
       const y = stepH * stepIdx - treadThick / 2;
       const z = landZ + runDepth * (i + 0.5);
-      this._addStairTread(group, w / 4, y, z, runW, runDepth * 0.92, mat, treadThick);
+      this._addStairTread(group, sx * w / 4, y, z, runW, runDepth * 0.92, mat, treadThick);
     }
-    this._addStairTread(group, w / 4, h - treadThick / 2, -d / 2 + runDepth * 0.46, runW, runDepth * 0.88, mat, treadThick);
+    this._addStairTread(group, sx * w / 4, h - treadThick / 2, -d / 2 + runDepth * 0.46, runW, runDepth * 0.88, mat, treadThick);
   }
 
   _buildWindingStair3D(group, w, d, h, mat) {
@@ -1791,7 +1793,7 @@ export class Viewer3D {
         this._buildLStair3D(group, w, d, h, mat);
         break;
       case 'u_shape':
-        this._buildUStair3D(group, w, d, h, mat);
+        this._buildUStair3D(group, w, d, h, mat, !!stair.mirror);
         break;
       case 'winding':
         this._buildWindingStair3D(group, w, d, h, mat);

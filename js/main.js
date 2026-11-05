@@ -1004,7 +1004,10 @@ function buildPropsContent() {
       flip.className = 'btn';
       flip.textContent = '左右反転';
       flip.addEventListener('click', () => editor.flipSelectedStair());
-      body.appendChild(field(`曲がる向き（${s.mirror ? '左' : '右'}）`, flip));
+      const flipLabel = s.type === 'u_shape'
+        ? `登り口（${s.mirror ? '右' : '左'}）`
+        : `曲がる向き（${s.mirror ? '左' : '右'}）`;
+      body.appendChild(field(flipLabel, flip));
     }
 
     body.appendChild(deleteButton('この階段を削除'));

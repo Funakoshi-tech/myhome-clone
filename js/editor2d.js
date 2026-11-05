@@ -2178,7 +2178,7 @@ export class Editor2D {
     this.onUI();
   }
 
-  /** L字階段（上で回る・下で回る）の曲がる向き（右 ⇔ 左）を切り替える */
+  /** L字階段の曲がる向き（右 ⇔ 左）・U字折返しの登り口（左 ⇔ 右）を切り替える */
   flipSelectedStair() {
     const sel = this.ui.selection;
     if (!sel || sel.kind !== 'stair') return;
