@@ -1006,7 +1006,9 @@ function buildPropsContent() {
       flip.addEventListener('click', () => editor.flipSelectedStair());
       const flipLabel = s.type === 'u_shape'
         ? `登り口（${s.mirror ? '右' : '左'}）`
-        : `曲がる向き（${s.mirror ? '左' : '右'}）`;
+        : s.type === 'u_winder' || s.type === 'u_open'
+          ? `出入り口の側（${s.mirror ? '左' : '右'}）`
+          : `曲がる向き（${s.mirror ? '左' : '右'}）`;
       body.appendChild(field(flipLabel, flip));
     }
 

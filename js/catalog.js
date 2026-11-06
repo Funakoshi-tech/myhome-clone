@@ -90,8 +90,10 @@ export const STAIR_TYPES = [
   { id: 'l_winder_bottom', name: 'L字階段（下で回る）', icon: '⤴', defaultW: 1 * P_MM, defaultD: 3 * P_MM },
   // 向かって左側から登り、踊り場で折り返して右側を登る。stair.mirror で右側から登る
   { id: 'u_shape',  name: 'U字折返し',  icon: '⇅', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
-  { id: 'winding',  name: '廻り階段',   icon: '↻', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
-  { id: 'spiral',   name: '螺旋階段',   icon: '⊛', defaultW: 2 * P_MM, defaultD: 2 * P_MM },
+  // 横の辺の下端から入り、回り段 3 段 → 直進 → 回り段 3 段で折り返して、同じ横の辺の上端から抜ける。stair.mirror で左の辺から出入りする
+  { id: 'u_winder', name: 'コの字階段（上下で回る）', icon: '⊐', defaultW: 1 * P_MM, defaultD: 3 * P_MM },
+  // 直進 → 回り段 3 段 → 直進 → 回り段 3 段 → 直進で折り返す。横の辺の中ほど（幅 1/2 × 奥行 1/3）は階段ではなく空く。stair.mirror で左の辺から出入りする
+  { id: 'u_open',   name: 'コの字階段（中央が空く）', icon: '⊏', defaultW: 2 * P_MM, defaultD: 3 * P_MM },
 ];
 
 /** 直進階段の段の数（3P = 2730mm で 15 段。2D の記号と 3D で共通） */
@@ -101,7 +103,7 @@ export function straightStairStepCount(depthMM) {
 
 /** 左右反転（曲がる向き・登り口の切り替え）ができる階段の種類 */
 export function stairCanMirror(type) {
-  return type === 'l_winder' || type === 'l_winder_bottom' || type === 'u_shape';
+  return type === 'l_winder' || type === 'l_winder_bottom' || type === 'u_shape' || type === 'u_winder' || type === 'u_open';
 }
 
 export function getStairType(id) {

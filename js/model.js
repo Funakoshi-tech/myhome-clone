@@ -228,13 +228,22 @@ export function tsuboCount(areaM2) {
 
 /** 階段フットプリント面積（m²） */
 export function stairFootprintAreaM2(stair) {
-  return mm2ToM2((stair.widthMM || 0) * (stair.depthMM || 0));
+  const area = (stair.widthMM || 0) * (stair.depthMM || 0);
+  return mm2ToM2(stair.type === 'u_open' ? area * 5 / 6 : area); // コの字（中央が空く）は 1/2 × 1/3 が空く
 }
 
-/** 階段中心が部屋ポリゴン内にあるか */
+/** 階段がどの部屋にあるかを調べる点。ふつうは中心。中央が空くコの字は中心が階段の縁なので、中央の直進部の中心 */
+export function stairProbePoint(stair) {
+  if (stair.type !== 'u_open') return { x: stair.x, z: stair.z };
+  const rad = (stair.rotationDeg || 0) * Math.PI / 180;
+  const lx = (stair.mirror ? 1 : -1) * (stair.widthMM || 0) / 4;
+  return { x: stair.x + lx * Math.cos(rad), z: stair.z + lx * Math.sin(rad) };
+}
+
+/** 階段の代表点が部屋ポリゴン内にあるか */
 export function stairInsideRoom(stair, floor) {
   return (floor.rooms || []).some(
-    (room) => room.polygon && pointInPolygon({ x: stair.x, z: stair.z }, room.polygon),
+    (room) => room.polygon && pointInPolygon(stairProbePoint(stair), room.polygon),
   );
 }
 
@@ -473,7 +482,7 @@ export function roomHasUpperStructureOverlap(room, upperFloor) {
     if (ur.polygon?.length >= 3 && polygonsOverlapXZ(room.polygon, ur.polygon)) return true;
   }
   for (const stair of upperFloor.stairs || []) {
-    if (polygonsOverlapXZ(room.polygon, stairFootprintCorners(stair))) return true;
+    if (polygonsOverlapXZ(room.polygon, stairOutlinePolygon(stair))) return true;
   }
   return false;
 }
@@ -974,17 +983,18 @@ export function stairOpenEdgeIndices(stair) {
   switch (type) {
     case 'l_shape': return [2, 3];       // 登り口 +Z / 出口 −X
     case 'u_shape': return [0, 2];       // 出口 −Z / 登り口 +Z
-    case 'winding': return [0, 2];
-    case 'spiral': return [2];           // 登り口 +Z のみ（上階へ抜ける）
     case 'l_winder': return [2, stair.mirror ? 3 : 1]; // 登り口 +Z / 出口は横の辺の上端（stairOpenEdgeSpans）
     case 'l_winder_bottom': return [stair.mirror ? 3 : 1, 0]; // 登り口は横の辺の下端（stairOpenEdgeSpans）/ 出口 −Z
+    case 'u_open':
+    case 'u_winder': return [stair.mirror ? 3 : 1]; // 登り口は横の辺の下端・出口は同じ辺の上端（stairOpenEdgeSpans）
     case 'straight':
     default: return [0, 2];
   }
 }
 
-/** L字階段（上で回る・下で回る）の回り段の正方形の一辺（mm）。幅と奥行の短いほう */
+/** 回り段の正方形の一辺（mm）。L字は幅と奥行の短いほう。コの字は上下に 2 つ入るので奥行の半分まで */
 export function stairWinderSizeMM(stair) {
+  if (stair.type === 'u_winder') return Math.min(stair.widthMM || 0, (stair.depthMM || 0) / 2);
   return Math.min(stair.widthMM || 0, stair.depthMM || 0);
 }
 
@@ -996,6 +1006,14 @@ export function stairWinderSizeMM(stair) {
  */
 export function stairOpenEdgeSpans(stair) {
   const type = stair.type || 'straight';
+  if (type === 'u_winder' || type === 'u_open') {
+    // 同じ辺の両端が出入り口。辺の向きは +X 辺が上端 → 下端、−X 辺が下端 → 上端
+    const frac = type === 'u_open' ? 1 / 3 : Math.min(0.5, stairWinderSizeMM(stair) / (stair.depthMM || 1));
+    const edge = stair.mirror ? 3 : 1;
+    const low = { edge, t0: 1 - frac, t1: 1 };
+    const high = { edge, t0: 0, t1: frac };
+    return stair.mirror ? [high, low] : [low, high]; // [登り口, 出口]
+  }
   if (type === 'l_winder' || type === 'l_winder_bottom') {
     const frac = Math.min(1, stairWinderSizeMM(stair) / (stair.depthMM || 1));
     // +X 辺は −Z（上端）→ +Z（下端）、−X 辺は +Z（下端）→ −Z（上端）の向き
@@ -1067,6 +1085,7 @@ export function stairExteriorWallSpans(stair, floor) {
     (r) => r.polygon?.length >= 3 && !isOutdoorRoom(r) && !isFloorOnlyRoom(r),
   );
   const covers = _stairCoverSegments(floor);
+  const notchEdge = stair.type === 'u_open' ? (stair.mirror ? 3 : 1) : -1;
   const spans = [];
   for (let edge = 0; edge < 4; edge++) {
     const a = corners[edge];
@@ -1086,6 +1105,7 @@ export function stairExteriorWallSpans(stair, floor) {
     const n = Math.max(1, Math.ceil(len / STAIR_EXT_SAMPLE_MM));
     const isExterior = (i) => {
       const t = (i + 0.5) / n;
+      if (notchEdge === edge && t > 1 / 3 && t < 2 / 3) return false; // 空いている所に辺は無い（囲い壁は 3D 側で立てる）
       const p = { x: a.x + ux * len * t, z: a.z + uz * len * t };
       if (covered.some((c) => _alongsideSegment(p, c, STAIR_EXT_COVER_TOL_MM))) return false;
       const probe = { x: p.x + nx * STAIR_EXT_PROBE_MM, z: p.z + nz * STAIR_EXT_PROBE_MM };
@@ -1112,9 +1132,9 @@ export function stairExteriorWallSpans(stair, floor) {
 export function stairsEndingOnFloor(plan, floor) {
   const lower = plan && floor ? getLowerFloor(plan, floor.id) : null;
   if (!lower?.stairs?.length) return [];
-  const own = (floor.stairs || []).map(stairFootprintCorners);
+  const own = (floor.stairs || []).map(stairOutlinePolygon);
   return lower.stairs.filter((s) => {
-    const fp = stairFootprintCorners(s);
+    const fp = stairOutlinePolygon(s);
     return !own.some((o) => polygonsOverlapXZ(fp, o));
   });
 }
@@ -1126,8 +1146,8 @@ export function stairsEndingOnFloor(plan, floor) {
 export function stairTopCapRooms(plan, floor) {
   const rooms = (floor?.rooms || []).filter((r) => r.polygon?.length >= 3);
   return stairsEndingOnFloor(plan, floor)
-    .filter((s) => !rooms.some((r) => pointInPolygon({ x: s.x, z: s.z }, r.polygon)))
-    .map((s) => ({ id: `stair-top-${s.id}`, type: 'rouka', name: '', polygon: stairFootprintCorners(s), stairCap: true }));
+    .filter((s) => !rooms.some((r) => pointInPolygon(stairProbePoint(s), r.polygon)))
+    .map((s) => ({ id: `stair-top-${s.id}`, type: 'rouka', name: '', polygon: stairOutlinePolygon(s), stairCap: true }));
 }
 
 /** 屋根の計算用に、階段の上の仮の部屋（stairTopCapRooms）を加えた階 */
@@ -1181,7 +1201,7 @@ function _wallOpeningOverlapForSegment(wall, seg, tolMM = 180) {
  */
 export function stairOpeningLeadsOutside(stair, wall, floor, plan = null) {
   const room = (floor.rooms || []).find((r) => r.id === inferWallRoomId(wall));
-  if (!room?.polygon || !pointInPolygon({ x: stair.x, z: stair.z }, room.polygon)) return false;
+  if (!room?.polygon || !pointInPolygon(stairProbePoint(stair), room.polygon)) return false;
   return isExteriorWall(wall, floor, plan);
 }
 
@@ -1198,8 +1218,9 @@ export function syncStairWallOpenings(floor, plan = null) {
 
   for (const stair of stairs) {
     floor.openings = floor.openings.filter((op) => op.autoStairId !== stair.id);
-    const seenEdgeKeys = new Set();
     for (const seg of stairOpenEdgeSegments(stair)) {
+      // 同じ壁でも出入り口ごとに開ける（コの字階段は 1 つの辺に登り口と出口がある）
+      const seenEdgeKeys = new Set();
       for (const wall of floor.walls || []) {
         if (isWallEdgeRemoved(floor, wall)) continue;
         const key = wallEdgeKeyFromWall(wall);
@@ -1239,6 +1260,35 @@ export function stairFootprintCorners(stair) {
   }));
 }
 
+/** 階段の外形（階段ローカル座標 mm。回転前）。中央が空くコの字だけ凹んだ形で、他は矩形 */
+export function stairOutlineLocal(stair) {
+  const hw = (stair.widthMM || 0) / 2;
+  const hd = (stair.depthMM || 0) / 2;
+  if (stair.type !== 'u_open') {
+    return [{ x: -hw, z: -hd }, { x: hw, z: -hd }, { x: hw, z: hd }, { x: -hw, z: hd }];
+  }
+  const sx = stair.mirror ? -1 : 1;
+  return [[-hw, -hd], [hw, -hd], [hw, -hd / 3], [0, -hd / 3], [0, hd / 3], [hw, hd / 3], [hw, hd], [-hw, hd]]
+    .map(([x, z]) => ({ x: x * sx, z }));
+}
+
+/** 階段が実際に占める外形（世界座標 mm）。中央が空くコの字は凹んだ形。辺の番号を使う処理は stairFootprintCorners を使う */
+export function stairOutlinePolygon(stair) {
+  const rad = (stair.rotationDeg || 0) * Math.PI / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return stairOutlineLocal(stair).map((p) => ({
+    x: stair.x + p.x * cos - p.z * sin,
+    z: stair.z + p.x * sin + p.z * cos,
+  }));
+}
+
+/** 点が階段の上にあるか（中央が空くコの字の空いている所は含まない） */
+export function pointOnStair(pt, stair) {
+  if (!pointInOrientedRect(pt, stair.x, stair.z, stair.widthMM, stair.depthMM, stair.rotationDeg || 0)) return false;
+  return stair.type !== 'u_open' || pointInPolygon(pt, stairOutlinePolygon(stair));
+}
+
 /** 下階から上階へ突き抜ける階段の高さ（mm） */
 export function stairRiseHeightMM(sourceFloor, upperFloor) {
   const rise = sourceFloor?.ceilingHeightMM || 2400;
@@ -1275,7 +1325,10 @@ export function normalizePlan(plan) {
     openings: Array.isArray(f.openings) ? f.openings : [],
     removedWallEdges: Array.isArray(f.removedWallEdges) ? f.removedWallEdges : [],
     furniture: Array.isArray(f.furniture) ? f.furniture : [],
-    stairs: Array.isArray(f.stairs) ? f.stairs : [],
+    // 廃止した種類（廻り階段・螺旋階段）は位置と大きさを保って直進階段にする
+    stairs: (Array.isArray(f.stairs) ? f.stairs : []).map((s) => (
+      s.type === 'winding' || s.type === 'spiral' ? { ...s, type: 'straight' } : s
+    )),
     partitions: Array.isArray(f.partitions) ? f.partitions : [],
   }));
   // 屋根の設定は建物全体で 1 つ（既定は陸屋根）。

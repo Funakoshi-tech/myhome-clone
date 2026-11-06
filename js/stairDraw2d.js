@@ -1,6 +1,7 @@
 // stairDraw2d.js — 2D 階段シンボル描画（エディタ・サムネイル共通）
 
 import { getStairType, straightStairStepCount, stairCanMirror } from './catalog.js';
+import { stairOutlineLocal } from './model.js';
 
 function arrowPx(ctx, x1, y1, x2, y2) {
   ctx.strokeStyle = 'rgba(60,40,20,0.85)';
@@ -147,6 +148,104 @@ function stairLWinderBottom(ctx, hw, hd, n) {
   ctx.fill(); // arrowPx が塗りの色を設定済み
 }
 
+/**
+ * コの字（上下で回る）: +X 辺の下端から入り、最下部の回り段 3 段 → 直進 → 最上部の回り段 3 段で折り返して、
+ * +X 辺の上端から抜ける。−X 辺から出入りする形（stair.mirror）は呼び出し側で左右反転して描く。
+ */
+function stairUWinder(ctx, hw, hd, nStraight) {
+  const col = 'rgba(100,80,45,0.72)';
+  const s = Math.min(hw * 2, hd); // 回り段の正方形の一辺
+  const yB = hd - s; // 下の回り段と直進部の境
+  const yT = -hd + s; // 直進部と上の回り段の境
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = col;
+  for (let i = 0; i <= nStraight; i++) {
+    const y = yT + ((yB - yT) * i) / nStraight;
+    ctx.beginPath();
+    ctx.moveTo(-hw, y);
+    ctx.lineTo(hw, y);
+    ctx.stroke();
+  }
+  // 回り段：内側の角（出入り口の辺の、直進部との境）から、左辺の中ほどと上下の辺の中ほどへ
+  for (const [py, sideY, endY] of [[yB, hd - s / 2, hd], [yT, -hd + s / 2, -hd]]) {
+    ctx.beginPath();
+    ctx.moveTo(-hw, sideY);
+    ctx.lineTo(hw, py);
+    ctx.lineTo(0, endY);
+    ctx.stroke();
+  }
+  // 上り方向：登り口から中央へ入り、上へ進んで、出口へ
+  const entryY = hd - s / 2;
+  const exitY = -hd + s / 2;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(60,40,20,0.85)';
+  ctx.beginPath();
+  ctx.moveTo(hw * 0.9, entryY);
+  ctx.lineTo(0, entryY);
+  ctx.lineTo(0, exitY);
+  ctx.stroke();
+  arrowPx(ctx, 0, exitY, hw * 0.9, exitY);
+  ctx.beginPath();
+  ctx.arc(hw * 0.9, entryY, 2.5, 0, Math.PI * 2);
+  ctx.fill(); // arrowPx が塗りの色を設定済み
+}
+
+/**
+ * コの字（中央が空く）: +X 辺の下端から −X へ直進し、回り段 3 段で曲がって上へ直進、回り段 3 段で曲がって +X 辺の上端へ抜ける。
+ * +X 側の中ほど（幅 1/2 × 奥行 1/3）は階段ではなく、3 方を壁で囲う。−X 辺から出入りする形（stair.mirror）は呼び出し側で左右反転して描く。
+ */
+function stairUOpen(ctx, hw, hd, nRun, nMid, wallPx) {
+  const col = 'rgba(100,80,45,0.72)';
+  const yB = hd / 3; // 下の帯と中央の境
+  const yT = -hd / 3; // 中央と上の帯の境
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = col;
+  const line = (x1, y1, x2, y2) => {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  };
+  for (let i = 0; i <= nRun; i++) {
+    const x = (hw * i) / nRun;
+    line(x, yB, x, hd);
+    line(x, -hd, x, yT);
+  }
+  for (let i = 0; i <= nMid; i++) {
+    const y = yT + ((yB - yT) * i) / nMid;
+    line(-hw, y, 0, y);
+  }
+  // 回り段：内側の角から、外側の辺の中ほどと上下の辺の中ほどへ
+  line(0, yB, -hw, hd * 2 / 3);
+  line(0, yB, -hw / 2, hd);
+  line(0, yT, -hw, -hd * 2 / 3);
+  line(0, yT, -hw / 2, -hd);
+  // 空いている所を囲う壁（外形の内側に立てた 3D の囲い壁と同じ位置）
+  ctx.strokeStyle = '#4a5260';
+  ctx.lineWidth = wallPx;
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  ctx.moveTo(hw, yT + wallPx / 2);
+  ctx.lineTo(wallPx / 2, yT + wallPx / 2);
+  ctx.lineTo(wallPx / 2, yB - wallPx / 2);
+  ctx.lineTo(hw, yB - wallPx / 2);
+  ctx.stroke();
+  // 上り方向：下の帯を −X へ、中央を上へ、上の帯を +X へ
+  const entryY = hd * 2 / 3;
+  const exitY = -hd * 2 / 3;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(60,40,20,0.85)';
+  ctx.beginPath();
+  ctx.moveTo(hw * 0.95, entryY);
+  ctx.lineTo(-hw / 2, entryY);
+  ctx.lineTo(-hw / 2, exitY);
+  ctx.stroke();
+  arrowPx(ctx, -hw / 2, exitY, hw * 0.95, exitY);
+  ctx.beginPath();
+  ctx.arc(hw * 0.95, entryY, 2.5, 0, Math.PI * 2);
+  ctx.fill(); // arrowPx が塗りの色を設定済み
+}
+
 function stairUShape(ctx, hw, hd, n) {
   const col = 'rgba(100,80,45,0.72)';
   ctx.lineWidth = 1.5;
@@ -182,72 +281,6 @@ function stairUShape(ctx, hw, hd, n) {
   arrowPx(ctx, -hw * 0.5, hd * 0.65, -hw * 0.5, -hd * 0.35);
 }
 
-function stairWinding(ctx, hw, hd) {
-  const col = 'rgba(100,80,45,0.72)';
-  const fanX = -hw;
-  const fanY = hd;
-  const fanR = Math.min(hw * 1.5, hd * 1.1);
-  const nFan = 6;
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = col;
-  for (let i = 0; i <= nFan; i++) {
-    const ang = (Math.PI * 0.07) + (Math.PI * 0.43 * i) / nFan;
-    ctx.beginPath();
-    ctx.moveTo(fanX, fanY);
-    ctx.lineTo(fanX + fanR * Math.cos(ang), fanY - fanR * Math.sin(ang));
-    ctx.stroke();
-  }
-  for (const r of [fanR * 0.55, fanR * 0.88]) {
-    ctx.beginPath();
-    ctx.arc(fanX, fanY, r, -Math.PI * 0.5, -Math.PI * 0.07);
-    ctx.stroke();
-  }
-  const nSt = 4;
-  for (let i = 1; i <= nSt; i++) {
-    const y = -hd + (hd * 1.0 * i) / nSt;
-    if (y + hd < fanR * 0.9) {
-      ctx.beginPath();
-      ctx.moveTo(-hw * 0.3, y);
-      ctx.lineTo(hw, y);
-      ctx.stroke();
-    }
-  }
-  ctx.lineWidth = 1.5;
-  arrowPx(ctx, hw * 0.3, hd * 0.6, hw * 0.3, -hd * 0.6);
-}
-
-function stairSpiral(ctx, hw, hd) {
-  const col = 'rgba(100,80,45,0.72)';
-  const r = Math.min(hw, hd) * 0.9;
-  const rc = r * 0.22;
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(100,80,45,0.90)';
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(190,165,120,0.5)';
-  ctx.beginPath();
-  ctx.arc(0, 0, rc, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(100,80,45,0.90)';
-  ctx.beginPath();
-  ctx.arc(0, 0, rc, 0, Math.PI * 2);
-  ctx.stroke();
-  const nRad = 8;
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = col;
-  for (let i = 0; i < nRad; i++) {
-    const ang = (Math.PI * 2 * i) / nRad;
-    ctx.beginPath();
-    ctx.moveTo(rc * Math.cos(ang), rc * Math.sin(ang));
-    ctx.lineTo(r * Math.cos(ang), r * Math.sin(ang));
-    ctx.stroke();
-  }
-  ctx.lineWidth = 1.5;
-  arrowPx(ctx, 0, r * 0.7, 0, -r * 0.7);
-}
-
 /**
  * 階段シンボルを canvas に描画する。
  * @param {CanvasRenderingContext2D} ctx
@@ -268,7 +301,11 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
   ctx.rotate((stair.rotationDeg || 0) * Math.PI / 180);
 
   ctx.beginPath();
-  ctx.rect(-hw, -hd, hw * 2, hd * 2);
+  stairOutlineLocal(stair).forEach((p, i) => {
+    if (i === 0) ctx.moveTo(p.x * scale, p.z * scale);
+    else ctx.lineTo(p.x * scale, p.z * scale);
+  });
+  ctx.closePath();
   ctx.fillStyle = isRef ? 'rgba(170,160,140,0.12)' : 'rgba(218,195,148,0.40)';
   ctx.fill();
   ctx.lineWidth = isRef ? 1 : 1.5;
@@ -284,8 +321,8 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
       case 'l_winder': stairLWinder(ctx, hw, hd, n); break;
       case 'l_winder_bottom': stairLWinderBottom(ctx, hw, hd, straightStairStepCount(stair.depthMM)); break;
       case 'u_shape': stairUShape(ctx, hw, hd, n); break;
-      case 'winding': stairWinding(ctx, hw, hd); break;
-      case 'spiral': stairSpiral(ctx, hw, hd); break;
+      case 'u_winder': stairUWinder(ctx, hw, hd, straightStairStepCount(stair.depthMM - 2 * Math.min(stair.widthMM, stair.depthMM / 2))); break;
+      case 'u_open': stairUOpen(ctx, hw, hd, straightStairStepCount(stair.widthMM / 2), straightStairStepCount(stair.depthMM / 3), Math.max(2, 120 * scale)); break;
       default: stairStraight(ctx, hw, hd, straightStairStepCount(stair.depthMM)); break;
     }
     ctx.restore();
@@ -306,6 +343,15 @@ export function drawStair2d(ctx, stair, centerX, centerY, scale, opts = {}) {
         const s = Math.min(hw * 2, hd * 2);
         ctx.font = `${Math.max(9, Math.min(16, hw * 0.4))}px system-ui, sans-serif`;
         ctx.fillText('UP', (stair.mirror ? -1 : 1) * hw * 0.45, hd - s * 0.45 - 3);
+      } else if (stair.type === 'u_open' && !opts.fromLowerFloor) {
+        // 登り口（横の辺の下端）の矢印の上に「UP」
+        ctx.font = `${Math.max(9, Math.min(16, hw * 0.2))}px system-ui, sans-serif`;
+        ctx.fillText('UP', (stair.mirror ? -1 : 1) * hw * 0.7, hd * 2 / 3 - 3);
+      } else if (stair.type === 'u_winder' && !opts.fromLowerFloor) {
+        // 登り口（横の辺の下端）の矢印の上に「UP」
+        const s = Math.min(hw * 2, hd);
+        ctx.font = `${Math.max(9, Math.min(16, hw * 0.4))}px system-ui, sans-serif`;
+        ctx.fillText('UP', (stair.mirror ? -1 : 1) * hw * 0.45, hd - s / 2 - 3);
       } else {
         ctx.fillText(prefix + def.name, 0, hd - 2);
       }

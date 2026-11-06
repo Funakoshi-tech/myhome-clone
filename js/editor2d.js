@@ -1541,7 +1541,7 @@ export class Editor2D {
     // 階段
     for (let i = (floor.stairs || []).length - 1; i >= 0; i--) {
       const s = floor.stairs[i];
-      if (M.pointInOrientedRect(w, s.x, s.z, s.widthMM, s.depthMM, s.rotationDeg || 0)) {
+      if (M.pointOnStair(w, s)) {
         return { kind: 'stair', id: s.id };
       }
     }
@@ -2178,7 +2178,7 @@ export class Editor2D {
     this.onUI();
   }
 
-  /** L字階段の曲がる向き（右 ⇔ 左）・U字折返しの登り口（左 ⇔ 右）を切り替える */
+  /** L字階段の曲がる向き・U字折返しの登り口・コの字階段の出入り口の側を左右で切り替える */
   flipSelectedStair() {
     const sel = this.ui.selection;
     if (!sel || sel.kind !== 'stair') return;
@@ -4213,7 +4213,7 @@ export class Editor2D {
       if (f) { this._polyPath(ctx, this._furnitureCorners(f)); ctx.stroke(); }
     } else if (sel.kind === 'stair') {
       const s = (floor.stairs || []).find((x) => x.id === sel.id);
-      if (s) { this._polyPath(ctx, this._stairCorners(s)); ctx.stroke(); }
+      if (s) { this._polyPath(ctx, M.stairOutlinePolygon(s)); ctx.stroke(); }
     } else if (sel.kind === 'partition') {
       const p = (floor.partitions || []).find((x) => x.id === sel.id);
       if (p) { this._polyPath(ctx, this._partitionCorners(p)); ctx.stroke(); }

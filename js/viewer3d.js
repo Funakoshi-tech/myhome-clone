@@ -609,7 +609,7 @@ export class Viewer3D {
 
   /** 最下階の階段フットプリント上に置く床板（1F 設置時） */
   _buildStairFloorPlate(stair, mat, yM = 0.005) {
-    const corners = M.stairFootprintCorners(stair);
+    const corners = M.stairOutlinePolygon(stair);
     if (corners.length < 3) return null;
     const shape = new THREE.Shape();
     corners.forEach((p, i) => {
@@ -844,8 +844,8 @@ export class Viewer3D {
   _appendStairHoles(shape, stairs, room) {
     if (!shape || !stairs?.length || !room?.polygon) return;
     for (const stair of stairs) {
-      if (!M.pointInPolygon({ x: stair.x, z: stair.z }, room.polygon)) continue;
-      const corners = M.stairFootprintCorners(stair);
+      if (!M.pointInPolygon(M.stairProbePoint(stair), room.polygon)) continue;
+      const corners = M.stairOutlinePolygon(stair);
       const hole = new THREE.Path();
       corners.forEach((p, i) => {
         const x = p.x * MM;
@@ -1511,6 +1511,108 @@ export class Viewer3D {
     }
   }
 
+  /**
+   * コの字（上下で回る）: +X 辺の下端から入り、回り段 3 段 → 直進 → 回り段 3 段で折り返して +X 辺の上端から抜ける。
+   * 最後の回り段が上階の床と同じ高さ。mirror なら −X 辺から出入りする（左右反転）。
+   */
+  _buildUWinderStair3D(group, w, d, h, mat, riserMat, mirror) {
+    const s = Math.min(w, d / 2);
+    const straightLen = d - s * 2;
+    const nStraight = straightLen > 0.05 ? straightStairStepCount(straightLen / MM) : 0;
+    const nSteps = nStraight + 6;
+    const stepH = h / nSteps;
+    const stepD = nStraight ? straightLen / nStraight : 0;
+    const treadThick = 0.04;
+    const treadW = w * 0.96;
+
+    const sx = mirror ? -1 : 1;
+    const p = (x, z) => ({ x: x * sx, z });
+    const yB = d / 2 - s; // 下の回り段と直進部の境
+    const yT = -d / 2 + s; // 直進部と上の回り段の境
+    const pivotB = p(w / 2, yB);
+    const lower = [
+      [pivotB, p(w / 2, d / 2), p(0, d / 2)],
+      [pivotB, p(0, d / 2), p(-w / 2, d / 2), p(-w / 2, d / 2 - s / 2)],
+      [pivotB, p(-w / 2, d / 2 - s / 2), p(-w / 2, yB)],
+    ];
+    lower.forEach((pts, j) => this._addStairPolyTread(group, pts, stepH * (j + 1), mat, treadThick));
+
+    for (let i = 0; i < nStraight; i++) {
+      const y = stepH * (4 + i) - treadThick / 2;
+      const z = yB - stepD * (i + 0.5);
+      this._addStairTread(group, 0, y, z, treadW, stepD * 0.92, mat, treadThick);
+      this._addStairRiser(group, 0, stepH * (3 + i) + stepH / 2, yB - stepD * i, treadW, stepH, 0.012, riserMat);
+    }
+
+    const pivotT = p(w / 2, yT);
+    const upper = [
+      [pivotT, p(-w / 2, yT), p(-w / 2, -d / 2 + s / 2)],
+      [pivotT, p(-w / 2, -d / 2 + s / 2), p(-w / 2, -d / 2), p(0, -d / 2)],
+      [pivotT, p(0, -d / 2), p(w / 2, -d / 2)],
+    ];
+    upper.forEach((pts, j) => this._addStairPolyTread(group, pts, stepH * (nStraight + 4 + j), mat, treadThick));
+  }
+
+  /**
+   * コの字（中央が空く）: +X 辺の下端から −X へ直進 → 回り段 3 段 → −Z へ直進 → 回り段 3 段 → +X へ直進して +X 辺の上端から抜ける。
+   * 最後の段が上階の床と同じ高さ。mirror なら −X 辺から出入りする（左右反転）。
+   */
+  _buildUOpenStair3D(group, w, d, h, mat, riserMat, mirror) {
+    const nRun = straightStairStepCount((w / 2) / MM);
+    const nMid = straightStairStepCount((d / 3) / MM);
+    const nSteps = nRun + 3 + nMid + 3 + nRun;
+    const stepH = h / nSteps;
+    const stepX = (w / 2) / nRun;
+    const stepZ = (d / 3) / nMid;
+    const treadThick = 0.04;
+    const bandD = d / 3;
+    const colW = w / 2;
+
+    const sx = mirror ? -1 : 1;
+    const p = (x, z) => ({ x: x * sx, z });
+    const yB = d / 6; // 下の帯と中央の境
+    const yT = -d / 6; // 中央と上の帯の境
+
+    // 下の帯（登り口から −X へ）
+    for (let i = 0; i < nRun; i++) {
+      const x = sx * (w / 2 - stepX * (i + 0.5));
+      this._addStairTread(group, x, stepH * (i + 1) - treadThick / 2, d / 2 - bandD / 2, stepX * 0.92, bandD * 0.96, mat, treadThick);
+      if (i > 0) this._addStairRiser(group, sx * (w / 2 - stepX * i), stepH * i + stepH / 2, d / 2 - bandD / 2, 0.012, stepH, bandD * 0.96, riserMat);
+    }
+
+    const pivotB = p(0, yB);
+    const lower = [
+      [pivotB, p(0, d / 2), p(-w / 4, d / 2)],
+      [pivotB, p(-w / 4, d / 2), p(-w / 2, d / 2), p(-w / 2, d / 2 - bandD / 2)],
+      [pivotB, p(-w / 2, d / 2 - bandD / 2), p(-w / 2, yB)],
+    ];
+    lower.forEach((pts, j) => this._addStairPolyTread(group, pts, stepH * (nRun + 1 + j), mat, treadThick));
+
+    // 中央（−Z へ）
+    const midBase = nRun + 3;
+    for (let i = 0; i < nMid; i++) {
+      this._addStairTread(group, sx * -w / 4, stepH * (midBase + i + 1) - treadThick / 2, yB - stepZ * (i + 0.5), colW * 0.96, stepZ * 0.92, mat, treadThick);
+      this._addStairRiser(group, sx * -w / 4, stepH * (midBase + i) + stepH / 2, yB - stepZ * i, colW * 0.96, stepH, 0.012, riserMat);
+    }
+
+    const upperBase = midBase + nMid;
+    const pivotT = p(0, yT);
+    const upper = [
+      [pivotT, p(-w / 2, yT), p(-w / 2, -d / 2 + bandD / 2)],
+      [pivotT, p(-w / 2, -d / 2 + bandD / 2), p(-w / 2, -d / 2), p(-w / 4, -d / 2)],
+      [pivotT, p(-w / 4, -d / 2), p(0, -d / 2)],
+    ];
+    upper.forEach((pts, j) => this._addStairPolyTread(group, pts, stepH * (upperBase + 1 + j), mat, treadThick));
+
+    // 上の帯（+X へ。最後の段が上階の床と同じ高さ）
+    const topBase = upperBase + 3;
+    for (let i = 0; i < nRun; i++) {
+      const x = sx * stepX * (i + 0.5);
+      this._addStairTread(group, x, stepH * (topBase + i + 1) - treadThick / 2, -d / 2 + bandD / 2, stepX * 0.92, bandD * 0.96, mat, treadThick);
+      this._addStairRiser(group, sx * stepX * i, stepH * (topBase + i) + stepH / 2, -d / 2 + bandD / 2, 0.012, stepH, bandD * 0.96, riserMat);
+    }
+  }
+
   _buildStraightStair3D(group, w, d, h, mat, riserMat) {
     const nSteps = straightStairStepCount(d / MM); // 2D の記号と同じ段の数
     const stepH = h / nSteps;
@@ -1589,65 +1691,6 @@ export class Viewer3D {
       this._addStairTread(group, sx * w / 4, y, z, runW, runDepth * 0.92, mat, treadThick);
     }
     this._addStairTread(group, sx * w / 4, h - treadThick / 2, -d / 2 + runDepth * 0.46, runW, runDepth * 0.88, mat, treadThick);
-  }
-
-  _buildWindingStair3D(group, w, d, h, mat) {
-    const nSteps = Math.max(8, Math.min(14, Math.round((w + d) / 0.25)));
-    const stepH = h / nSteps;
-    const treadThick = 0.04;
-    const fanX = -w / 2;
-    const fanZ = d / 2;
-    const fanR = Math.min(w * 0.75, d * 0.55);
-    const nFan = Math.max(4, Math.round(nSteps * 0.55));
-
-    for (let i = 0; i < nFan; i++) {
-      const ang = (Math.PI * 0.07) + (Math.PI * 0.43 * (i + 0.5)) / nFan;
-      const y = stepH * (i + 1) - treadThick / 2;
-      const cx = fanX + fanR * 0.7 * Math.cos(ang);
-      const cz = fanZ - fanR * 0.7 * Math.sin(ang);
-      const tw = fanR * 0.28;
-      const td = fanR * 0.22;
-      this._addStairTread(group, cx, y, cz, tw, td, mat, treadThick);
-    }
-
-    const nStraight = nSteps - nFan;
-    const stepD = (d * 0.45) / Math.max(1, nStraight);
-    for (let i = 0; i < nStraight; i++) {
-      const stepIdx = nFan + i + 1;
-      const y = stepH * stepIdx - treadThick / 2;
-      const z = d / 2 - stepD * (i + 0.5);
-      this._addStairTread(group, w * 0.15, y, z, w * 0.7, stepD * 0.92, mat, treadThick);
-    }
-    this._addStairTread(group, w * 0.15, h - treadThick / 2, -d / 2 + stepD * 0.46, w * 0.7, stepD * 0.88, mat, treadThick);
-  }
-
-  _buildSpiralStair3D(group, w, d, h, mat) {
-    const r = Math.min(w, d) * 0.42;
-    const nSteps = Math.max(8, Math.min(16, Math.round(h / 0.18)));
-    const stepH = h / nSteps;
-    const treadThick = 0.04;
-    const treadLen = r * 0.78;
-
-    for (let i = 0; i < nSteps; i++) {
-      const ang = (Math.PI * 2 * i) / nSteps;
-      const y = stepH * (i + 1) - treadThick / 2;
-      const cx = Math.cos(ang) * r * 0.55;
-      const cz = Math.sin(ang) * r * 0.55;
-      const geo = new THREE.BoxGeometry(treadLen, treadThick, r * 0.32);
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(cx, y, cz);
-      mesh.rotation.y = -ang;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-    }
-
-    const postMat = new THREE.MeshStandardMaterial({ color: 0xb8956a, roughness: 0.85 });
-    const postGeo = new THREE.CylinderGeometry(r * 0.12, r * 0.12, h * 0.98, 12);
-    const post = new THREE.Mesh(postGeo, postMat);
-    post.position.set(0, h / 2, 0);
-    post.castShadow = true;
-    group.add(post);
   }
 
   /**
@@ -1731,6 +1774,31 @@ export class Viewer3D {
       return;
     }
 
+    if (stairType === 'u_winder') {
+      // 出入り口の辺の上端と下端は開口。反対側の辺・上の辺・下の辺・出入り口の辺の中ほどを囲う
+      const s = Math.min(w, d / 2);
+      const sx = mirror ? -1 : 1;
+      const [outerEdge, openEdge] = mirror ? [1, 3] : [3, 1];
+      panel(outerEdge, -sx * (w / 2 + t / 2), 0, t, d);
+      panel(0, 0, -d / 2 - t / 2, w, t);
+      panel(2, 0, d / 2 + t / 2, w, t);
+      if (d - s * 2 > 0.01) panel(openEdge, sx * (w / 2 + t / 2), 0, t, d - s * 2);
+      return;
+    }
+
+    if (stairType === 'u_open') {
+      // 出入り口の辺の上端と下端は開口。反対側の辺・上の辺・下の辺と、空いている所の 3 方を囲う
+      const sx = mirror ? -1 : 1;
+      panel(mirror ? 1 : 3, -sx * (w / 2 + t / 2), 0, t, d);
+      panel(0, 0, -d / 2 - t / 2, w, t);
+      panel(2, 0, d / 2 + t / 2, w, t);
+      // 空いている所の壁は外壁の有無によらず立てる（辺番号なし）
+      panel(-1, sx * t / 2, 0, t, d / 3);
+      panel(-1, sx * w / 4, -d / 6 + t / 2, w / 2, t);
+      panel(-1, sx * w / 4, d / 6 - t / 2, w / 2, t);
+      return;
+    }
+
     if (stairType === 'l_shape') {
       // 登り口 +Z・出口 −X は開口。−Z 背壁と +X 上段のみ囲う
       panel(3, -w / 2 - t / 2, d / 4, t, d / 2);
@@ -1746,18 +1814,6 @@ export class Viewer3D {
       return;
     }
 
-    if (stairType === 'winding') {
-      // 登り口 +Z は開口。−Z 出口側も開口
-      panel(1, w / 2 + t / 2, 0, t, d);
-      panel(3, -w / 2 - t / 2, -d / 4, t, d * 0.75);
-      return;
-    }
-
-    // spiral: 登り口 +Z を開け、側面のみ囲う
-    const r = Math.min(w, d) * 0.48;
-    for (const [cx, cz] of [[-r / 2, 0], [r / 2, 0]]) {
-      this._addWallPanel(group, cx, wh / 2, cz, t, wh, r * 0.55, wallMat);
-    }
   }
 
   _buildStair(stair, riseMM, sourceFloor) {
@@ -1789,17 +1845,17 @@ export class Viewer3D {
       case 'l_winder_bottom':
         this._buildLWinderBottomStair3D(group, w, d, h, mat, riserMat, !!stair.mirror);
         break;
+      case 'u_winder':
+        this._buildUWinderStair3D(group, w, d, h, mat, riserMat, !!stair.mirror);
+        break;
+      case 'u_open':
+        this._buildUOpenStair3D(group, w, d, h, mat, riserMat, !!stair.mirror);
+        break;
       case 'l_shape':
         this._buildLStair3D(group, w, d, h, mat);
         break;
       case 'u_shape':
         this._buildUStair3D(group, w, d, h, mat, !!stair.mirror);
-        break;
-      case 'winding':
-        this._buildWindingStair3D(group, w, d, h, mat);
-        break;
-      case 'spiral':
-        this._buildSpiralStair3D(group, w, d, h, mat);
         break;
       default:
         this._buildStraightStair3D(group, w, d, h, mat, riserMat);
