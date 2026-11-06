@@ -34,7 +34,7 @@ export class PlanList {
     this.store = store;
     this.onOpen = callbacks.onOpen;
     this.searchQuery = '';
-    this.sortKey = 'order-manual';
+    this.sortKey = 'updated-desc';
     this._drag = null;
 
     this.root = document.getElementById('plan-list-screen');
