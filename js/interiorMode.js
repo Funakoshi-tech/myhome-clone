@@ -7,6 +7,7 @@ import * as M from './model.js';
 
 const MM = 0.001;
 const PITCH_LIMIT = Math.PI / 2 - 0.05;
+const TURN_SPEED_RAD_S = Math.PI * 0.6; // ← → でその場で向きを変える速さ（約 108°/秒）
 
 export class InteriorMode {
   constructor(viewer) {
@@ -340,8 +341,17 @@ export class InteriorMode {
     let fx = 0, fz = 0;
     if (this._keys.has('KeyW') || this._keys.has('ArrowUp')) fz -= 1;
     if (this._keys.has('KeyS') || this._keys.has('ArrowDown')) fz += 1;
-    if (this._keys.has('KeyA') || this._keys.has('ArrowLeft')) fx -= 1;
-    if (this._keys.has('KeyD') || this._keys.has('ArrowRight')) fx += 1;
+    // A / D は横歩き、← / → はその場で向きを変える
+    if (this._keys.has('KeyA')) fx -= 1;
+    if (this._keys.has('KeyD')) fx += 1;
+    let turn = 0;
+    if (this._keys.has('ArrowLeft')) turn += 1;
+    if (this._keys.has('ArrowRight')) turn -= 1;
+    if (turn !== 0) {
+      this.yaw += turn * TURN_SPEED_RAD_S * dt;
+      this._updateCamera();
+      this._drawMinimap();
+    }
 
     if (fx !== 0 || fz !== 0) {
       const len = Math.hypot(fx, fz) || 1;
