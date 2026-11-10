@@ -176,6 +176,8 @@ function _snapFurnitureToWalls(x, z, f, floor) {
 // ============================================================================
 /** 複数選択できる要素の種類 */
 const GROUP_KINDS = new Set(['room', 'furniture', 'stair', 'partition']);
+/** 未選択でも右クリックで選択してメニューを出せるもの */
+const CONTEXT_MENU_KINDS = new Set(['room', 'furniture', 'stair', 'partition', 'opening']);
 
 export class Editor2D {
   /**
@@ -527,8 +529,8 @@ export class Editor2D {
     if (this.ctxMenu) this.ctxMenu.hidden = true;
   }
 
-  _clickMenuMeta(e, sx, sy) {
-    return { clickSx: sx, clickSy: sy, clientX: e.clientX, clientY: e.clientY };
+  _clickStartMeta(sx, sy) {
+    return { clickSx: sx, clickSy: sy };
   }
 
   _revertDrag(d) {
@@ -756,17 +758,24 @@ export class Editor2D {
           if (ei >= 0) { this._siteInsertVertex(ei, w); return; }
         }
       }
-      // 選択していない家具の上 → その家具を選び、プロパティ欄（寸法）を見せてメニューも出す
-      const furn = this._furnitureAt(sx, sy);
+      // 選択していないパーツの上 → それを選んでメニューを出す（家具はプロパティ欄の寸法も見せる）
       const onSelection = this._isOnSelection(w, sx, sy);
-      if (furn && !(onSelection && ['furniture', 'group'].includes(this.ui.selection?.kind))) {
-        this.ui.selection = { kind: 'furniture', id: furn.id };
+      const hit = this._hitTest(w, sx, sy);
+      const current = this.ui.selection;
+      const canPick = hit && CONTEXT_MENU_KINDS.has(hit.kind)
+        && !(onSelection && current?.kind === 'group')
+        && !(hit.kind === current?.kind && hit.id === current?.id)
+        && !(hit.kind === 'room' && onSelection);
+      if (canPick) {
+        this.ui.selection = { kind: hit.kind, id: hit.id };
         this.hoverVertex = null;
         this.hoverEdge = null;
         this.hoverWallKey = null;
         this.onUI();
         this.draw();
-        document.getElementById('props-pane')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        if (hit.kind === 'furniture') {
+          document.getElementById('props-pane')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
         this._showContextMenu(e.clientX, e.clientY);
         return;
       }
@@ -911,7 +920,7 @@ export class Editor2D {
               startW: w, origOffset: op.offsetMM,
               origWallId: op.wallId,
               origWallEdgeKey: op.wallEdgeKey,
-              ...this._clickMenuMeta(e, sx, sy),
+              ...this._clickStartMeta(sx, sy),
             };
             return;
           }
@@ -935,7 +944,7 @@ export class Editor2D {
         if (this._furnitureScreenHit(sx, sy, f)) {
           this.drag = {
             kind: 'move-furniture', id: f.id, startW: w, ox: f.x, oz: f.z,
-            ...this._clickMenuMeta(e, sx, sy),
+            ...this._clickStartMeta(sx, sy),
           };
           return;
         }
@@ -973,7 +982,7 @@ export class Editor2D {
         if (M.pointInOrientedRect(w, s.x, s.z, s.widthMM, s.depthMM, s.rotationDeg || 0)) {
           this.drag = {
             kind: 'move-stair', id: s.id, startW: w, ox: s.x, oz: s.z,
-            ...this._clickMenuMeta(e, sx, sy),
+            ...this._clickStartMeta(sx, sy),
           };
           return;
         }
@@ -996,7 +1005,7 @@ export class Editor2D {
         if (this._partitionHitDist(sx, sy, p) <= 16) {
           this.drag = {
             kind: 'move-partition', id: p.id, startW: w, ox: p.x, oz: p.z,
-            ...this._clickMenuMeta(e, sx, sy),
+            ...this._clickStartMeta(sx, sy),
           };
           return;
         }
@@ -1095,7 +1104,7 @@ export class Editor2D {
           } else {
             this.drag = {
               kind: 'move-furniture', id: hit.id, startW: w, ox: f.x, oz: f.z,
-              ...this._clickMenuMeta(e, sx, sy),
+              ...this._clickStartMeta(sx, sy),
             };
           }
         }
@@ -1112,7 +1121,7 @@ export class Editor2D {
           } else {
             this.drag = {
               kind: 'move-stair', id: hit.id, startW: w, ox: s.x, oz: s.z,
-              ...this._clickMenuMeta(e, sx, sy),
+              ...this._clickStartMeta(sx, sy),
             };
           }
         }
@@ -1129,7 +1138,7 @@ export class Editor2D {
           } else {
             this.drag = {
               kind: 'move-partition', id: hit.id, startW: w, ox: p.x, oz: p.z,
-              ...this._clickMenuMeta(e, sx, sy),
+              ...this._clickStartMeta(sx, sy),
             };
           }
         }
@@ -1142,7 +1151,7 @@ export class Editor2D {
             startW: w, origOffset: op.offsetMM,
             origWallId: op.wallId,
             origWallEdgeKey: op.wallEdgeKey,
-            ...this._clickMenuMeta(e, sx, sy),
+            ...this._clickStartMeta(sx, sy),
           };
         }
       } else if (hit.kind === 'room') {
@@ -1403,11 +1412,10 @@ export class Editor2D {
     const d = this.drag;
     const { sx, sy } = this._mouse(e);
 
-    // 左クリック短押し（ほぼ移動なし）→ コンテキストメニュー
+    // 左クリック短押し（ほぼ移動なし）→ 移動として扱わない
     if (d.clickSx != null && Math.hypot(sx - d.clickSx, sy - d.clickSy) < 6) {
       this._revertDrag(d);
       this.drag = null;
-      this._showContextMenu(d.clientX, d.clientY);
       this.draw();
       return;
     }
