@@ -1707,6 +1707,11 @@ function boot() {
     onOpen: (id) => openPlanEditor(id),
   });
 
+  const saveErrorBanner = $('#save-error-banner');
+  saveErrorBanner.hidden = !store.saveError;
+  store.onSaveErrorChange = (err) => { saveErrorBanner.hidden = !err; };
+  $('#save-error-export').addEventListener('click', () => store.exportCurrentJSON());
+
   setTool('select');
   setFloor('1F');
   setView('2d');

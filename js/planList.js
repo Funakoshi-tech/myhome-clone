@@ -71,6 +71,11 @@ export class PlanList {
 
     document.getElementById('plan-list-brand')?.addEventListener('click', () => this.render());
 
+    document.getElementById('plan-list-backup')?.addEventListener('click', () => this._openBackups());
+    document.getElementById('backup-close')?.addEventListener('click', () => {
+      document.getElementById('backup-modal').hidden = true;
+    });
+
     document.addEventListener('click', (e) => {
       if (e.target.closest('.plan-card-menu-btn') || e.target.closest('.plan-card-actions')) return;
       this._closeMenus();
@@ -526,6 +531,50 @@ export class PlanList {
     const ids = [...this.grid.querySelectorAll('.plan-card')].map((c) => c.dataset.id);
     this._drag = null;
     this.store.setOrder(ids);
+  }
+
+  /** 自動バックアップの一覧を開く（時点ごとに折りたたみ、プラン単位で復元する） */
+  async _openBackups() {
+    const list = document.getElementById('backup-list');
+    list.textContent = '';
+    document.getElementById('backup-modal').hidden = false;
+    const backups = await this.store.listBackups();
+    if (!backups.length) {
+      const empty = document.createElement('p');
+      empty.className = 'modal-message';
+      empty.textContent = 'バックアップはまだありません。';
+      list.appendChild(empty);
+      return;
+    }
+    for (const backup of backups) {
+      const group = document.createElement('details');
+      group.className = 'backup-group';
+      const summary = document.createElement('summary');
+      summary.textContent = `${formatDateTime(backup.savedAt)}（${backup.plans.length} 件）`;
+      group.appendChild(summary);
+      for (const item of backup.plans) {
+        const row = document.createElement('div');
+        row.className = 'backup-row';
+        const name = document.createElement('span');
+        name.className = 'backup-row-name';
+        name.textContent = item.name;
+        const time = document.createElement('span');
+        time.className = 'backup-row-time';
+        time.textContent = `更新 ${formatDateTime(item.updatedAt)}`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn';
+        btn.textContent = '復元';
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          const id = await this.store.restorePlanFromBackup(backup.savedAt, item.id);
+          btn.textContent = id ? '復元しました' : '復元できません';
+        });
+        row.append(name, time, btn);
+        group.appendChild(row);
+      }
+      list.appendChild(group);
+    }
   }
 
   async _createPlan() {

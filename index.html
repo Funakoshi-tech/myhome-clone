@@ -37,6 +37,7 @@
     <main class="plan-list-main">
       <div class="plan-list-title-row">
         <h1>マイプラン一覧</h1>
+        <button id="plan-list-backup" class="btn" type="button" title="自動バックアップからプランを戻す">バックアップから復元</button>
         <button id="plan-list-new" class="btn btn-primary" type="button">+ プラン新規作成</button>
       </div>
       <div class="plan-list-toolbar">
@@ -395,6 +396,22 @@
       <div class="btn-row">
         <button id="app-prompt-cancel" class="btn" type="button">キャンセル</button>
         <button id="app-prompt-ok" class="btn btn-primary" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="save-error-banner" class="save-error-banner" role="alert" hidden>
+    <span>保存できませんでした。保存容量の上限に達している可能性があります。このまま閉じると最近の変更が失われます。</span>
+    <button id="save-error-export" class="btn" type="button">編集中のプランをJSONで書き出す</button>
+  </div>
+
+  <div id="backup-modal" class="modal" hidden>
+    <div class="modal-box backup-modal-box">
+      <h4>バックアップから復元</h4>
+      <p class="modal-message">今あるプランは変更されません。選んだプランは「（復元）」を付けて一覧に追加されます。</p>
+      <div id="backup-list" class="backup-list"></div>
+      <div class="btn-row">
+        <button id="backup-close" class="btn" type="button">閉じる</button>
       </div>
     </div>
   </div>

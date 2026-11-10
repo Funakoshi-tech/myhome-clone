@@ -1424,10 +1424,12 @@ export function normalizePlan(plan) {
 
 /** site.backgroundImage の正規化（既存 null はそのまま） */
 export function normalizeBackgroundImage(raw) {
-  if (!raw || typeof raw !== 'object' || !raw.dataUrl) return null;
+  if (!raw || typeof raw !== 'object' || (!raw.dataUrl && !raw.imageRef)) return null;
   const scale = raw.scaleMMperPx;
   return {
-    dataUrl: raw.dataUrl,
+    dataUrl: raw.dataUrl ?? null,
+    // 画像本体をまだ読み込めていないときの参照（読み込めない間も参照を失わないように残す）
+    ...(raw.dataUrl ? {} : { imageRef: raw.imageRef }),
     naturalWidthPx: raw.naturalWidthPx ?? 0,
     naturalHeightPx: raw.naturalHeightPx ?? 0,
     scaleMMperPx: typeof scale === 'number' && scale > 0 ? scale : null,
