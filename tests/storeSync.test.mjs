@@ -80,6 +80,61 @@ test('別の窓で削除したプランが、古い窓の保存で復活しな�
   assert.ok(!savedNames().includes('消すプラン'));
 });
 
+test('古い版の窓が古い内容で上書きしても、手元のプランは消えず保存し直される', () => {
+  reset();
+  const s = open();
+  s.renamePlan('もとのプラン');
+  const stale = mem.get(LS_KEY);
+  const id = s.newPlan('新しいプラン');
+  s.select(s.order[1]);
+  mem.set(LS_KEY, stale);
+  s.save();
+  assert.ok(s.plans[id]);
+  assert.ok(savedNames().includes('新しいプラン'));
+});
+
+test('古い版の上書きで削除の記録が消えても、削除したプランは復活しない', () => {
+  reset();
+  const s = open();
+  const gone = s.newPlan('消すプラン');
+  const keep = s.newPlan('残すプラン');
+  const stale = mem.get(LS_KEY);
+  s.select(keep);
+  s.deletePlan(gone);
+  mem.set(LS_KEY, stale);
+  s.save();
+  assert.ok(!s.plans[gone]);
+  assert.ok(!savedNames().includes('消すプラン'));
+});
+
+test('別の窓で削除されたプランは、編集中でなければ最後に開いていたものでも消える', () => {
+  reset();
+  const a = open();
+  a.isEditingCurrent = () => false;
+  const id = a.newPlan('消すプラン');
+  const b = open();
+  b.select(b.order[1]);
+  b.deletePlan(id);
+  a.syncFromOtherWindows();
+  assert.ok(!a.plans[id]);
+  assert.ok(a.current());
+  a.save();
+  assert.ok(!savedNames().includes('消すプラン'));
+});
+
+test('別の窓で削除されても、編集中のプランは手元に残る', () => {
+  reset();
+  const a = open();
+  const id = a.newPlan('編集中のプラン');
+  const b = open();
+  b.select(b.order[1]);
+  b.deletePlan(id);
+  a.syncFromOtherWindows();
+  assert.ok(a.plans[id]);
+  a.save();
+  assert.ok(savedNames().includes('編集中のプラン'));
+});
+
 test('別の窓の変更を受け取ると表示用のデータも更新される', () => {
   reset();
   const a = open();

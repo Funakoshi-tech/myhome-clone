@@ -1707,6 +1707,8 @@ function boot() {
     onOpen: (id) => openPlanEditor(id),
   });
 
+  store.isEditingCurrent = () => screen === 'editor';
+
   const saveErrorBanner = $('#save-error-banner');
   saveErrorBanner.hidden = !store.saveError;
   store.onSaveErrorChange = (err) => { saveErrorBanner.hidden = !err; };

@@ -95,7 +95,7 @@ export class Store {
 
     this._lastSavedText = null;       // この窓が最後に読み書きした LocalStorage の内容
     this._dirtyIds = new Set();       // この窓で変更し、まだ保存できていないプラン
-    this._removedIds = new Set();     // この窓で削除し、まだ保存できていないプラン
+    this._deletedIds = {};            // 削除されたプランの記録（id -> 削除時刻）。保存データにも持つ
     this._orderDirty = false;
 
     this._lastBackupAt = 0;
@@ -105,6 +105,8 @@ export class Store {
     this.saveError = null;
     /** @type {null | ((err: Error|null) => void)} */
     this.onSaveErrorChange = null;
+    /** @type {() => boolean} この窓で current のプランを編集中か（編集中は他の窓の削除でも消さない） */
+    this.isEditingCurrent = () => true;
 
     this._init();
   }
@@ -122,6 +124,7 @@ export class Store {
         ? raw.currentId
         : this.order[0];
       this._lastSavedText = txt;
+      this._deletedIds = raw.deletedIds || {};
     } else {
       // 初回: サンプル空プランを1つ作る
       const id = uid('plan');
@@ -201,7 +204,12 @@ export class Store {
   }
 
   _serialize() {
-    const data = { plans: this.plans, order: this.order, currentId: this.currentId };
+    const data = {
+      plans: this.plans,
+      order: this.order,
+      currentId: this.currentId,
+      deletedIds: this._deletedIds,
+    };
     return JSON.stringify(data, (key, value) => {
       if (key !== 'backgroundImage' || !value?.dataUrl) return value;
       const id = this._imageKeyFor(value.dataUrl);
@@ -227,9 +235,15 @@ export class Store {
     let changed = false;
     let skipped = false;
 
+    // 編集中のプランや未保存の変更があるプランは、他の窓で削除されていても手元に残す
+    const mustKeep = (id) => this._dirtyIds.has(id) || (id === this.currentId && this.isEditingCurrent());
+    for (const [id, deletedAt] of Object.entries(raw.deletedIds || {})) {
+      if (!mustKeep(id)) this._deletedIds[id] = deletedAt;
+    }
+
     for (const id of raw.order) {
       const saved = raw.plans[id];
-      if (!saved || this._removedIds.has(id) || this._dirtyIds.has(id)) continue;
+      if (!saved || this._deletedIds[id] || this._dirtyIds.has(id)) continue;
       const mine = this.plans[id];
       if (mine && (saved.meta?.updatedAt || 0) <= (mine.meta?.updatedAt || 0)) continue;
       if (protectCurrent && id === this.currentId) {
@@ -242,9 +256,10 @@ export class Store {
       changed = true;
     }
 
-    // 他の窓で削除されたプラン（表示中のものは残す）
+    // 削除の記録があるものだけ手元からも消す。
+    // 保存データに無いだけでは消さない（古い版の窓が古い内容で上書きした場合に、手元の分まで失わないように）
     for (const id of Object.keys(this.plans)) {
-      if (raw.plans[id] || this._dirtyIds.has(id) || id === this.currentId) continue;
+      if (!this._deletedIds[id] || mustKeep(id)) continue;
       delete this.plans[id];
       changed = true;
     }
@@ -260,15 +275,15 @@ export class Store {
       this.order = nextOrder;
       changed = true;
     }
+    if (!this.plans[this.currentId] && this.order.length) this.currentId = this.order[0];
 
     if (!skipped) this._lastSavedText = txt;
     return changed;
   }
 
-  /** @param {{ touched?: string[], removed?: string[], orderChanged?: boolean }} [change] この窓で変更した内容 */
-  _persist({ touched = [], removed = [], orderChanged = false } = {}) {
+  /** @param {{ touched?: string[], orderChanged?: boolean }} [change] この窓で変更した内容 */
+  _persist({ touched = [], orderChanged = false } = {}) {
     touched.forEach((id) => this._dirtyIds.add(id));
-    removed.forEach((id) => this._removedIds.add(id));
     if (orderChanged) this._orderDirty = true;
 
     this._mergeExternalChanges();
@@ -277,7 +292,6 @@ export class Store {
       localStorage.setItem(LS_KEY, text);
       this._lastSavedText = text;
       this._dirtyIds.clear();
-      this._removedIds.clear();
       this._orderDirty = false;
       this._setSaveError(null);
       this._maybeBackup(text);
@@ -538,12 +552,13 @@ export class Store {
       return;
     }
     delete this.plans[id];
+    this._deletedIds[id] = Date.now();
     const idx = this.order.indexOf(id);
     this.order.splice(idx, 1);
     if (this.currentId === id) {
       this.currentId = this.order[Math.max(0, idx - 1)];
     }
-    this._persist({ removed: [id] });
+    this._persist();
     this.notify();
   }
 
