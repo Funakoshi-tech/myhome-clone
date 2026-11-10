@@ -880,6 +880,63 @@ export function translatePolygon(polygon, dx, dz) {
   return polygon.map((p) => ({ ...p, x: p.x + dx, z: p.z + dz }));
 }
 
+/**
+ * 階の中の部屋・家具・階段・追加壁をまとめて平行移動する。
+ * 移動する部屋の壁は太さや建具を引き継ぎ、消した壁（間口）の辺も一緒に動かす。
+ * @param {{ kind: string, id: string }[]} items
+ */
+export function translateFloorItems(floor, items, dx, dz, plan = null) {
+  const idsOf = (kind) => new Set(items.filter((it) => it.kind === kind).map((it) => it.id));
+  const roomIds = idsOf('room');
+  const moved = (floor.rooms || []).filter((r) => roomIds.has(r.id));
+
+  if (moved.length) {
+    // 辺のキーは丸めてあるので、計算し直しではなく部屋の実際の座標から移動後のキーを求める
+    const movedKeys = new Map();
+    for (const r of moved) {
+      r.polygon.forEach((a, i) => {
+        const b = r.polygon[(i + 1) % r.polygon.length];
+        movedKeys.set(wallEdgeKey(a, b), wallEdgeKey(
+          { x: a.x + dx, z: a.z + dz },
+          { x: b.x + dx, z: b.z + dz },
+        ));
+      });
+    }
+    const otherKeys = new Set();
+    for (const r of floor.rooms || []) {
+      if (roomIds.has(r.id)) continue;
+      r.polygon.forEach((a, i) => otherKeys.add(wallEdgeKey(a, r.polygon[(i + 1) % r.polygon.length])));
+    }
+    const removed = new Set();
+    for (const key of floor.removedWallEdges || []) {
+      if (movedKeys.has(key)) removed.add(movedKeys.get(key));
+      if (otherKeys.has(key) || !movedKeys.has(key)) removed.add(key);
+    }
+    floor.removedWallEdges = [...removed];
+    for (const room of moved) room.polygon = translatePolygon(room.polygon, dx, dz);
+    // 先に壁も動かしておくと、作り直しで太さと建具の割り当てが引き継がれる
+    for (const wall of floor.walls || []) {
+      if (!roomIds.has(inferWallRoomId(wall))) continue;
+      wall.start = { ...wall.start, x: wall.start.x + dx, z: wall.start.z + dz };
+      wall.end = { ...wall.end, x: wall.end.x + dx, z: wall.end.z + dz };
+    }
+  }
+
+  const shift = (list, ids) => {
+    for (const o of list || []) {
+      if (!ids.has(o.id)) continue;
+      o.x += dx;
+      o.z += dz;
+    }
+  };
+  shift(floor.furniture, idsOf('furniture'));
+  shift(floor.stairs, idsOf('stair'));
+  shift(floor.partitions, idsOf('partition'));
+
+  if (moved.length) rebuildFloorWalls(floor, plan);
+  else syncStairWallOpenings(floor, plan);
+}
+
 // ---- 既定データ -------------------------------------------------------------
 export function defaultFloor(id, level) {
   return {

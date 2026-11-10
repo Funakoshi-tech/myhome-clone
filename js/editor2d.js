@@ -174,6 +174,9 @@ function _snapFurnitureToWalls(x, z, f, floor) {
 }
 
 // ============================================================================
+/** 複数選択できる要素の種類 */
+const GROUP_KINDS = new Set(['room', 'furniture', 'stair', 'partition']);
+
 export class Editor2D {
   /**
    * @param {HTMLCanvasElement} canvas
@@ -756,7 +759,7 @@ export class Editor2D {
       // 選択していない家具の上 → その家具を選び、プロパティ欄（寸法）を見せてメニューも出す
       const furn = this._furnitureAt(sx, sy);
       const onSelection = this._isOnSelection(w, sx, sy);
-      if (furn && !(onSelection && this.ui.selection?.kind === 'furniture')) {
+      if (furn && !(onSelection && ['furniture', 'group'].includes(this.ui.selection?.kind))) {
         this.ui.selection = { kind: 'furniture', id: furn.id };
         this.hoverVertex = null;
         this.hoverEdge = null;
@@ -800,8 +803,8 @@ export class Editor2D {
     }
 
     // ---- select ツール ----
-    // 家具・階段の回転ハンドル（選択前でも掴める）
-    {
+    // 家具・階段の回転ハンドル（選択前でも掴める。複数選択の操作中は使わない）
+    if (!e.shiftKey && this.ui.selection?.kind !== 'group') {
       const stairRH = this._stairAtRotateHandle(sx, sy);
       if (stairRH) {
         this.ui.selection = { kind: 'stair', id: stairRH.id };
@@ -1041,6 +1044,29 @@ export class Editor2D {
     const hit = opPick
       ? { kind: 'opening', id: opPick.id }
       : this._hitTest(w, sx, sy);
+    // Shift+クリック → 部屋・家具・階段・追加壁を複数選択に足す / 外す
+    if (e.shiftKey && tool === 'select' && hit && GROUP_KINDS.has(hit.kind)) {
+      this._toggleGroupItem(hit);
+      this.hoverVertex = null;
+      this.hoverEdge = null;
+      this.hoverWallKey = null;
+      this.onUI();
+      this.draw();
+      return;
+    }
+    // 複数選択のどれかを掴む → まとめて移動
+    if (hit && this.ui.selection?.kind === 'group'
+      && this.ui.selection.items.some((it) => it.kind === hit.kind && it.id === hit.id)) {
+      const floor = this._floor();
+      this.drag = {
+        kind: 'move-group',
+        startW: w,
+        grabbed: { kind: hit.kind, id: hit.id },
+        items: this._groupMoveItems(floor, this.ui.selection.items),
+        origFloor: JSON.stringify(floor),
+      };
+      return;
+    }
     if (hit?.kind === 'wall') {
       this._selectWall(hit.wall, e.shiftKey);
       this.hoverVertex = null;
@@ -1178,6 +1204,20 @@ export class Editor2D {
         M.rebuildFloorWalls(floor, this._plan());
         this.draw();
       }
+      return;
+    }
+
+    if (d.kind === 'move-group') {
+      const dx = M.snap(w.x - d.startW.x, this._snapDiv());
+      const dz = M.snap(w.z - d.startW.z, this._snapDiv());
+      if (dx === (d.dx || 0) && dz === (d.dz || 0)) return;
+      d.dx = dx;
+      d.dz = dz;
+      d.moved = dx !== 0 || dz !== 0;
+      const floor = this._floor();
+      Object.assign(floor, JSON.parse(d.origFloor));
+      M.translateFloorItems(floor, d.items, dx, dz, this._plan());
+      this.draw();
       return;
     }
 
@@ -1374,8 +1414,33 @@ export class Editor2D {
 
     this.drag = null;
 
+    if (d.kind === 'move-group') {
+      if (!d.moved) {
+        // 動かさずに離した → 掴んだものだけの選択にする
+        this.ui.selection = d.grabbed;
+        this.onUI();
+        this.draw();
+        return;
+      }
+      // ドラッグ前に戻してから 1 回の操作として適用する（元に戻すで一度に戻せるように）
+      const floor = this._floor();
+      Object.assign(floor, JSON.parse(d.origFloor));
+      this.store.update((plan) => {
+        M.translateFloorItems(M.getFloor(plan, this.ui.floorId), d.items, d.dx, d.dz, plan);
+      });
+      return;
+    }
+
     if (d.kind === 'marquee') {
+      const inside = this._groupItemsInMarquee(d.sx, d.sy, d.ex, d.ey);
       const keys = this._wallsInMarquee(d.sx, d.sy, d.ex, d.ey);
+      // 部屋を丸ごと囲んだら複数選択。部屋を囲まず壁に触れただけなら、これまでどおり壁の選択
+      if (inside.some((it) => it.kind === 'room') || (inside.length && !keys.length)) {
+        this._setGroupSelection(d.additive ? [...this._groupItemsOfSelection(), ...inside] : inside);
+        this.onUI();
+        this.draw();
+        return;
+      }
       if (keys.length) {
         if (d.additive && this.ui.selection?.kind === 'wall') {
           const merged = new Set(this.ui.selection.edgeKeys);
@@ -1483,6 +1548,84 @@ export class Editor2D {
       }
     }
     return keys;
+  }
+
+  /** 今の選択を、複数選択の要素の配列にする（複数選択に足すときの元） */
+  _groupItemsOfSelection() {
+    const sel = this.ui.selection;
+    if (sel?.kind === 'group') return sel.items.slice();
+    return sel && GROUP_KINDS.has(sel.kind) ? [{ kind: sel.kind, id: sel.id }] : [];
+  }
+
+  /** 要素の配列を選択にする（重複は除く。0 個なら解除、1 個なら通常の選択） */
+  _setGroupSelection(items) {
+    const seen = new Set();
+    const unique = items.filter((it) => {
+      const key = `${it.kind}:${it.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (unique.length === 0) this.ui.selection = null;
+    else if (unique.length === 1) this.ui.selection = unique[0];
+    else this.ui.selection = { kind: 'group', items: unique };
+  }
+
+  _toggleGroupItem(hit) {
+    const items = this._groupItemsOfSelection();
+    const idx = items.findIndex((it) => it.kind === hit.kind && it.id === hit.id);
+    if (idx >= 0) items.splice(idx, 1);
+    else items.push({ kind: hit.kind, id: hit.id });
+    this._setGroupSelection(items);
+  }
+
+  /** 複数選択の要素の外形（世界座標） */
+  _groupItemOutline(floor, it) {
+    if (it.kind === 'room') return floor.rooms.find((x) => x.id === it.id)?.polygon || null;
+    if (it.kind === 'furniture') {
+      const f = floor.furniture.find((x) => x.id === it.id);
+      return f ? this._furnitureCorners(f) : null;
+    }
+    if (it.kind === 'stair') {
+      const s = (floor.stairs || []).find((x) => x.id === it.id);
+      return s ? M.stairOutlinePolygon(s) : null;
+    }
+    const p = (floor.partitions || []).find((x) => x.id === it.id);
+    return p ? this._partitionCorners(p) : null;
+  }
+
+  /** 範囲ドラッグの枠に丸ごと入っている部屋・家具・階段・追加壁 */
+  _groupItemsInMarquee(sx0, sy0, sx1, sy1) {
+    const floor = this._floor();
+    const a = this.screenToWorld(Math.min(sx0, sx1), Math.min(sy0, sy1));
+    const b = this.screenToWorld(Math.max(sx0, sx1), Math.max(sy0, sy1));
+    const list = [
+      ...floor.rooms.map((x) => ({ kind: 'room', id: x.id })),
+      ...floor.furniture.map((x) => ({ kind: 'furniture', id: x.id })),
+      ...(floor.stairs || []).map((x) => ({ kind: 'stair', id: x.id })),
+      ...(floor.partitions || []).map((x) => ({ kind: 'partition', id: x.id })),
+    ];
+    return list.filter((it) => {
+      const outline = this._groupItemOutline(floor, it);
+      return outline?.length && outline.every((p) => p.x >= a.x && p.x <= b.x && p.z >= a.z && p.z <= b.z);
+    });
+  }
+
+  /** 実際に動かす要素。選択した部屋の中にある家具・階段・追加壁も一緒に動かす */
+  _groupMoveItems(floor, items) {
+    const rooms = floor.rooms.filter((r) => items.some((it) => it.kind === 'room' && it.id === r.id));
+    const inSelectedRoom = (pt) => rooms.some((r) => M.pointInPolygon(pt, r.polygon));
+    const out = items.slice();
+    const add = (kind, list, pointOf) => {
+      for (const o of list || []) {
+        if (out.some((it) => it.kind === kind && it.id === o.id)) continue;
+        if (inSelectedRoom(pointOf(o))) out.push({ kind, id: o.id });
+      }
+    };
+    add('furniture', floor.furniture, (f) => ({ x: f.x, z: f.z }));
+    add('stair', floor.stairs, (s) => M.stairProbePoint(s));
+    add('partition', floor.partitions, (p) => ({ x: p.x, z: p.z }));
+    return out;
   }
 
   _selectWall(wall, additive = false) {
@@ -1612,6 +1755,12 @@ export class Editor2D {
     const sel = this.ui.selection;
     if (!sel) return false;
     const floor = this._floor();
+    if (sel.kind === 'group') {
+      return sel.items.some((it) => {
+        const outline = this._groupItemOutline(floor, it);
+        return outline ? M.pointInPolygon(w, outline) : false;
+      });
+    }
     if (sel.kind === 'room') {
       const room = floor.rooms.find((r) => r.id === sel.id);
       return room ? M.pointInPolygon(w, room.polygon) : false;
@@ -1985,7 +2134,19 @@ export class Editor2D {
     if (!sel) return;
     this.store.update((plan) => {
       const floor = M.getFloor(plan, this.ui.floorId);
-      if (sel.kind === 'furniture') {
+      if (sel.kind === 'group') {
+        const has = (kind, id) => sel.items.some((it) => it.kind === kind && it.id === id);
+        floor.furniture = floor.furniture.filter((f) => !has('furniture', f.id));
+        floor.partitions = (floor.partitions || []).filter((p) => !has('partition', p.id));
+        floor.stairs = (floor.stairs || []).filter((s) => !has('stair', s.id));
+        floor.openings = (floor.openings || []).filter((o) => !has('stair', o.autoStairId));
+        floor.rooms = floor.rooms.filter((r) => !has('room', r.id));
+        // 消した部屋の壁に付いていた建具も消す
+        floor.openings = floor.openings.filter((o) => !sel.items.some(
+          (it) => it.kind === 'room' && o.wallId?.startsWith(`w_${it.id}_`),
+        ));
+        M.rebuildFloorWalls(floor, this._plan());
+      } else if (sel.kind === 'furniture') {
         floor.furniture = floor.furniture.filter((f) => f.id !== sel.id);
       } else if (sel.kind === 'room') {
         floor.rooms = floor.rooms.filter((r) => r.id !== sel.id);
@@ -4205,7 +4366,12 @@ export class Editor2D {
     ctx.setLineDash([6, 4]);
     ctx.lineWidth = 2.5;
     ctx.strokeStyle = '#f5a623';
-    if (sel.kind === 'room') {
+    if (sel.kind === 'group') {
+      for (const it of sel.items) {
+        const outline = this._groupItemOutline(floor, it);
+        if (outline) { this._polyPath(ctx, outline); ctx.stroke(); }
+      }
+    } else if (sel.kind === 'room') {
       const r = floor.rooms.find((x) => x.id === sel.id);
       if (r) { this._polyPath(ctx, r.polygon); ctx.stroke(); }
     } else if (sel.kind === 'furniture') {

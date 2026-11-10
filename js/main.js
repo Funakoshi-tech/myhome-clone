@@ -1150,6 +1150,16 @@ function buildPropsContent() {
     body.appendChild(propNote(`内角: ${b.map((_, i) => `${i + 1}: ${SITE.interiorAngleDeg(b, i).toFixed(1)}°`).join(' / ')}`));
     body.appendChild(propNote('辺の長さを変えると、その辺の終点の頂点が辺に沿って動きます（次の辺の長さ・角度が変わります）。頂点は図上でドラッグ、右クリックで追加・削除できます。'));
     body.appendChild(deleteButton('敷地を削除'));
+  } else if (sel.kind === 'group') {
+    body.appendChild(readonlyRow('選択', `${sel.items.length} 個選択中`));
+    const labels = { room: '部屋', furniture: '家具', stair: '階段', partition: '追加壁' };
+    for (const [kind, label] of Object.entries(labels)) {
+      const n = sel.items.filter((it) => it.kind === kind).length;
+      if (n) body.appendChild(readonlyRow(label, `${n} 個`));
+    }
+    body.appendChild(readonlyRow('移動', '選択したものをドラッグ'));
+    body.appendChild(deleteButton('選択したものを削除'));
+
   } else if (sel.kind === 'wall') {
     const keys = sel.edgeKeys || [];
     const walls = floor.walls.filter((w) => keys.includes(M.wallEdgeKeyFromWall(w)));
@@ -1318,6 +1328,14 @@ function syncConstructionButtons() {
 function reconcileSelection(sel) {
   if (!sel) return null;
   const floor = M.getFloor(store.current(), ui.floorId);
+  if (sel.kind === 'group') {
+    const exists = (it) => (it.kind === 'room' ? floor.rooms
+      : it.kind === 'furniture' ? floor.furniture
+        : it.kind === 'stair' ? (floor.stairs || [])
+          : (floor.partitions || [])).some((o) => o.id === it.id);
+    const items = sel.items.filter(exists);
+    return items.length ? { ...sel, items } : null;
+  }
   if (sel.kind === 'room') {
     return floor.rooms.some((r) => r.id === sel.id) ? sel : null;
   }
@@ -1383,7 +1401,7 @@ function updateHint() {
     return;
   }
   const map = {
-    select: '選択：壁クリックで壁選択（Shift+クリックで複数 / ドラッグで範囲選択）。Delete で削除。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。Shift+壁クリックで部屋選択中も壁選択可。階段・ドアは緑丸で90°回転。追加壁は緑丸で自由回転 / ドラッグで移動 / R で90°回転。敷地は枠線をクリックで選択（頂点ドラッグ・右クリックで頂点の追加/削除）',
+    select: '選択：Shift+クリックか、部屋を丸ごと囲む範囲ドラッグで部屋・家具などを複数選択し、ドラッグでまとめて移動。壁クリックで壁選択（Shift+クリックで複数 / ドラッグで範囲選択）。Delete で削除。部屋：辺ドラッグでサイズ変更、辺右クリック→頂点追加、橙頂点右クリック→削除。Shift+壁クリックで部屋選択中も壁選択可。階段・ドアは緑丸で90°回転。追加壁は緑丸で自由回転 / ドラッグで移動 / R で90°回転。敷地は枠線をクリックで選択（頂点ドラッグ・右クリックで頂点の追加/削除）',
     site: '敷地作図：下絵に沿って頂点を順にクリック → Enter または始点クリック（ダブルクリックでも可）で確定。Shift で 45° 刻み・右クリック/Backspace で直前の点を取り消し・Esc で中止。確定後は右のプロパティで辺の長さを数値で修正できます',
     room: 'ドラッグで部屋を矩形作成（スナップ適用）。完了後は自動で選択モードへ',
     furniture: 'クリックで家具を配置。完了後は自動で選択モードへ',
