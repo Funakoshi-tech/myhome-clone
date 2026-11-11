@@ -1235,6 +1235,13 @@ function buildPropsContent() {
         flip.addEventListener('click', () => editor.flipSelectedHikite());
         body.appendChild(field(`戸の位置（${op.mirror ? '右' : '左'}）`, flip));
       }
+      if (op.type === 'oreto') {
+        const flip = document.createElement('button');
+        flip.className = 'btn';
+        flip.textContent = '反転';
+        flip.addEventListener('click', () => editor.flipSelectedHikite());
+        body.appendChild(field('開く向き', flip));
+      }
     }
     body.appendChild(readonlyRow('壁中心からの距離', `${Math.round(op.offsetMM)}mm`));
 

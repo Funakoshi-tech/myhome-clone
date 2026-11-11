@@ -122,6 +122,7 @@ export const OPENING_TYPES = [
   { id: 'hikite',  name: '片引き（1.5P）',  sillMM: 0,   heightMM: 2000, widthMM: Math.round(P_MM * 1.5) },
   { id: 'hikichigai2', name: '引違2枚（2P）', sillMM: 0, heightMM: 2000, widthMM: P_MM * 2 },
   { id: 'hikichigai3', name: '引違3枚（3P）', sillMM: 0, heightMM: 2000, widthMM: P_MM * 3 },
+  { id: 'oreto',   name: 'クローゼット折れ戸', sillMM: 0, heightMM: 2000, widthMM: Math.round(P_MM * 1.5) },
 ];
 
 /** ガラス面を描画する建具か */

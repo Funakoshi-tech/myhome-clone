@@ -242,6 +242,9 @@ export class Editor2D {
       if (op?.type === 'hikite') {
         items.push({ label: '左右反転', action: () => this.flipSelectedHikite() });
       }
+      if (op?.type === 'oreto') {
+        items.push({ label: '開く向きを反転', action: () => this.flipSelectedHikite() });
+      }
     }
     if (sel.kind === 'furniture') {
       items.push({ label: '左右反転', action: () => this.flipSelectedFurniture('flipLR') });
@@ -2331,7 +2334,10 @@ export class Editor2D {
   flipSelectedHikite() {
     const sel = this.ui.selection;
     if (!sel || sel.kind !== 'opening') return;
-    this.applyToSelection((o) => { if (o.type === 'hikite') o.mirror = !o.mirror; });
+    this.applyToSelection((o) => {
+      if (o.type === 'hikite') o.mirror = !o.mirror;
+      else if (o.type === 'oreto') o.wallFaceSign = (o.wallFaceSign ?? 1) > 0 ? -1 : 1;
+    });
     this.onUI();
   }
 
@@ -3949,6 +3955,40 @@ export class Editor2D {
     });
   }
 
+  /**
+   * クローゼット折れ戸（両開き）。壁厚内に閉じた戸を描き、開いたときに折れて出る向きへ
+   * 「＜＞」型の折れ線を描く。出る向きは緑の回転ハンドル（wallFaceSign）に従う。
+   */
+  _drawOretoSymbol(ctx, wall, opening, opts = {}) {
+    const g = this._openingWallAxes(wall, opening);
+    if (!g) return;
+    const { ax, az, ux, uz, nx, nz, halfT, oStart, oEnd } = g;
+    const style = this._openingPanelStyle({ type: 'door' }, opts);
+    const w = oEnd - oStart;
+    const nOut = halfT * 0.94;
+    // 折れて出る向き = 緑の回転ハンドルの向き（内向き法線 × wallFaceSign）
+    const rot = this._openingRotateLayout(wall, opening);
+    const towardX = rot ? rot.handleW.x - rot.centerW.x : nx;
+    const towardZ = rot ? rot.handleW.z - rot.centerW.z : nz;
+    const side = towardX * nx + towardZ * nz >= 0 ? 1 : -1;
+    const face = side * halfT;
+
+    this._drawWallLocalRect(ctx, ax, az, ux, uz, nx, nz, oStart, oEnd, -nOut * 0.35, nOut * 0.35, {
+      fill: style.fill, stroke: style.stroke, lineWidth: style.lineWidth,
+    });
+    // 左右それぞれ 2 枚の戸が半開きに折れた形（各枚の長さ = w/4、開き角 60°）
+    const leaf = w / 4;
+    const dx = leaf * Math.cos(Math.PI / 3);
+    const dn = leaf * Math.sin(Math.PI / 3) * side;
+    const lw = opts.isRef ? 1 : 1.5;
+    for (const [jamb, dir] of [[oStart, 1], [oEnd, -1]]) {
+      const apex = jamb + dir * dx;
+      const tip = jamb + dir * dx * 2;
+      this._drawWallLocalSeg(ctx, ax, az, ux, uz, nx, nz, jamb, face, apex, face + dn, { stroke: style.stroke, lineWidth: lw });
+      this._drawWallLocalSeg(ctx, ax, az, ux, uz, nx, nz, apex, face + dn, tip, face, { stroke: style.stroke, lineWidth: lw });
+    }
+  }
+
   /** 引違2枚（2P） */
   _drawHikichigai2Symbol(ctx, wall, opening, opts = {}) {
     const g = this._openingWallAxes(wall, opening);
@@ -4090,6 +4130,7 @@ export class Editor2D {
         hikite: () => this._drawHikiteSymbol(ctx, wall, opening, { isRef: true }),
         hikichigai2: () => this._drawHikichigai2Symbol(ctx, wall, opening, { isRef: true }),
         hikichigai3: () => this._drawHikichigai3Symbol(ctx, wall, opening, { isRef: true }),
+        oreto: () => this._drawOretoSymbol(ctx, wall, opening, { isRef: true }),
       };
       if (refDrawers[opening.type]) {
         refDrawers[opening.type]();
@@ -4138,6 +4179,7 @@ export class Editor2D {
       hikite: () => this._drawHikiteSymbol(ctx, wall, opening, { isRef, isSelected }),
       hikichigai2: () => this._drawHikichigai2Symbol(ctx, wall, opening, { isRef, isSelected }),
       hikichigai3: () => this._drawHikichigai3Symbol(ctx, wall, opening, { isRef, isSelected }),
+      oreto: () => this._drawOretoSymbol(ctx, wall, opening, { isRef, isSelected }),
     };
     if (planDrawers[opening.type]) {
       planDrawers[opening.type]();

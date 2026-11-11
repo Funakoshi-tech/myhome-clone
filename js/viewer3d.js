@@ -956,7 +956,7 @@ export class Viewer3D {
     if (opening.type === 'maguchi') return wall?.heightMM || opening.heightMM || 2400;
     if (opening.heightMM) return opening.heightMM;
     if (opening.type === 'sliding' || opening.type === 'door' || opening.type === 'hikite'
-      || opening.type === 'hikichigai2' || opening.type === 'hikichigai3') return 2000;
+      || opening.type === 'hikichigai2' || opening.type === 'hikichigai3' || opening.type === 'oreto') return 2000;
     return 1100;
   }
 
@@ -1234,6 +1234,24 @@ export class Viewer3D {
               addSeg(mullionW, mullionH, FT * 0.95, frameMat, cx + oW / 3, midY, 0, 2);
             }
           }
+
+          if (op.type === 'oreto') {
+            // クローゼット折れ戸（両開き・4枚）を閉じた状態で描く
+            const doorMat = this._getClosetDoorMat();
+            const leaves = 4;
+            const leafW = oW / leaves;
+            const leafH = oHgtMM * MM - FW;
+            const leafT = 0.022;
+            const midY = oSillMM * MM + leafH / 2;
+            for (let i = 0; i < leaves; i++) {
+              addSeg(leafW - 0.004, leafH, leafT, doorMat, cx - oW / 2 + leafW * (i + 0.5), midY, 0, 2);
+            }
+            // 取っ手（中央の合わせ目の両側）
+            const handleY = (oSillMM + Math.min(900, oHgtMM * 0.45)) * MM;
+            for (const sx of [-1, 1]) {
+              addSeg(0.012, 0.16, leafT + 0.03, frameMat, cx + sx * 0.04, handleY, 0, 2);
+            }
+          }
         }
       }
 
@@ -1256,6 +1274,15 @@ export class Viewer3D {
       });
     }
     return this._materials.frame;
+  }
+
+  _getClosetDoorMat() {
+    if (!this._materials.closetDoor) {
+      this._materials.closetDoor = new THREE.MeshStandardMaterial({
+        color: 0xece4d6, roughness: 0.75, metalness: 0.0,
+      });
+    }
+    return this._materials.closetDoor;
   }
 
   _getGlassMat() {
