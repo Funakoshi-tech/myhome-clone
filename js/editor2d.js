@@ -3,7 +3,7 @@
 // store の同じデータを読み書きするだけ（描画専用ロジック）。
 
 import * as M from './model.js';
-import { getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, isWallMountedFurniture } from './catalog.js';
+import { getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, isWallMountedFurniture, isFoldingDoor } from './catalog.js';
 import { drawStair2d } from './stairDraw2d.js';
 import { getFurnitureIcon, requestFurnitureIcon } from './furnitureIcon2d.js';
 import { vehicleBodyColor } from './vehicleTint.js';
@@ -239,11 +239,11 @@ export class Editor2D {
         items.push({ label: '左右反転', action: () => this._toggleDoorFlip('flipLR') });
         items.push({ label: '上下反転', action: () => this._toggleDoorFlip('flipUD') });
       }
-      if (op?.type === 'hikite') {
+      if (op?.type === 'hikite' || op?.type === 'oreto1') {
         items.push({ label: '左右反転', action: () => this.flipSelectedHikite() });
       }
-      if (op?.type === 'oreto') {
-        items.push({ label: '開く向きを反転', action: () => this.flipSelectedHikite() });
+      if (isFoldingDoor(op?.type)) {
+        items.push({ label: '開く向きを反転', action: () => this.flipSelectedFoldingSide() });
       }
     }
     if (sel.kind === 'furniture') {
@@ -2330,13 +2330,20 @@ export class Editor2D {
     this.applyToSelection((f) => { f[field] = !f[field]; });
   }
 
-  /** 片引きの戸と引き込み側（左 ⇔ 右）を切り替える */
+  /** 片引きの戸と引き込み側、片開き折れ戸の吊り元（左 ⇔ 右）を切り替える */
   flipSelectedHikite() {
     const sel = this.ui.selection;
     if (!sel || sel.kind !== 'opening') return;
+    this.applyToSelection((o) => { if (o.type === 'hikite' || o.type === 'oreto1') o.mirror = !o.mirror; });
+    this.onUI();
+  }
+
+  /** 折れ戸が折れて出る側（壁の表 ⇔ 裏）を切り替える */
+  flipSelectedFoldingSide() {
+    const sel = this.ui.selection;
+    if (!sel || sel.kind !== 'opening') return;
     this.applyToSelection((o) => {
-      if (o.type === 'hikite') o.mirror = !o.mirror;
-      else if (o.type === 'oreto') o.wallFaceSign = (o.wallFaceSign ?? 1) > 0 ? -1 : 1;
+      if (isFoldingDoor(o.type)) o.wallFaceSign = (o.wallFaceSign ?? 1) > 0 ? -1 : 1;
     });
     this.onUI();
   }
@@ -3956,8 +3963,9 @@ export class Editor2D {
   }
 
   /**
-   * クローゼット折れ戸（両開き）。壁厚内に閉じた戸を描き、開いたときに折れて出る向きへ
-   * 「＜＞」型の折れ線を描く。出る向きは緑の回転ハンドル（wallFaceSign）に従う。
+   * クローゼット折れ戸。壁厚内に閉じた戸を描き、開いたときに折れて出る向きへ
+   * 「＜」型の折れ線を描く（両開きは左右から＜＞、片開き oreto1 は吊り元の片側だけ）。
+   * 出る向きは緑の回転ハンドル（wallFaceSign）、片開きの吊り元は mirror（false=始点側）に従う。
    */
   _drawOretoSymbol(ctx, wall, opening, opts = {}) {
     const g = this._openingWallAxes(wall, opening);
@@ -3976,12 +3984,16 @@ export class Editor2D {
     this._drawWallLocalRect(ctx, ax, az, ux, uz, nx, nz, oStart, oEnd, -nOut * 0.35, nOut * 0.35, {
       fill: style.fill, stroke: style.stroke, lineWidth: style.lineWidth,
     });
-    // 左右それぞれ 2 枚の戸が半開きに折れた形（各枚の長さ = w/4、開き角 60°）
-    const leaf = w / 4;
+    // 2 枚 1 組の戸が半開きに折れた形（開き角 60°）。両開きは左右に 1 組ずつ
+    const single = opening.type === 'oreto1';
+    const leaf = single ? w / 2 : w / 4;
+    const jambs = single
+      ? [opening.mirror ? [oEnd, -1] : [oStart, 1]]
+      : [[oStart, 1], [oEnd, -1]];
     const dx = leaf * Math.cos(Math.PI / 3);
     const dn = leaf * Math.sin(Math.PI / 3) * side;
     const lw = opts.isRef ? 1 : 1.5;
-    for (const [jamb, dir] of [[oStart, 1], [oEnd, -1]]) {
+    for (const [jamb, dir] of jambs) {
       const apex = jamb + dir * dx;
       const tip = jamb + dir * dx * 2;
       this._drawWallLocalSeg(ctx, ax, az, ux, uz, nx, nz, jamb, face, apex, face + dn, { stroke: style.stroke, lineWidth: lw });
@@ -4131,6 +4143,7 @@ export class Editor2D {
         hikichigai2: () => this._drawHikichigai2Symbol(ctx, wall, opening, { isRef: true }),
         hikichigai3: () => this._drawHikichigai3Symbol(ctx, wall, opening, { isRef: true }),
         oreto: () => this._drawOretoSymbol(ctx, wall, opening, { isRef: true }),
+        oreto1: () => this._drawOretoSymbol(ctx, wall, opening, { isRef: true }),
       };
       if (refDrawers[opening.type]) {
         refDrawers[opening.type]();
@@ -4180,6 +4193,7 @@ export class Editor2D {
       hikichigai2: () => this._drawHikichigai2Symbol(ctx, wall, opening, { isRef, isSelected }),
       hikichigai3: () => this._drawHikichigai3Symbol(ctx, wall, opening, { isRef, isSelected }),
       oreto: () => this._drawOretoSymbol(ctx, wall, opening, { isRef, isSelected }),
+      oreto1: () => this._drawOretoSymbol(ctx, wall, opening, { isRef, isSelected }),
     };
     if (planDrawers[opening.type]) {
       planDrawers[opening.type]();

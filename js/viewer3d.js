@@ -11,7 +11,7 @@ import * as M from './model.js';
 import * as SITE from './sitePolygon.js';
 import { computeHipRoof, faceVertices3D } from './roofModel.js';
 import { normalizeRoofSettings } from './roofSettings.js';
-import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, flooringForRoom, straightStairStepCount } from './catalog.js';
+import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, isFoldingDoor, flooringForRoom, straightStairStepCount } from './catalog.js';
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
@@ -956,7 +956,7 @@ export class Viewer3D {
     if (opening.type === 'maguchi') return wall?.heightMM || opening.heightMM || 2400;
     if (opening.heightMM) return opening.heightMM;
     if (opening.type === 'sliding' || opening.type === 'door' || opening.type === 'hikite'
-      || opening.type === 'hikichigai2' || opening.type === 'hikichigai3' || opening.type === 'oreto') return 2000;
+      || opening.type === 'hikichigai2' || opening.type === 'hikichigai3' || isFoldingDoor(opening.type)) return 2000;
     return 1100;
   }
 
@@ -1235,10 +1235,11 @@ export class Viewer3D {
             }
           }
 
-          if (op.type === 'oreto') {
-            // クローゼット折れ戸（両開き・4枚）を閉じた状態で描く
+          if (isFoldingDoor(op.type)) {
+            // クローゼット折れ戸（両開き 4 枚／片開き 2 枚）を閉じた状態で描く
             const doorMat = this._getClosetDoorMat();
-            const leaves = 4;
+            const single = op.type === 'oreto1';
+            const leaves = single ? 2 : 4;
             const leafW = oW / leaves;
             const leafH = oHgtMM * MM - FW;
             const leafT = 0.022;
@@ -1246,10 +1247,13 @@ export class Viewer3D {
             for (let i = 0; i < leaves; i++) {
               addSeg(leafW - 0.004, leafH, leafT, doorMat, cx - oW / 2 + leafW * (i + 0.5), midY, 0, 2);
             }
-            // 取っ手（中央の合わせ目の両側）
+            // 取っ手（両開きは中央の合わせ目の両側、片開きは吊り元と反対の端）
             const handleY = (oSillMM + Math.min(900, oHgtMM * 0.45)) * MM;
-            for (const sx of [-1, 1]) {
-              addSeg(0.012, 0.16, leafT + 0.03, frameMat, cx + sx * 0.04, handleY, 0, 2);
+            const handleXs = single
+              ? [op.mirror ? cx - oW / 2 + 0.05 : cx + oW / 2 - 0.05]
+              : [cx - 0.04, cx + 0.04];
+            for (const hx of handleXs) {
+              addSeg(0.012, 0.16, leafT + 0.03, frameMat, hx, handleY, 0, 2);
             }
           }
         }

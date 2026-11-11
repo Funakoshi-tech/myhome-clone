@@ -1235,11 +1235,18 @@ function buildPropsContent() {
         flip.addEventListener('click', () => editor.flipSelectedHikite());
         body.appendChild(field(`戸の位置（${op.mirror ? '右' : '左'}）`, flip));
       }
-      if (op.type === 'oreto') {
+      if (op.type === 'oreto1') {
+        const flip = document.createElement('button');
+        flip.className = 'btn';
+        flip.textContent = '左右反転';
+        flip.addEventListener('click', () => editor.flipSelectedHikite());
+        body.appendChild(field(`吊り元（${op.mirror ? '右' : '左'}）`, flip));
+      }
+      if (op.type === 'oreto' || op.type === 'oreto1') {
         const flip = document.createElement('button');
         flip.className = 'btn';
         flip.textContent = '反転';
-        flip.addEventListener('click', () => editor.flipSelectedHikite());
+        flip.addEventListener('click', () => editor.flipSelectedFoldingSide());
         body.appendChild(field('開く向き', flip));
       }
     }
