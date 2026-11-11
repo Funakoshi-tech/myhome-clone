@@ -779,22 +779,159 @@ function wireBgPanel() {
     if (e.key === 'Enter') $('#bg-scale-ok').click();
   });
 
-  document.querySelectorAll('.bg-pos-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const dx = Number(btn.dataset.dx);
-      const dz = Number(btn.dataset.dz);
-      store.update((plan) => {
-        const bg = plan.site.backgroundImage;
-        if (!bg) return;
-        bg.offsetX = (bg.offsetX ?? 0) + dx;
-        bg.offsetZ = (bg.offsetZ ?? 0) + dz;
-      });
-      syncBgPosLabel();
-      editor.draw();
-    });
-  });
+  wireBgPosNudge();
 
   $('#bg-pos-ok').addEventListener('click', () => hideBgPosModal());
+}
+
+// ---- 下絵の位置調整：クリックで 1 歩、押しっぱなし／矢印キーで滑らかに移動 ----
+const BG_NUDGE_STEP_MM = 100;        // クリック・キー 1 回の移動量
+const BG_NUDGE_FINE_STEP_MM = 10;    // Alt/Option を押しながらの 1 回の移動量
+const BG_NUDGE_HOLD_DELAY_MS = 300;  // これより長く押すと連続移動に切り替える
+const BG_NUDGE_SPEED_START = 400;    // 連続移動の初速 (mm/s)
+const BG_NUDGE_SPEED_MAX = 4000;     // 連続移動の最高速 (mm/s)
+const BG_NUDGE_ACCEL_MS = 1500;      // 最高速に達するまでの時間
+const BG_NUDGE_KEYS = {
+  ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+};
+
+function wireBgPosNudge() {
+  // 押されている方向（ボタンとキーの両方）。key -> { dir, startedAt }
+  const active = new Map();
+  let raf = 0;
+  let lastFrame = 0;
+  let undoPushed = false; // 一度の押下（連続移動を含む）で取り消し履歴は 1 つだけ
+  let dirty = false;      // 連続移動中は保存を止め、離したときにまとめて保存する
+  let carry = [0, 0];     // 1mm 未満の端数
+  let shift = false;
+  let alt = false;
+
+  const modalOpen = () => !$('#bg-pos-modal').hidden;
+
+  const moveBy = (dx, dz) => {
+    const bg = store.current()?.site?.backgroundImage;
+    if (!bg || (!dx && !dz)) return;
+    if (!undoPushed) {
+      store.update(() => {}); // 押し始めの状態を取り消し履歴に積む
+      undoPushed = true;
+    }
+    const cur = store.current()?.site?.backgroundImage;
+    if (!cur) return;
+    cur.offsetX = Math.round((cur.offsetX ?? 0) + dx);
+    cur.offsetZ = Math.round((cur.offsetZ ?? 0) + dz);
+    dirty = true;
+    syncBgPosLabel();
+    editor.draw();
+  };
+
+  const commit = () => {
+    if (dirty) store.update(() => {}, { skipHistory: true }); // 保存＋各パネル更新
+    dirty = false;
+    undoPushed = false;
+    carry = [0, 0];
+  };
+
+  const tick = (now) => {
+    raf = 0;
+    if (!active.size) return;
+    const dt = Math.min(0.05, (now - lastFrame) / 1000);
+    lastFrame = now;
+    let vx = 0;
+    let vz = 0;
+    for (const { dir, startedAt } of active.values()) {
+      const held = now - startedAt - BG_NUDGE_HOLD_DELAY_MS;
+      if (held < 0) continue;
+      const t = Math.min(1, held / BG_NUDGE_ACCEL_MS);
+      let speed = BG_NUDGE_SPEED_START + (BG_NUDGE_SPEED_MAX - BG_NUDGE_SPEED_START) * t * t;
+      if (shift) speed *= 3;
+      if (alt) speed /= 10;
+      vx += dir[0] * speed;
+      vz += dir[1] * speed;
+    }
+    carry[0] += vx * dt;
+    carry[1] += vz * dt;
+    const dx = Math.trunc(carry[0]);
+    const dz = Math.trunc(carry[1]);
+    carry[0] -= dx;
+    carry[1] -= dz;
+    moveBy(dx, dz);
+    raf = requestAnimationFrame(tick);
+  };
+
+  const press = (key, dir, e) => {
+    if (active.has(key)) return;
+    shift = !!e.shiftKey;
+    alt = !!e.altKey;
+    const step = alt ? BG_NUDGE_FINE_STEP_MM : BG_NUDGE_STEP_MM * (shift ? 10 : 1);
+    moveBy(dir[0] * step, dir[1] * step); // 押した瞬間に 1 歩（従来のクリックと同じ）
+    active.set(key, { dir, startedAt: performance.now() });
+    if (!raf) {
+      lastFrame = performance.now();
+      raf = requestAnimationFrame(tick);
+    }
+  };
+
+  const release = (key) => {
+    if (!active.delete(key)) return;
+    if (!active.size) {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      commit();
+    }
+  };
+
+  const releaseAll = () => {
+    for (const key of [...active.keys()]) release(key);
+  };
+
+  document.querySelectorAll('.bg-pos-btn').forEach((btn, i) => {
+    const key = `btn${i}`;
+    const dir = [Math.sign(Number(btn.dataset.dx)), Math.sign(Number(btn.dataset.dz))];
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      press(key, dir, e);
+    });
+    // キーボード操作（Tab で選んで Enter/Space）でも 1 歩動かす
+    btn.addEventListener('click', (e) => {
+      if (e.detail !== 0) return; // マウス・タッチは pointerdown で処理済み
+      moveBy(dir[0] * BG_NUDGE_STEP_MM, dir[1] * BG_NUDGE_STEP_MM);
+      commit();
+    });
+    btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (!modalOpen()) return;
+    shift = e.shiftKey;
+    alt = e.altKey;
+    const dir = BG_NUDGE_KEYS[e.key];
+    if (!dir) {
+      if (e.key === 'Enter' || e.key === 'Escape') {
+        e.preventDefault();
+        releaseAll();
+        hideBgPosModal();
+      }
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.repeat) return; // OS のキーリピートは使わず、自前で滑らかに動かす
+    press(e.key, dir, e);
+  }, true);
+  window.addEventListener('keyup', (e) => {
+    shift = e.shiftKey;
+    alt = e.altKey;
+    if (BG_NUDGE_KEYS[e.key]) release(e.key);
+  }, true);
+  // ボタンの外で離しても止まるよう、離したのは window で拾う
+  const releaseButtons = () => {
+    for (const key of [...active.keys()]) if (key.startsWith('btn')) release(key);
+  };
+  window.addEventListener('pointerup', releaseButtons);
+  window.addEventListener('pointercancel', releaseButtons);
+  window.addEventListener('blur', releaseAll);
+  $('#bg-pos-ok').addEventListener('pointerdown', releaseAll);
 }
 
 function updateFurnitureDimension(key, value) {
