@@ -9,6 +9,7 @@ import { ROOF_TYPES, normalizeRoofSettings, pitchDeg } from './roofSettings.js';
 import { computeRoofRegions } from './roofModel.js';
 import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, flooringForRoom } from './catalog.js';
 import { Editor2D } from './editor2d.js';
+import { ParkingSimController } from './parkingSimMode.js';
 import { Viewer3D } from './viewer3d.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
 import { PlanList } from './planList.js';
@@ -46,8 +47,11 @@ const $ = (sel) => document.querySelector(sel);
 const canvas = $('#canvas2d');
 const viewer3dEl = $('#viewer3d');
 
+let parking = null; // 駐車シミュレーター（editor の後に作る）
 const editor = new Editor2D(canvas, store, ui, refreshPanels);
 const viewer = new Viewer3D(viewer3dEl, store, ui);
+parking = new ParkingSimController({ editor, store, ui, setTool, updateHint });
+editor.parkingSim = parking;
 
 let planList = null;
 let screen = 'list'; // 'list' | 'editor'
@@ -139,6 +143,7 @@ function setView(view) {
   $('#sun-panel').hidden = !is3d;
   editor.setActive(!is3d);
   viewer.setActive(is3d);
+  parking?.onViewChange(view);
   document.querySelectorAll('#view-toggle .seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.view === view));
   if (is3d) {
@@ -302,6 +307,8 @@ function setTool(tool) {
   $('#furniture-pane').classList.toggle('hl', tool === 'furniture');
   $('#plumbing-pane').classList.toggle('hl', tool === 'furniture' && !!getPlumbingFurnitureId(ui.plumbingId)
     && ui.furnitureId === getPlumbingFurnitureId(ui.plumbingId));
+  $('#parking-pane').classList.toggle('hl', tool === 'parking');
+  parking?.onToolChange(tool);
   updateHint();
 }
 
@@ -456,6 +463,7 @@ function refreshPanels() {
   syncLowerFloorRefToggle();
   syncBgPanel();
   syncSitePanel();
+  parking?.syncPanel();
   syncRoofPanel();
   if (ui.view === '2d') editor.draw();
   if (ui.view === '3d') viewer.rebuild();
@@ -1537,6 +1545,10 @@ function updateHint() {
       : ui.view3dAllFloors
         ? '全階表示中。フロア切替または全階表示ボタンで現在階のみに戻せます。ドラッグで回転 / ホイールでズーム'
         : `${ui.floorId} のみ表示中。全階表示ボタンですべての階を積み上げ表示。内観モードで室内を歩けます。ドラッグで回転 / ホイールでズーム`;
+    return;
+  }
+  if (ui.tool === 'parking' && parking) {
+    hint.textContent = parking.hintText();
     return;
   }
   if (ui.bgCalib) {

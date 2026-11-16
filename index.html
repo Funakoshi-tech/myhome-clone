@@ -198,6 +198,40 @@
         </div>
       </section>
 
+      <!-- 駐車シミュレーター -->
+      <section class="pane pane-fold" id="parking-pane" data-fold-id="parking">
+        <button type="button" class="pane-fold-head" aria-expanded="true">
+          <span>駐車シミュレーター</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <p id="parking-road-status" class="pane-hint"></p>
+          <div class="btn-row">
+            <button id="parking-road-pick" class="btn" type="button">前面道路の辺を選ぶ</button>
+            <button id="parking-road-clear" class="btn danger" type="button" hidden>道路を削除</button>
+          </div>
+          <div id="parking-road-detail" hidden>
+            <div class="prop-row"><label for="parking-road-width">道路の幅員 (mm)</label><input type="number" id="parking-road-width" min="1000" max="50000" step="10" /></div>
+            <label class="row check" title="道路沿いの隣の土地には車がはみ出せないものとして扱います">
+              <input type="checkbox" id="parking-neighbor-walls" checked />
+              <span>隣地の道路沿いを塀として扱う</span>
+            </label>
+            <label class="row check" title="1階の外壁と、配置した車を障害物にします">
+              <input type="checkbox" id="parking-plan-obstacles" checked />
+              <span>建物と配置した車を障害物にする</span>
+            </label>
+            <h4 class="parking-sub">ガードレール</h4>
+            <button id="parking-guard-add" class="btn wide" type="button">ガードレールを引く</button>
+            <div id="parking-guard-list"></div>
+            <p class="pane-hint">道路の上で2点をクリックして引きます（Shift で道路と平行）。シミュレーター中は端の丸をドラッグして長さを変えられます。チェックを外すと「なし」の場合を試せます。</p>
+            <h4 class="parking-sub">車</h4>
+            <select id="parking-vehicle"></select>
+            <p id="parking-vehicle-spec" class="pane-hint"></p>
+            <button id="parking-start" class="btn wide" type="button">シミュレーション開始</button>
+          </div>
+        </div>
+      </section>
+
       <!-- 屋根（表示中の階） -->
       <section class="pane pane-fold" id="roof-pane" data-fold-id="roof">
         <button type="button" class="pane-fold-head" aria-expanded="true">
@@ -305,6 +339,44 @@
       </div>
 
       <div id="hint"></div>
+
+      <!-- 駐車シミュレーターの操作パネル（2D・運転中のみ） -->
+      <div id="parking-hud" class="parking-hud" hidden>
+        <div class="parking-hud-head">
+          <b>駐車シミュレーター</b>
+          <span id="parking-hud-vehicle"></span>
+          <button id="parking-exit" class="btn btn-compact" type="button">終了</button>
+        </div>
+        <div class="parking-steer-row">
+          <button id="parking-steer-left" class="btn btn-compact" type="button" title="左いっぱい">左</button>
+          <input type="range" id="parking-steer" min="-100" max="100" step="1" value="0" aria-label="ハンドル" />
+          <button id="parking-steer-right" class="btn btn-compact" type="button" title="右いっぱい">右</button>
+        </div>
+        <div class="parking-steer-sub">
+          <span id="parking-steer-label"></span>
+          <button id="parking-steer-center" class="btn btn-compact" type="button">まっすぐ</button>
+        </div>
+        <div class="btn-row parking-drive-row">
+          <button id="parking-back" class="btn parking-drive" type="button">▼ 後退</button>
+          <button id="parking-fwd" class="btn parking-drive" type="button">▲ 前進</button>
+        </div>
+        <div id="parking-stats" class="parking-stats"></div>
+        <div class="parking-timeline-row">
+          <span>巻き戻し</span>
+          <input type="range" id="parking-timeline" min="0" max="0" value="0" />
+        </div>
+        <div class="btn-row">
+          <button id="parking-from-start" class="btn btn-compact" type="button" title="道路のこちら側の端に車を置き直す">左から</button>
+          <button id="parking-from-end" class="btn btn-compact" type="button" title="道路のこちら側の端に車を置き直す">右から</button>
+          <button id="parking-restart" class="btn btn-compact" type="button" title="動かし始めた位置に戻す（軌跡は消えます）">最初へ</button>
+        </div>
+        <div class="btn-row">
+          <button id="parking-keep" class="btn btn-compact" type="button">この軌跡を残す</button>
+          <button id="parking-clear-trails" class="btn btn-compact" type="button" hidden>残した軌跡を消す</button>
+        </div>
+        <div id="parking-trails" class="parking-trails"></div>
+        <p class="pane-hint">↑↓：前進・後退（押しっぱなし）／←→：ハンドル／C：まっすぐ／Shift：速く・Alt：遅く</p>
+      </div>
 
       <!-- フロア情報（2D・右上・クリックで開閉） -->
       <div id="floor-info-panel" class="stage-float-panel">

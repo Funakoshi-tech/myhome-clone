@@ -48,6 +48,8 @@ js/interiorMinimap.js  内観モード右上の間取りミニマップ
 js/roofSettings.js     屋根の設定（形状・勾配・軒の出。建物全体で 1 つ = plan.roofSettings）の定義と正規化
 js/roofModel.js        屋根の幾何（屋根領域・寄棟の屋根面。純関数）
 js/sitePolygon.js      敷地（site.boundary）の純粋幾何（辺長変更・内角・頂点編集）
+js/parkingSim.js       駐車シミュレーターの純粋幾何（車の動き・車体の四隅・すき間と当たり判定・前面道路）
+js/parkingSimMode.js   駐車シミュレーターの UI（左パネル・操作パネル・2D 図面への重ね描き・入力）
 js/sun.js              日射計算
 js/planList.js         プラン一覧画面
 js/planThumbnail.js    プラン一覧用の簡易サムネイル描画

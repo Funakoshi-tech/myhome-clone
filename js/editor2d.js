@@ -721,6 +721,12 @@ export class Editor2D {
       return;
     }
 
+    // 駐車シミュレーター（入力は parkingSimMode.js が受け持つ）
+    if (tool === 'parking') {
+      this.parkingSim?.onPointerDown(e, sx, sy, w);
+      return;
+    }
+
     // 敷地作図ツール（左クリックで頂点追加・右クリックで直前の頂点を取り消し）
     if (tool === 'site') {
       this._siteToolDown(e, sx, sy, w);
@@ -1185,6 +1191,7 @@ export class Editor2D {
       if (this._bgPick.p1) this.draw();
       return;
     }
+    if (!d && this.ui.tool === 'parking') { this.parkingSim?.onPointerMove(e, sx, sy, w); return; }
     if (!d && this.ui.tool === 'site') { this._siteToolMove(e, w); return; }
     if (!d) { this._updateHover(sx, sy); return; }
 
@@ -1411,7 +1418,10 @@ export class Editor2D {
   }
 
   _onUp(e) {
-    if (!this.drag) return;
+    if (!this.drag) {
+      if (this.ui.tool === 'parking') this.parkingSim?.onPointerUp(e);
+      return;
+    }
     const d = this.drag;
     const { sx, sy } = this._mouse(e);
 
@@ -2992,6 +3002,7 @@ export class Editor2D {
 
     if (this.ui.showGrid) this._drawGrid(ctx);
     this._drawAxes(ctx);
+    this.parkingSim?.drawUnder(ctx);
     this._drawSite(ctx);
 
     const floor = this._floor();
@@ -3046,6 +3057,7 @@ export class Editor2D {
     if (this.ui.showDimensions) this._drawWallDimensions(ctx, floor);
     this._drawBgCalibOverlay(ctx);
     this._drawBgPickOverlay(ctx);
+    this.parkingSim?.drawOver(ctx);
     this._drawNorthArrow(ctx);
   }
 
