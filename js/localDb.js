@@ -50,12 +50,6 @@ async function run(storeName, mode, work, fallback) {
   });
 }
 
-/** @returns {Promise<Map<string, string>>} 画像 id → dataUrl */
-export async function loadAllImages() {
-  const rows = await run(IMAGES, 'readonly', (s) => s.getAll(), []);
-  return new Map(rows.map((r) => [r.id, r.dataUrl]));
-}
-
 export async function getImage(id) {
   const row = await run(IMAGES, 'readonly', (s) => s.get(id), null);
   return row?.dataUrl ?? null;
@@ -84,6 +78,16 @@ export function addBackup(backup) {
 export async function listBackups() {
   const rows = await run(BACKUPS, 'readonly', (s) => s.getAll(), []);
   return rows.sort((a, b) => b.savedAt - a.savedAt);
+}
+
+/** @returns {Promise<{savedAt:number, text:string} | null>} いちばん新しい1件だけ（全件は読まない） */
+export async function latestBackup() {
+  let row = null;
+  await run(BACKUPS, 'readonly', (s) => {
+    const req = s.openCursor(null, 'prev');
+    req.onsuccess = () => { row = req.result?.value ?? null; };
+  }, null);
+  return row;
 }
 
 export function deleteBackups(savedAts) {

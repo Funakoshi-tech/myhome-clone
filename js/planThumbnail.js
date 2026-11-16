@@ -122,14 +122,15 @@ function drawFloorContent(ctx, floor, toScreen, scale, opts = {}) {
  * プランの簡易間取り図を canvas に描画する。
  * @param {object} plan
  * @param {HTMLCanvasElement} canvas
- * @param {{ floorId?: string, emptyLabel?: string }} [opts]
+ * @param {{ floorId?: string, emptyLabel?: string, cssW?: number, cssH?: number }} [opts]
  */
 export function renderPlanThumbnail(plan, canvas, opts = {}) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  const cssW = canvas.clientWidth || 280;
-  const cssH = canvas.clientHeight || 200;
+  // 呼び出し側で大きさが分かっていれば渡してもらう（ここで測るとレイアウトの計算が走る）
+  const cssW = opts.cssW || canvas.clientWidth || 280;
+  const cssH = opts.cssH || canvas.clientHeight || 200;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);

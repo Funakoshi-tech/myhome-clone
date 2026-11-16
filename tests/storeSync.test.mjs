@@ -27,6 +27,7 @@ function fakeDb({ failImages = false } = {}) {
     deleteImages: async (ids) => ids.forEach((id) => images.delete(id)),
     addBackup: async (b) => { backups.push(b); return true; },
     listBackups: async () => backups.slice().sort((a, b) => b.savedAt - a.savedAt),
+    latestBackup: async () => backups.slice().sort((a, b) => b.savedAt - a.savedAt)[0] ?? null,
     deleteBackups: async (ts) => { backups = backups.filter((b) => !ts.includes(b.savedAt)); },
   };
 }
@@ -226,6 +227,27 @@ test('画像が読めなくても参照は保存で失われない', async () =>
   t.update((p) => { p.meta.memo = 'x'; });
   const again = open(db);
   assert.ok(again.current().site.backgroundImage.dataUrl);
+});
+
+test('下絵は起動時には読まず、編集で開いたときに読み込む。読む前に保存しても参照は残る', async () => {
+  reset();
+  const db = fakeDb();
+  const s = open(db);
+  s.update((p) => { p.site.backgroundImage = bgImage(100000); });
+  await flush();
+  const lazy = new Store({ db }); // 本番と同じく画像を先読みしない
+  const bg = lazy.current().site.backgroundImage;
+  assert.ok(!bg.dataUrl && bg.imageRef, '起動直後は参照だけ');
+  lazy.update((p) => { p.meta.memo = '読む前の保存'; });
+  assert.ok(mem.get(LS_KEY).length < 20000, '参照のまま保存される');
+  let notified = 0;
+  lazy.subscribe(() => { notified++; });
+  await lazy.loadPlanImages();
+  assert.equal(lazy.current().site.backgroundImage.dataUrl.length, bgImage(100000).dataUrl.length);
+  assert.equal(notified, 1);
+  lazy.save();
+  await flush();
+  assert.ok(mem.get(LS_KEY).length < 20000, '読み込んだ後も参照で保存される');
 });
 
 test('削除の前にバックアップが取られ、別プランとして復元できる', async () => {

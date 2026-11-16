@@ -5,6 +5,8 @@
 // 保存先:
 // - プラン本体 … LocalStorage（下絵画像は imageRef だけを持つ）
 // - 下絵画像と自動バックアップ … IndexedDB（localDb.js）
+//   下絵画像は起動時には読まず、編集画面でそのプランを開いたときに読む（loadPlanImages）。
+//   読むまでのプランは imageRef だけを持ち、保存するとそのまま参照として書き出される。
 //
 // 同じアプリを複数の窓で開いても、他の窓の変更を上書きで消さないように、
 // 書き込む前に LocalStorage の最新を読み、自分が変更していないプランは最新側を採用する。
@@ -91,7 +93,7 @@ export class Store {
     this._imageKeys = new Map();      // dataUrl -> 画像 id（計算の省略用）
     this._savingImages = new Set();   // IndexedDB へ書き込み中の画像 id
     this._failedImages = new Set();   // IndexedDB へ書けなかった画像 id（LocalStorage に直接持つ）
-    this._fetchingImages = new Set();
+    this._fetchingImages = new Map(); // 画像 id → 読み込み中の Promise
 
     this._lastSavedText = null;       // この窓が最後に読み書きした LocalStorage の内容
     this._dirtyIds = new Set();       // この窓で変更し、まだ保存できていないプラン
@@ -146,26 +148,39 @@ export class Store {
 
   // ---- 永続化 ---------------------------------------------------------------
 
-  /** 保存データのプランに下絵画像を戻して正規化する */
-  _planFromSaved(saved) {
-    const bg = saved?.site?.backgroundImage;
-    if (bg?.imageRef && !bg.dataUrl) {
-      const dataUrl = this._images.get(bg.imageRef);
-      if (dataUrl) {
-        bg.dataUrl = dataUrl;
-        delete bg.imageRef;
-      } else {
-        this._fetchMissingImage(bg.imageRef);
-      }
-    }
-    return normalizePlan(saved);
+  /**
+   * 保存データのプランに、手元にある下絵画像を戻して正規化する。
+   * @param {{ fetch?: boolean }} [opts] fetch: 手元になければ IndexedDB から読み込む
+   */
+  _planFromSaved(saved, { fetch = false } = {}) {
+    const plan = normalizePlan(saved);
+    this._attachImage(plan, { fetch });
+    return plan;
   }
 
-  /** 他の窓が保存した画像など、手元にない画像を読み込んで反映する */
+  /** imageRef だけのプランに、手元にある画像を戻す。無ければ fetch のときだけ読み込みを始める */
+  _attachImage(plan, { fetch = false } = {}) {
+    const bg = plan?.site?.backgroundImage;
+    if (!bg?.imageRef || bg.dataUrl) return null;
+    const dataUrl = this._images.get(bg.imageRef);
+    if (dataUrl) {
+      bg.dataUrl = dataUrl;
+      delete bg.imageRef;
+      return null;
+    }
+    return fetch ? this._fetchMissingImage(bg.imageRef) : null;
+  }
+
+  /** 編集画面で開くプランの下絵画像を読み込む（読み込めたら notify する） */
+  async loadPlanImages(id = this.currentId) {
+    await this._attachImage(this.plans[id], { fetch: true });
+  }
+
+  /** 手元にない画像を読み込み、同じ画像を使うプランに反映する */
   _fetchMissingImage(id) {
-    if (this._fetchingImages.has(id)) return;
-    this._fetchingImages.add(id);
-    this._db.getImage(id).then((dataUrl) => {
+    let pending = this._fetchingImages.get(id);
+    if (pending) return pending;
+    pending = this._db.getImage(id).then((dataUrl) => {
       this._fetchingImages.delete(id);
       if (!dataUrl) return;
       this._images.set(id, dataUrl);
@@ -180,6 +195,8 @@ export class Store {
       }
       if (changed) this.notify();
     });
+    this._fetchingImages.set(id, pending);
+    return pending;
   }
 
   _imageKeyFor(dataUrl) {
@@ -250,7 +267,8 @@ export class Store {
         skipped = true;
         continue;
       }
-      this.plans[id] = this._planFromSaved(saved);
+      // 編集中のプランが他の窓で変わったときは、画像もすぐ読み込む
+      this.plans[id] = this._planFromSaved(saved, { fetch: id === this.currentId && this.isEditingCurrent() });
       delete this._undo[id];
       delete this._redo[id];
       changed = true;
@@ -330,7 +348,7 @@ export class Store {
 
   /** 起動時の1回: 前回と内容が変わっていればバックアップを取り、不要な画像を片付ける */
   async _backupAtStartup() {
-    const [latest] = await this._db.listBackups();
+    const latest = await this._db.latestBackup();
     if (latest) {
       this._lastBackupAt = latest.savedAt;
       this._lastBackupText = latest.text;
@@ -436,6 +454,7 @@ export class Store {
     const id = this.currentId;
     if (!id || !json) return false;
     this.plans[id] = normalizePlan(JSON.parse(json));
+    this._attachImage(this.plans[id], { fetch: true }); // 画像を読み込む前に取った履歴でも下絵が消えないように
     this._persist({ touched: [id] });
     this.notify();
     return true;
@@ -607,7 +626,9 @@ export class Store {
   }
 
   // ---- JSON 入出力 ----------------------------------------------------------
-  exportCurrentJSON() {
+  async exportCurrentJSON() {
+    if (!this.current()) return;
+    await this.loadPlanImages(); // 画像を読み込む前でも、画像入りで書き出す
     const plan = this.current();
     if (!plan) return;
     const json = JSON.stringify(plan, null, 2);
@@ -636,5 +657,5 @@ export class Store {
   }
 }
 
-export const store = new Store({ images: await localDb.loadAllImages() });
+export const store = new Store();
 store.startBackgroundTasks();

@@ -1818,6 +1818,7 @@ function wireEvents() {
 }
 
 function afterPlanChange() {
+  store.loadPlanImages(); // 下絵は一覧では使わないので、編集画面で開くときに読む
   ui.selection = null;
   ui.floorId = '1F';
   ui.bgCalib = false;

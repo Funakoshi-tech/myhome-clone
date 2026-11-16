@@ -45,11 +45,21 @@ export class PlanList {
     this.newBtn = document.getElementById('plan-list-new');
     this.expandedFloorIds = new Set();
     this.expandedMemoIds = new Set();
+    /** プラン id → { card, sig }。表示内容が前回と同じカードは作り直さずに使い回す */
+    this._cards = new Map();
+    /** plan → { updatedAt, data }。一覧の表示中だけ使う（show() で捨てる） */
+    this._planData = new WeakMap();
+    /** プラン id → 描画済みのサムネイル canvas。カードを作り直しても間取りが同じなら使い回す */
+    this._thumbCanvases = new Map();
+    this._thumbObserver = typeof IntersectionObserver === 'undefined'
+      ? null
+      : new IntersectionObserver((entries) => this._onThumbsVisible(entries), { rootMargin: '400px 0px' });
 
     this._wire();
     this._wireDrag();
     this.store.subscribe(() => {
-      if (this._drag) return;
+      // 編集画面にいる間は作り直さない（一覧に戻ったときに show() で描画する）
+      if (this._drag || this.root?.hidden) return;
       this.render();
     });
   }
@@ -113,7 +123,10 @@ export class PlanList {
   render() {
     if (!this.grid) return;
     const ids = this._sortedIds();
-    this.grid.innerHTML = '';
+    const prevCards = this._cards;
+    const prevThumbs = this._thumbCanvases;
+    this._cards = new Map();
+    this._thumbCanvases = new Map();
 
     if (this.countEl) {
       const total = this.store.order.length;
@@ -128,19 +141,87 @@ export class PlanList {
       empty.innerHTML = this.searchQuery
         ? '<p>該当するプランがありません</p>'
         : '<p>プランがありません</p><p class="plan-list-empty-hint">「+ プラン新規作成」から始めましょう</p>';
-      this.grid.appendChild(empty);
+      this.grid.replaceChildren(empty);
+      this._dropUnusedThumbs(prevThumbs);
       return;
     }
 
-    for (const id of ids) {
-      const card = this._buildCard(id);
-      this.grid.appendChild(card);
+    const cards = ids.map((id) => {
+      const plan = this.store.plans[id];
+      const sig = this._cardSig(id, plan);
+      const prev = prevCards.get(id);
+      if (prev?.sig === sig) {
+        this._cards.set(id, prev);
+        const canvas = prev.card.querySelector('.plan-card-canvas');
+        if (canvas) {
+          canvas._thumbPlan = plan;
+          this._thumbCanvases.set(id, canvas);
+        }
+        return prev.card;
+      }
+      const card = this._buildCard(id, prevThumbs.get(id));
+      this._cards.set(id, { card, sig });
       if (this.expandedFloorIds.has(id)) {
         this._setFloorsExpanded(card, true);
         requestAnimationFrame(() => {
           renderPlanFloorThumbnails(this.store.plans[id], card);
         });
       }
+      return card;
+    });
+    this._placeCards(cards);
+    this._dropUnusedThumbs(prevThumbs);
+  }
+
+  /**
+   * カードの表示内容を決めるもの。これが前回と同じならカードを作り直さない。
+   * 下絵画像は一覧に出さないので含めない（大きい上に、編集画面で読み込まれると変わるため）
+   */
+  _cardSig(id, plan) {
+    return [
+      this._planDataOf(plan),
+      formatRelativeTime(plan.meta?.updatedAt), // 「〇分前」の表示も変わったら作り直す
+      this._canReorder(),
+      this.expandedMemoIds.has(id),
+    ].join('\n');
+  }
+
+  /**
+   * プランの内容を文字列にしたもの（全プラン分で十数 ms かかるので、表示中は使い回す）。
+   * 一覧の表示中の変更は updatePlanMeta などで updatedAt が変わるか、プランごと置き換わる。
+   * 編集画面では updatedAt を変えずに直接書き換えることもあるので、一覧に戻るたびに作り直す（show）
+   */
+  _planDataOf(plan) {
+    const updatedAt = plan.meta?.updatedAt;
+    const cached = this._planData.get(plan);
+    if (cached?.updatedAt === updatedAt) return cached.data;
+    const data = JSON.stringify({ ...plan, site: { ...plan.site, backgroundImage: undefined } });
+    this._planData.set(plan, { updatedAt, data });
+    return data;
+  }
+
+  /** グリッドの子要素を cards の並びにする。位置が変わらないカードは動かさない（レイアウトの再計算を小さくする） */
+  _placeCards(cards) {
+    const keep = new Set(cards);
+    for (const el of [...this.grid.children]) {
+      if (!keep.has(el)) el.remove();
+    }
+    let ref = this.grid.firstElementChild;
+    for (const card of cards) {
+      if (card === ref) {
+        ref = ref.nextElementSibling;
+      } else {
+        this.grid.insertBefore(card, ref);
+      }
+    }
+  }
+
+  /** 一覧から外れたサムネイルは、画面に近づいたときの描画の対象から外す */
+  _dropUnusedThumbs(prevThumbs) {
+    if (!this._thumbObserver) return;
+    const used = new Set(this._thumbCanvases.values());
+    for (const canvas of prevThumbs.values()) {
+      if (!used.has(canvas)) this._thumbObserver.unobserve(canvas);
     }
   }
 
@@ -169,7 +250,39 @@ export class PlanList {
     renderPlanFloorThumbnails(plan, card);
   }
 
-  _buildCard(id) {
+  /**
+   * サムネイルの canvas を用意する。canvas を新しく確保して描くのは1枚あたり数 ms かかるので、
+   * 前回と中身が同じなら前回の canvas をそのまま使い、新しく描くのは画面の近くに来たカードだけにする
+   */
+  _thumbCanvasFor(id, plan, prev) {
+    const sig = JSON.stringify(plan.floors);
+    const canvas = prev?._thumbSig === sig ? prev : document.createElement('canvas');
+    canvas.className = 'plan-card-canvas';
+    canvas._thumbSig = sig;
+    canvas._thumbPlan = plan;
+    this._thumbCanvases.set(id, canvas);
+    if (this._thumbObserver) this._thumbObserver.observe(canvas);
+    else requestAnimationFrame(() => this._drawThumb(canvas, canvas.clientWidth, canvas.clientHeight));
+    return canvas;
+  }
+
+  _onThumbsVisible(entries) {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      this._thumbObserver.unobserve(e.target);
+      this._drawThumb(e.target, e.boundingClientRect.width, e.boundingClientRect.height);
+    }
+  }
+
+  /** 中身も大きさも前回と同じなら描き直さない */
+  _drawThumb(canvas, cssW, cssH) {
+    const key = `${canvas._thumbSig}|${Math.round(cssW)}x${Math.round(cssH)}`;
+    if (canvas._drawnKey === key) return;
+    canvas._drawnKey = key;
+    renderPlanThumbnail(canvas._thumbPlan, canvas, { cssW, cssH });
+  }
+
+  _buildCard(id, prevThumb) {
     const plan = this.store.plans[id];
     const stats = M.planStats(plan);
     const withGarage = stats.areasWithGarage;
@@ -214,12 +327,9 @@ export class PlanList {
     thumbWrap.type = 'button';
     thumbWrap.className = 'plan-card-thumb';
     thumbWrap.title = '編集を開く';
-    const canvas = document.createElement('canvas');
-    canvas.className = 'plan-card-canvas';
-    thumbWrap.appendChild(canvas);
+    thumbWrap.appendChild(this._thumbCanvasFor(id, plan, prevThumb));
     thumbWrap.addEventListener('click', () => this.onOpen(id));
     card.appendChild(thumbWrap);
-    requestAnimationFrame(() => renderPlanThumbnail(plan, canvas));
 
     const meta = document.createElement('div');
     meta.className = 'plan-card-meta';
@@ -265,7 +375,7 @@ export class PlanList {
       if (open) {
         this.expandedFloorIds.add(id);
         this._setFloorsExpanded(card, true);
-        requestAnimationFrame(() => this._renderFloorCanvases(card, plan));
+        requestAnimationFrame(() => this._renderFloorCanvases(card, this.store.plans[id]));
       } else {
         this.expandedFloorIds.delete(id);
         this._setFloorsExpanded(card, false);
@@ -375,7 +485,10 @@ export class PlanList {
       });
       ta.addEventListener('blur', () => {
         if (ta.value !== memo) this.store.updatePlanMeta({ memo: ta.value }, id);
-        else this.render();
+        else {
+          this._cards.delete(id); // 入力欄に置き換えたカードは使い回さない
+          this.render();
+        }
       });
       view.replaceWith(ta);
       more.hidden = true;
@@ -627,6 +740,7 @@ export class PlanList {
     this.root?.removeAttribute('hidden');
     document.body.classList.add('plan-list-mode');
     this._closeMenus();
+    this._planData = new WeakMap(); // 編集画面での変更を確実に反映する
     this.render();
   }
 
