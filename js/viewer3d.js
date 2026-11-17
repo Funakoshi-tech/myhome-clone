@@ -243,7 +243,8 @@ export class Viewer3D {
   }
 
   resize() {
-    if (!this._inited) return;
+    // 2D 表示中（非表示）に WebGL の描画バッファを作り直さない。表示に戻すとき setActive で合わせる
+    if (!this._inited || !this.active) return;
     const w = this.container.clientWidth || 800;
     const h = this.container.clientHeight || 600;
     this.camera.aspect = w / h;

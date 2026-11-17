@@ -586,7 +586,11 @@ export class Editor2D {
   resize() {
     const r = this.canvas.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
-    this.dpr = window.devicePixelRatio || 1;
+    // window の resize と ResizeObserver の両方から呼ばれるので、同じ大きさなら描き直さない
+    const dpr = window.devicePixelRatio || 1;
+    if (r.width === this.cssW && r.height === this.cssH && dpr === this.dpr
+      && this.canvas.width === Math.round(r.width * dpr)) return;
+    this.dpr = dpr;
     this.canvas.width = Math.round(r.width * this.dpr);
     this.canvas.height = Math.round(r.height * this.dpr);
     this.cssW = r.width;
@@ -2990,6 +2994,29 @@ export class Editor2D {
   // ---- 描画 -----------------------------------------------------------------
   draw() {
     if (!this.ctx) return;
+    // 1 回の描画の間だけ wallsToRender の結果を使い回す（部屋の辺ごとに計算し直すと重い）
+    this._renderWallsCache = new Map();
+    try {
+      this._drawFrame();
+    } finally {
+      this._renderWallsCache = null;
+    }
+  }
+
+  /** 描画中なら 1 フレーム分キャッシュした wallsToRender を、壁の辺キーで引ける形で返す */
+  _renderWallsByKey(floor) {
+    const cache = this._renderWallsCache;
+    if (cache?.has(floor)) return cache.get(floor);
+    const byKey = new Map();
+    for (const entry of M.wallsToRender(floor)) {
+      const key = M.wallEdgeKeyFromWall(entry.wall);
+      if (!byKey.has(key)) byKey.set(key, entry);
+    }
+    if (cache) cache.set(floor, byKey);
+    return byKey;
+  }
+
+  _drawFrame() {
     const ctx = this.ctx;
     if (this._siteDraft && this.ui.tool !== 'site') this._siteDraft = null;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -3548,9 +3575,9 @@ export class Editor2D {
     if (len < 1) return [];
     const key = M.wallEdgeKeyFromWall(wall);
 
-    for (const { wall: rw, ops } of M.wallsToRender(floor)) {
-      if (M.wallEdgeKeyFromWall(rw) !== key) continue;
-      return ops
+    const rendered = this._renderWallsByKey(floor).get(key);
+    if (rendered) {
+      return rendered.ops
         .filter((op) => !types || types.includes(op.type))
         .map((op) => {
           const off = M.openingOffsetOnWall(op, floor, wall);
