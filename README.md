@@ -42,6 +42,8 @@ js/furnitureIcon2d.js  GLB家具モデルの真上ビューアイコン生成（
 js/viewer3d.js         Three.js の 3D 描画
 js/floorTexture.js     床テクスチャの生成・読込・UV・マテリアル
 js/vehicleTint.js      車モデルの車体メッシュを単色塗装
+js/bicycleDraw2d.js    自転車の 2D 平面図アイコン（3D 素材が無いので手描き）
+js/bicycleModel3d.js   自転車の 3D モデル（円柱・トーラスで組み立て）
 js/interiorMode.js     内観（一人称）モードの入力・移動・UI連携
 js/interiorNav.js      内観モードの衝突・ワープ・スナップ（純関数）
 js/interiorMinimap.js  内観モード右上の間取りミニマップ

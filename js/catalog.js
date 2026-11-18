@@ -54,6 +54,8 @@ export const FURNITURE = [
   { id: 'washer', name: '洗濯機', wMM: 640, dMM: 720, hMM: 1000, color: '#566573', model3d: `${KENNEY_GLB}/washer.glb` },
   { id: 'carSuv', name: '車（SUV）', wMM: 1840, dMM: 4650, hMM: 1700, color: '#1a1a1a', modelBodyColor: '#1a1a1a', kind: 'vehicle', model3d: `${KENNEY_CARS_GLB}/suv.glb` },
   { id: 'carKei', name: '車（軽自動車）', wMM: 1475, dMM: 3395, hMM: 1525, color: '#fffffa', modelBodyColor: '#fffffa', kind: 'vehicle', model3d: `${KENNEY_CARS_GLB}/hatchback-sports.glb` },
+  // 自転車は 3D 素材が無いので、2D は bicycleDraw2d.js・3D は bicycleModel3d.js で描く
+  { id: 'bicycle', name: '自転車', wMM: 600, dMM: 1900, hMM: 1100, color: '#2e86c1', kind: 'vehicle', procedural: 'bicycle' },
   // その他
   { id: 'beddouble', name: 'ダブルベッド', wMM: 1400, dMM: 2000, hMM: 450, color: '#1a5276', model3d: `${KENNEY_GLB}/bedDouble.glb` },
   { id: 'sofa', name: 'ソファ', wMM: 1800, dMM: 800, hMM: 700, color: '#c0392b', model3d: `${KENNEY_GLB}/loungeSofa.glb` },

@@ -7,6 +7,7 @@ import { getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType
 import { drawStair2d } from './stairDraw2d.js';
 import { getFurnitureIcon, requestFurnitureIcon } from './furnitureIcon2d.js';
 import { vehicleBodyColor } from './vehicleTint.js';
+import { drawBicycle2d } from './bicycleDraw2d.js';
 import {
   ptSegDistScreen, pointInPolygonScreen, pointInTriangle, segIntersectsRect,
 } from './geometry2d.js';
@@ -4378,7 +4379,9 @@ export class Editor2D {
     const cat = getFurniture(f.catalogId);
     const modelPath = cat?.model3d;
 
-    if (modelPath) {
+    if (cat?.procedural === 'bicycle') {
+      drawBicycle2d(ctx, sc, f, hw, hd);
+    } else if (modelPath) {
       const dims = { wMM: f.wMM, dMM: f.dMM, hMM: f.hMM };
       if (cat?.kind === 'vehicle') dims.bodyColor = vehicleBodyColor(cat, f);
       const icon = getFurnitureIcon(modelPath, dims);

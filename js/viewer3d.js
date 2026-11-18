@@ -13,6 +13,7 @@ import { computeHipRoof, faceVertices3D } from './roofModel.js';
 import { normalizeRoofSettings } from './roofSettings.js';
 import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, isFoldingDoor, flooringForRoom, straightStairStepCount } from './catalog.js';
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
+import { buildBicycle3d } from './bicycleModel3d.js';
 import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
 import { InteriorMode } from './interiorMode.js';
@@ -1424,6 +1425,11 @@ export class Viewer3D {
     group.rotation.y = -((f.rotationDeg || 0) * Math.PI) / 180;
     group.scale.set(f.flipLR ? -1 : 1, 1, f.flipUD ? -1 : 1); // 反転は家具自身の向きが基準（回転より先に適用される）
     group.userData = { kind: 'furniture', roomId: null };
+
+    if (cat?.procedural === 'bicycle') {
+      group.add(buildBicycle3d(f));
+      return group;
+    }
 
     if (modelPath) {
       this._attachFurnitureModel(group, f, modelPath);
