@@ -1098,6 +1098,23 @@ function buildPropsContent() {
     rr.addEventListener('click', () => editor.rotateSelectedFurniture(90));
     rotWrap.append(rl, rr);
     body.appendChild(field(`向き（${f.rotationDeg || 0}°）`, rotWrap));
+    if (cat?.kind === 'vehicle') {
+      // 車・自転車は好きな角度に置ける（緑の回転ハンドルのドラッグでも 1° 単位で回る）
+      const fine = document.createElement('div');
+      fine.className = 'btn-row';
+      const fl = document.createElement('button');
+      fl.className = 'btn'; fl.textContent = '⟲ -15°';
+      fl.addEventListener('click', () => editor.rotateSelectedFurniture(-15));
+      const fr = document.createElement('button');
+      fr.className = 'btn'; fr.textContent = '+15° ⟳';
+      fr.addEventListener('click', () => editor.rotateSelectedFurniture(15));
+      fine.append(fl, fr);
+      body.appendChild(field('細かく回す', fine));
+      const deg = inputNumber(Math.round(f.rotationDeg || 0), (v) => editor.setSelectedFurnitureRotation(v));
+      deg.step = '1'; deg.min = '0'; deg.max = '359';
+      body.appendChild(field('角度 (°)', deg));
+      body.appendChild(readonlyRow('ヒント', '緑の丸をドラッグで 1° 単位（直角に吸着、Shift で 15° 刻み）'));
+    }
 
     // 色
     body.appendChild(field('色', inputColor(f.color || '#888888', (v) => {

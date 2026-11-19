@@ -55,6 +55,7 @@ function _formatDimMm(mm) {
 
 const FURNITURE_MAGNET_MM = 60;
 const FURNITURE_DIST_SHOW_MAX_MM = 4500;
+const FREE_ROTATE_MAGNET_DEG = 3; // 車・自転車の自由回転で、直角に吸い付く範囲
 const FURNITURE_EDGE_PARALLEL = 0.992;
 const FURNITURE_EDGE_FACE = 0.88;
 const FURNITURE_EDGE_OVERLAP_MIN_MM = 80;
@@ -1286,7 +1287,9 @@ export class Editor2D {
     if (d.kind === 'rotate-furniture') {
       const f = this._floor().furniture.find((x) => x.id === d.id);
       if (f) {
-        f.rotationDeg = this._snapOrientedRotationDeg(d.centerW, w);
+        f.rotationDeg = this._isFreeRotateFurniture(f)
+          ? this._freeRotationDeg(d.centerW, w, e.shiftKey)
+          : this._snapOrientedRotationDeg(d.centerW, w);
         const g = this._furnitureRotateLayout(f);
         d.tempHandleW = g ? { ...g.handleW } : null;
         this.draw();
@@ -4576,6 +4579,37 @@ export class Editor2D {
       };
     }
     return { centerW, handleW };
+  }
+
+  /** 車・自転車は 90° 刻みではなく好きな角度に回せる */
+  _isFreeRotateFurniture(f) {
+    return getFurniture(f?.catalogId)?.kind === 'vehicle';
+  }
+
+  /**
+   * 回転ハンドルの位置から自由な角度（1° 単位）を求める。
+   * 0/90/180/270° の前後 3° は吸着、Shift を押している間は 15° 刻み。
+   */
+  _freeRotationDeg(centerW, w, shift = false) {
+    let deg = Math.atan2(w.z - centerW.z, w.x - centerW.x) * 180 / Math.PI + 90;
+    if (shift) deg = Math.round(deg / 15) * 15;
+    else {
+      const right = Math.round(deg / 90) * 90;
+      deg = Math.abs(deg - right) <= FREE_ROTATE_MAGNET_DEG ? right : Math.round(deg);
+    }
+    return ((deg % 360) + 360) % 360;
+  }
+
+  /** 選択中の家具の向きを角度で指定する（0〜359°） */
+  setSelectedFurnitureRotation(deg) {
+    const sel = this.ui.selection;
+    if (!sel || sel.kind !== 'furniture' || !Number.isFinite(deg)) return;
+    this.store.update((plan) => {
+      const floor = M.getFloor(plan, this.ui.floorId);
+      const f = floor.furniture.find((x) => x.id === sel.id);
+      if (f) f.rotationDeg = ((Math.round(deg) % 360) + 360) % 360;
+    });
+    this.onUI();
   }
 
   _snapOrientedRotationDeg(centerW, w) {
