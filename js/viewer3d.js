@@ -14,6 +14,7 @@ import { normalizeRoofSettings } from './roofSettings.js';
 import { getRoomType, getFurniture, openingHasGlass, openingMullionCount, isFoldingDoor, flooringForRoom, straightStairStepCount } from './catalog.js';
 import { tintVehicleBody, vehicleBodyColor } from './vehicleTint.js';
 import { buildBicycle3d } from './bicycleModel3d.js';
+import { buildPlant3d } from './plantModel3d.js';
 import { applyFloorUvs, preloadFlooringMaterials, getCachedFlooringMaterial } from './floorTexture.js';
 import { getSunPosition, sunDirection, dateFromDayOfYear, DEFAULT_LAT, DEFAULT_LNG } from './sun.js';
 import { InteriorMode } from './interiorMode.js';
@@ -1428,6 +1429,10 @@ export class Viewer3D {
 
     if (cat?.procedural === 'bicycle') {
       group.add(buildBicycle3d(f));
+      return group;
+    }
+    if (cat?.procedural?.startsWith('plant:')) {
+      group.add(buildPlant3d(cat.procedural.slice(6), f));
       return group;
     }
 

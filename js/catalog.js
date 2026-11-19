@@ -56,6 +56,14 @@ export const FURNITURE = [
   { id: 'carKei', name: '車（軽自動車）', wMM: 1475, dMM: 3395, hMM: 1525, color: '#fffffa', modelBodyColor: '#fffffa', kind: 'vehicle', model3d: `${KENNEY_CARS_GLB}/hatchback-sports.glb` },
   // 自転車は 3D 素材が無いので、2D は bicycleDraw2d.js・3D は bicycleModel3d.js で描く
   { id: 'bicycle', name: '自転車', wMM: 600, dMM: 1900, hMM: 1100, color: '#2e86c1', kind: 'vehicle', procedural: 'bicycle' },
+  // 植栽（左パネルの「外構」に並ぶ）。鉢植え以外は 2D を plantDraw2d.js、3D を plantModel3d.js で描く。色は葉の色
+  { id: 'plantTree', name: 'シンボルツリー', wMM: 2000, dMM: 2000, hMM: 3500, color: '#4f8a3a', category: 'planting', procedural: 'plant:tree' },
+  { id: 'plantConifer', name: 'コニファー', wMM: 900, dMM: 900, hMM: 2500, color: '#2f6b3a', category: 'planting', procedural: 'plant:conifer' },
+  { id: 'plantShrub', name: '低木', wMM: 800, dMM: 800, hMM: 700, color: '#5a9a40', category: 'planting', procedural: 'plant:shrub' },
+  { id: 'plantHedge', name: '生垣', wMM: 1800, dMM: 500, hMM: 1200, color: '#3f7a35', category: 'planting', procedural: 'plant:hedge' },
+  { id: 'plantPot', name: '鉢植え', wMM: 450, dMM: 450, hMM: 1000, color: '#5a8f3c', category: 'planting', model3d: `${KENNEY_GLB}/pottedPlant.glb` },
+  { id: 'plantFlowerbed', name: '花壇', wMM: 1800, dMM: 600, hMM: 300, color: '#4f8a3a', category: 'planting', procedural: 'plant:flowerbed' },
+  { id: 'plantLawn', name: '芝生', wMM: 2000, dMM: 2000, hMM: 20, color: '#7cb342', category: 'planting', procedural: 'plant:lawn' },
   // その他
   { id: 'beddouble', name: 'ダブルベッド', wMM: 1400, dMM: 2000, hMM: 450, color: '#1a5276', model3d: `${KENNEY_GLB}/bedDouble.glb` },
   { id: 'sofa', name: 'ソファ', wMM: 1800, dMM: 800, hMM: 700, color: '#c0392b', model3d: `${KENNEY_GLB}/loungeSofa.glb` },
@@ -72,6 +80,12 @@ export const FURNITURE = [
 
 export function getFurniture(id) {
   return FURNITURE.find((f) => f.id === id) || FURNITURE[0];
+}
+
+/** 90° 刻みではなく好きな角度に回せる家具か（車・自転車・植栽） */
+export function isFreeRotateFurniture(item) {
+  const cat = typeof item === 'string' ? getFurniture(item) : getFurniture(item?.catalogId);
+  return cat?.kind === 'vehicle' || cat?.category === 'planting';
 }
 
 /** 壁吊り家具（上吊り棚など）か */
@@ -178,7 +192,6 @@ export const EXTERIOR_TYPES = [
   { id: 'gate', name: '門扉', color: '#6b5b4b' },
   { id: 'fence', name: 'フェンス', color: '#7a6a55' },
   { id: 'deck', name: 'デッキ', color: '#8a7340' },
-  { id: 'planting', name: '植栽', color: '#7a8b3a' },
 ];
 
 export function getExteriorType(id) {

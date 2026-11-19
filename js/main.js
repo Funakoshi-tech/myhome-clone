@@ -7,7 +7,7 @@ import * as SITE from './sitePolygon.js';
 import * as ORI from './siteOrientation.js';
 import { ROOF_TYPES, normalizeRoofSettings, pitchDeg } from './roofSettings.js';
 import { computeRoofRegions } from './roofModel.js';
-import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, flooringForRoom } from './catalog.js';
+import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, isFreeRotateFurniture, flooringForRoom } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { ParkingSimController } from './parkingSimMode.js';
 import { Viewer3D } from './viewer3d.js';
@@ -334,9 +334,13 @@ function buildRoomChips() {
 }
 
 function buildFurnitureChips() {
-  const wrap = $('#furniture-types');
+  fillFurnitureChips($('#furniture-types'), FURNITURE.filter((f) => f.category !== 'planting'));
+  fillFurnitureChips($('#planting-types'), FURNITURE.filter((f) => f.category === 'planting'));
+}
+
+function fillFurnitureChips(wrap, items) {
   wrap.innerHTML = '';
-  for (const f of FURNITURE) {
+  for (const f of items) {
     const b = document.createElement('button');
     b.className = 'chip';
     b.dataset.id = f.id;
@@ -360,7 +364,7 @@ function markChips() {
     b.classList.toggle('active', b.dataset.id === ui.openingId));
   document.querySelectorAll('#plumbing-types .chip').forEach((b) =>
     b.classList.toggle('active', b.dataset.id === ui.plumbingId));
-  document.querySelectorAll('#furniture-types .chip').forEach((b) =>
+  document.querySelectorAll('#furniture-types .chip, #planting-types .chip').forEach((b) =>
     b.classList.toggle('active', b.dataset.id === ui.furnitureId));
   document.querySelectorAll('#exterior-types .chip').forEach((b) =>
     b.classList.toggle('active', b.dataset.id === ui.exteriorId));
@@ -1098,8 +1102,8 @@ function buildPropsContent() {
     rr.addEventListener('click', () => editor.rotateSelectedFurniture(90));
     rotWrap.append(rl, rr);
     body.appendChild(field(`向き（${f.rotationDeg || 0}°）`, rotWrap));
-    if (cat?.kind === 'vehicle') {
-      // 車・自転車は好きな角度に置ける（緑の回転ハンドルのドラッグでも 1° 単位で回る）
+    if (isFreeRotateFurniture(f)) {
+      // 車・自転車・植栽は好きな角度に置ける（緑の回転ハンドルのドラッグでも 1° 単位で回る）
       const fine = document.createElement('div');
       fine.className = 'btn-row';
       const fl = document.createElement('button');

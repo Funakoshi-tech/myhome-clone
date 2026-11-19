@@ -44,6 +44,8 @@ js/floorTexture.js     床テクスチャの生成・読込・UV・マテリア�
 js/vehicleTint.js      車モデルの車体メッシュを単色塗装
 js/bicycleDraw2d.js    自転車の 2D 平面図アイコン（3D 素材が無いので手描き）
 js/bicycleModel3d.js   自転車の 3D モデル（円柱・トーラスで組み立て）
+js/plantDraw2d.js      植栽の 2D 平面図アイコン（樹木・コニファー・低木・生垣・花壇・芝生）
+js/plantModel3d.js     植栽の 3D モデル（低ポリの球・円錐で組み立て）
 js/interiorMode.js     内観（一人称）モードの入力・移動・UI連携
 js/interiorNav.js      内観モードの衝突・ワープ・スナップ（純関数）
 js/interiorMinimap.js  内観モード右上の間取りミニマップ

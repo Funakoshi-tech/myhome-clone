@@ -3,11 +3,12 @@
 // store の同じデータを読み書きするだけ（描画専用ロジック）。
 
 import * as M from './model.js';
-import { getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, isWallMountedFurniture, isFoldingDoor } from './catalog.js';
+import { getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, isWallMountedFurniture, isFoldingDoor, isFreeRotateFurniture } from './catalog.js';
 import { drawStair2d } from './stairDraw2d.js';
 import { getFurnitureIcon, requestFurnitureIcon } from './furnitureIcon2d.js';
 import { vehicleBodyColor } from './vehicleTint.js';
 import { drawBicycle2d } from './bicycleDraw2d.js';
+import { drawPlant2d } from './plantDraw2d.js';
 import {
   ptSegDistScreen, pointInPolygonScreen, pointInTriangle, segIntersectsRect,
 } from './geometry2d.js';
@@ -4384,6 +4385,8 @@ export class Editor2D {
 
     if (cat?.procedural === 'bicycle') {
       drawBicycle2d(ctx, sc, f, hw, hd);
+    } else if (cat?.procedural?.startsWith('plant:')) {
+      drawPlant2d(ctx, cat.procedural.slice(6), sc, f, hw, hd);
     } else if (modelPath) {
       const dims = { wMM: f.wMM, dMM: f.dMM, hMM: f.hMM };
       if (cat?.kind === 'vehicle') dims.bodyColor = vehicleBodyColor(cat, f);
@@ -4581,9 +4584,9 @@ export class Editor2D {
     return { centerW, handleW };
   }
 
-  /** 車・自転車は 90° 刻みではなく好きな角度に回せる */
+  /** 車・自転車・植栽は 90° 刻みではなく好きな角度に回せる */
   _isFreeRotateFurniture(f) {
-    return getFurniture(f?.catalogId)?.kind === 'vehicle';
+    return isFreeRotateFurniture(f);
   }
 
   /**
