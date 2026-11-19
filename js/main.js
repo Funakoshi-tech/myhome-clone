@@ -29,6 +29,7 @@ const ui = {
   selection: null,       // { kind:'room'|'furniture'|'stair'|'opening'|'wall'|'partition', ... }
   showGrid: true,
   showDimensions: false,
+  showRoomArea: true,    // 2D: 部屋ラベルに畳数（面積）を出すか
   showLowerFloorRef: true,
   furnitureWallMagnet: true,
   view3dAllFloors: false, // 3D: true=全階積み上げ表示, false=選択階のみ
@@ -1775,6 +1776,11 @@ function wireEvents() {
 
   $('#dim-toggle').addEventListener('change', (e) => {
     ui.showDimensions = e.target.checked;
+    editor.draw();
+  });
+
+  $('#room-area-toggle').addEventListener('change', (e) => {
+    ui.showRoomArea = e.target.checked;
     editor.draw();
   });
 

@@ -3531,28 +3531,90 @@ export class Editor2D {
     ctx.strokeStyle = this._hexA(color, 0.9);
     this._strokeRoomEdges(ctx, room, this._floor(), { strokeStyle: this._hexA(color, 0.9), lineWidth: 1.5 }, drawnEdgeKeys);
 
-    if (room.labelVisible !== false) {
-      const c = M.polygonCentroid(room.polygon);
-      const s = this.worldToScreen(c.x, c.z);
-      const areaM2 = M.polygonAreaM2(room.polygon);
-      const tatami = this._plan().meta.tatamiM2 || 1.62;
-      ctx.fillStyle = '#1f2733';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.font = '600 13px system-ui, sans-serif';
-      ctx.fillText(room.name || getRoomType(room.type).name, s.x, s.y - 10);
-      ctx.font = '700 15px system-ui, sans-serif';
-      ctx.fillStyle = '#3d4654';
-      ctx.fillText(M.formatAreaLabel(areaM2, tatami), s.x, s.y + 10);
+    if (room.labelVisible !== false) this._drawRoomLabel(ctx, room);
+  }
 
-      // 日照時間（フェーズB: 現在選択中の日付での直射時間）
-      const daylight = this.ui.daylight;
-      if (daylight && Object.prototype.hasOwnProperty.call(daylight, room.id)) {
-        const hrs = daylight[room.id];
-        ctx.font = '600 11px system-ui, sans-serif';
-        ctx.fillStyle = hrs > 0 ? '#c8860a' : '#8a93a0';
-        ctx.fillText(`☀ ${hrs.toFixed(1)}h`, s.x, s.y + 28);
-      }
+  /**
+   * 部屋名・畳数・日照時間のラベル。部屋の画面上の大きさに収まるよう自動で調整する：
+   * 縮小 → 畳数を「○畳」だけに短縮 → 畳数を省略 → 部屋名も小さく、の順。
+   * 「畳数」表示をオフにすると部屋名だけを描く。
+   */
+  _drawRoomLabel(ctx, room) {
+    const c = M.polygonCentroid(room.polygon);
+    const s = this.worldToScreen(c.x, c.z);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of room.polygon) {
+      const q = this.worldToScreen(p.x, p.z);
+      if (q.x < minX) minX = q.x; if (q.x > maxX) maxX = q.x;
+      if (q.y < minY) minY = q.y; if (q.y > maxY) maxY = q.y;
     }
+    // 重心から辺までの余白（凹形でも重心を中心に置くので、近いほうの辺で測る）
+    // 壁の線（中心線から内側へ半分ほど）にかからないよう、その分も差し引く
+    const wallPx = 120 * this.cam.scale * 2;
+    const availW = Math.max(0, Math.min(s.x - minX, maxX - s.x) * 2 - wallPx - 4);
+    const availH = Math.max(0, Math.min(s.y - minY, maxY - s.y) * 2 - wallPx - 2);
+
+    const name = room.name || getRoomType(room.type).name;
+    const areaM2 = M.polygonAreaM2(room.polygon);
+    const tatamiM2 = this._plan().meta.tatamiM2 || 1.62;
+    const showArea = this.ui.showRoomArea !== false;
+    const daylight = this.ui.daylight;
+    const hasSun = !!daylight && Object.prototype.hasOwnProperty.call(daylight, room.id);
+    const hrs = hasSun ? daylight[room.id] : 0;
+
+    const NAME = 13, AREA = 15, SUN = 11, MIN = 8;
+    const measure = (text, weight, px) => {
+      ctx.font = `${weight} ${px}px system-ui, sans-serif`;
+      return ctx.measureText(text).width;
+    };
+    // 候補を詳しい順に試し、縮小率 0.75 以上で収まる最初のものを使う
+    const candidates = [];
+    if (showArea) {
+      candidates.push({ area: M.formatAreaLabel(areaM2, tatamiM2), sun: hasSun });
+      candidates.push({ area: `${M.tatamiCount(areaM2, tatamiM2).toFixed(1)}畳`, sun: hasSun });
+      candidates.push({ area: `${M.tatamiCount(areaM2, tatamiM2).toFixed(1)}畳`, sun: false });
+    } else {
+      candidates.push({ area: null, sun: hasSun });
+    }
+    candidates.push({ area: null, sun: false });
+
+    let pick = null, k = 1;
+    for (const cand of candidates) {
+      const sunText = cand.sun ? `☀ ${hrs.toFixed(1)}h` : null;
+      const w = Math.max(
+        measure(name, 600, NAME),
+        cand.area ? measure(cand.area, 700, AREA) : 0,
+        sunText ? measure(sunText, 600, SUN) : 0,
+      );
+      const h = NAME * 1.25 + (cand.area ? AREA * 1.25 : 0) + (sunText ? SUN * 1.3 : 0);
+      const kk = Math.min(1, availW / Math.max(w, 1), availH / h);
+      pick = { ...cand, sunText }; k = kk;
+      if (kk >= 0.75) break;
+    }
+    // 部屋名だけでも入らないときは最小サイズで描く（はみ出しても名前は残す）
+    k = Math.max(k, MIN / NAME);
+
+    const lines = [{ text: name, weight: 600, px: NAME * k, color: '#1f2733' }];
+    if (pick.area) lines.push({ text: pick.area, weight: 700, px: Math.max(MIN, AREA * k), color: '#3d4654' });
+    if (pick.sunText) lines.push({ text: pick.sunText, weight: 600, px: Math.max(MIN, SUN * k), color: hrs > 0 ? '#c8860a' : '#8a93a0' });
+    const heights = lines.map((l) => l.px * 1.25);
+    let y = s.y - heights.reduce((a, b) => a + b, 0) / 2;
+
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    lines.forEach((l, i) => {
+      const cy = y + heights[i] / 2;
+      ctx.font = `${l.weight} ${l.px}px system-ui, sans-serif`;
+      // 白いふちどりで、家具や壁の線の上でも読めるようにする
+      ctx.lineWidth = Math.max(2, l.px * 0.22);
+      ctx.strokeText(l.text, s.x, cy);
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.text, s.x, cy);
+      y += heights[i];
+    });
+    ctx.restore();
   }
 
   _openingsOnWall(floor, wall) {
