@@ -3075,6 +3075,9 @@ export class Editor2D {
     for (const f of furn) {
       if (this._isWallMountedFurn(f)) this._drawFurniture(ctx, f);
     }
+    if (this.ui.roomLabelsOnTop) {
+      for (const room of floor.rooms) if (room.labelVisible !== false) this._drawRoomLabel(ctx, room);
+    }
     this._drawWallHover(ctx);
     if (this.drag?.kind === 'marquee') this._drawMarquee(ctx);
     this._drawSelection(ctx);
@@ -3531,7 +3534,8 @@ export class Editor2D {
     ctx.strokeStyle = this._hexA(color, 0.9);
     this._strokeRoomEdges(ctx, room, this._floor(), { strokeStyle: this._hexA(color, 0.9), lineWidth: 1.5 }, drawnEdgeKeys);
 
-    if (room.labelVisible !== false) this._drawRoomLabel(ctx, room);
+    // 「家具より手前」のときは、家具を描いたあとでまとめて描く（_drawFrame）
+    if (room.labelVisible !== false && !this.ui.roomLabelsOnTop) this._drawRoomLabel(ctx, room);
   }
 
   /**
@@ -3559,7 +3563,8 @@ export class Editor2D {
     const tatamiM2 = this._plan().meta.tatamiM2 || 1.62;
     const showArea = this.ui.showRoomArea !== false;
     const daylight = this.ui.daylight;
-    const hasSun = !!daylight && Object.prototype.hasOwnProperty.call(daylight, room.id);
+    const hasSun = this.ui.showRoomDaylight !== false
+      && !!daylight && Object.prototype.hasOwnProperty.call(daylight, room.id);
     const hrs = hasSun ? daylight[room.id] : 0;
 
     const NAME = 13, AREA = 15, SUN = 11, MIN = 8;
@@ -4472,7 +4477,7 @@ export class Editor2D {
 
     this._drawWallMountedFurnitureMarker(ctx, f, sc, hw, hd);
 
-    if (this.cam.scale * f.wMM > 28) {
+    if (this.ui.showFurnitureNames !== false && this.cam.scale * f.wMM > 28) {
       const name = cat.name;
       ctx.save();
       ctx.translate(sc.x, sc.y);

@@ -30,6 +30,9 @@ const ui = {
   showGrid: true,
   showDimensions: false,
   showRoomArea: true,    // 2D: 部屋ラベルに畳数（面積）を出すか
+  showRoomDaylight: true, // 2D: 部屋ラベルに日照時間を出すか
+  showFurnitureNames: true, // 2D: 家具の名前を出すか
+  roomLabelsOnTop: false, // 2D: 部屋名・畳数を家具より手前に描くか
   showLowerFloorRef: true,
   furnitureWallMagnet: true,
   view3dAllFloors: false, // 3D: true=全階積み上げ表示, false=選択階のみ
@@ -212,11 +215,13 @@ function closeFloatingPanels() {
     floorPop.hidden = true;
     floorBtn?.setAttribute('aria-expanded', 'false');
   }
-  const bgMenu = $('#bg-menu');
-  const bgBtn = $('#bg-menu-btn');
-  if (bgMenu && !bgMenu.hidden) {
-    bgMenu.hidden = true;
-    bgBtn?.setAttribute('aria-expanded', 'false');
+  for (const id of ['bg', 'label']) {
+    const menu = $(`#${id}-menu`);
+    const btn = $(`#${id}-menu-btn`);
+    if (menu && !menu.hidden) {
+      menu.hidden = true;
+      btn?.setAttribute('aria-expanded', 'false');
+    }
   }
 }
 
@@ -240,6 +245,17 @@ function wireFloatingPanels() {
     bgMenu.hidden = !open;
     bgBtn.setAttribute('aria-expanded', String(open));
   });
+
+  const labelBtn = $('#label-menu-btn');
+  const labelMenu = $('#label-menu');
+  labelBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = labelMenu.hidden;
+    closeFloatingPanels();
+    labelMenu.hidden = !open;
+    labelBtn.setAttribute('aria-expanded', String(open));
+  });
+  labelMenu?.addEventListener('click', (e) => e.stopPropagation());
 
   document.addEventListener('click', () => closeFloatingPanels());
   floorPop?.addEventListener('click', (e) => e.stopPropagation());
@@ -1779,10 +1795,29 @@ function wireEvents() {
     editor.draw();
   });
 
-  $('#room-area-toggle').addEventListener('change', (e) => {
-    ui.showRoomArea = e.target.checked;
-    editor.draw();
-  });
+  // ラベルの表示設定（この端末に覚えておく）
+  const LABEL_PREFS_KEY = 'myhome-clone:labelPrefs';
+  const labelToggles = [
+    ['#room-area-toggle', 'showRoomArea'],
+    ['#room-daylight-toggle', 'showRoomDaylight'],
+    ['#furniture-name-toggle', 'showFurnitureNames'],
+    ['#room-label-front-toggle', 'roomLabelsOnTop'],
+  ];
+  try {
+    const saved = JSON.parse(localStorage.getItem(LABEL_PREFS_KEY) || '{}');
+    for (const [, key] of labelToggles) if (typeof saved[key] === 'boolean') ui[key] = saved[key];
+  } catch { /* 読めなければ既定値のまま */ }
+  for (const [sel, key] of labelToggles) {
+    const el = $(sel);
+    el.checked = ui[key];
+    el.addEventListener('change', (e) => {
+      ui[key] = e.target.checked;
+      try {
+        localStorage.setItem(LABEL_PREFS_KEY, JSON.stringify(Object.fromEntries(labelToggles.map(([, k]) => [k, ui[k]]))));
+      } catch { /* 保存できなくても表示は切り替える */ }
+      editor.draw();
+    });
+  }
 
   $('#furniture-magnet-toggle').addEventListener('change', (e) => {
     ui.furnitureWallMagnet = e.target.checked;

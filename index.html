@@ -115,10 +115,6 @@
         <input type="checkbox" id="dim-toggle" />
         <span>寸法線</span>
       </label>
-      <label class="display-toggle" title="部屋の畳数（面積）を表示">
-        <input type="checkbox" id="room-area-toggle" checked />
-        <span>畳数</span>
-      </label>
       <label class="display-toggle" title="家具を壁の内側に吸着">
         <input type="checkbox" id="furniture-magnet-toggle" checked />
         <span>壁吸着</span>
@@ -127,6 +123,29 @@
         <input type="checkbox" id="lower-floor-ref-toggle" checked />
         <span>下階</span>
       </label>
+
+      <div class="display-dropdown" id="label-menu-wrap">
+        <button id="label-menu-btn" class="btn btn-compact display-dropdown-btn" type="button" aria-expanded="false" title="図面に出す文字を選ぶ">ラベル ▾</button>
+        <div id="label-menu" class="display-dropdown-panel" hidden>
+          <label class="row check">
+            <input type="checkbox" id="room-area-toggle" checked />
+            <span>部屋の畳数（面積）</span>
+          </label>
+          <label class="row check">
+            <input type="checkbox" id="room-daylight-toggle" checked />
+            <span>日照時間（☀）</span>
+          </label>
+          <label class="row check">
+            <input type="checkbox" id="furniture-name-toggle" checked />
+            <span>家具の名前</span>
+          </label>
+          <label class="row check">
+            <input type="checkbox" id="room-label-front-toggle" />
+            <span>部屋名・畳数を家具より手前に表示</span>
+          </label>
+          <p class="pane-hint">縮小すると、部屋に収まるよう畳数を短くしたり省いたりします</p>
+        </div>
+      </div>
 
       <div class="display-dropdown" id="bg-menu-wrap">
         <button id="bg-menu-btn" class="btn btn-compact display-dropdown-btn" type="button" aria-expanded="false">下絵 ▾</button>
