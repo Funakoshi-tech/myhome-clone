@@ -59,7 +59,8 @@ const viewer = new Viewer3D(viewer3dEl, store, ui);
 parking = new ParkingSimController({ editor, store, ui, setTool, updateHint });
 editor.parkingSim = parking;
 // 高さ制限（北側斜線）。setFloor は関数宣言なので巻き上げで参照できる
-heightLimit = new HeightLimitController({ store, ui, setFloor });
+heightLimit = new HeightLimitController({ editor, store, ui, setFloor });
+editor.heightLimit = heightLimit;
 
 let planList = null;
 let screen = 'list'; // 'list' | 'editor'

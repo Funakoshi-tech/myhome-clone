@@ -3035,6 +3035,7 @@ export class Editor2D {
     if (this.ui.showGrid) this._drawGrid(ctx);
     this._drawAxes(ctx);
     this.parkingSim?.drawUnder(ctx);
+    this.heightLimit?.drawUnder(ctx);
     this._drawSite(ctx);
 
     const floor = this._floor();
@@ -3092,6 +3093,7 @@ export class Editor2D {
     if (this.ui.showDimensions) this._drawWallDimensions(ctx, floor);
     this._drawBgCalibOverlay(ctx);
     this._drawBgPickOverlay(ctx);
+    this.heightLimit?.drawOver(ctx);
     this.parkingSim?.drawOver(ctx);
     this._drawNorthArrow(ctx);
   }

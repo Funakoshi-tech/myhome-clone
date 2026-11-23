@@ -2,7 +2,8 @@
 //
 // 計算は heightLimit.js（純関数）。設定は plan.site.heightLimit に保存する（取り消し履歴に積む）。
 // 土地選びの目安なので、結果は「北端から○m 以上なら置ける」と書き、「入らない」とは言い切らない。
-// 2D 図面への重ね描きはフェーズ 3 で足す。
+// 2D 図面には、選択中の階で「低めでも超える範囲（赤）」「標準だと超える範囲（黄）」を塗り、
+// 各階の境目の線とラベルを重ねる（drawUnder / drawOver は editor2d.js から呼ばれる）。
 
 import * as H from './heightLimit.js';
 import * as SITE from './sitePolygon.js';
@@ -19,6 +20,15 @@ function fmtDistance(mm, absMaxMM) {
   return `${fmtM(Math.ceil(mm / 10) * 10)} 以上`;
 }
 
+const RED_FILL = 'rgba(214, 48, 49, 0.22)';
+const RED_HATCH = 'rgba(192, 57, 43, 0.55)';
+const YELLOW_FILL = 'rgba(241, 196, 15, 0.28)';
+const RED_LINE = '#c0392b';
+const YELLOW_LINE = '#b7791f';
+const FLOOR_COLORS = ['#2c7be5', '#2e9e5b', '#e67e22', '#8e44ad', '#7f8c8d'];
+/** 格子のセル数の上限（大きな敷地では格子を粗くする） */
+const MAX_CELLS = 40000;
+
 function option(value, label) {
   const o = document.createElement('option');
   o.value = value;
@@ -33,10 +43,12 @@ export class HeightLimitController {
    * @param {object} deps.ui
    * @param {(floorId: string) => void} deps.setFloor
    */
-  constructor({ store, ui, setFloor }) {
+  constructor({ editor, store, ui, setFloor }) {
+    this.editor = editor;
     this.store = store;
     this.ui = ui;
     this.setFloor = setFloor;
+    this._cache = { key: null, byLevel: new Map() };
     this._wirePanel();
   }
 
@@ -204,7 +216,8 @@ export class HeightLimitController {
     const lo = s.build.low, st = s.build.standard;
     $('#hl-assumption').textContent = `前提: ${zone.name}${north}、${district}${maxH}。`
       + `低め 1FL ${lo.groundToFirstFloorMM}・階高 ${lo.storyHeightsMM[0]}、標準 1FL ${st.groundToFirstFloorMM}・階高 ${st.storyHeightsMM[0]}（mm）、余白 ${s.marginMM}。`
-      + `距離は真北方向に測り、${this._roadAssumption()}。`;
+      + `距離は真北方向に測り、${this._roadAssumption()}。`
+      + (this._isTilted() ? '敷地が真北から傾いているため、東西の境界側にも制限がかかります（図面の赤・黄で確認してください）。' : '');
   }
 
   /** 前面道路が北側にあるか（plan.site.road を使う。道路の選択は駐車シミュレーター側） */
@@ -215,6 +228,14 @@ export class HeightLimitController {
     const road = H.roadForLimit(site.road, boundary);
     if (!road) return { hasSite: true, road: null };
     return { hasSite: true, road, north: H.northRoadOffset(site) };
+  }
+
+  /** 方位が 90° の倍数から 1° 以上ずれているか（そのとき北端以外の境界からも制限がかかる） */
+  _isTilted() {
+    const site = this._plan()?.site;
+    if (!SITE.isValidSite(site?.boundary)) return false;
+    const a = (((Number(site.azimuth) || 0) % 90) + 90) % 90;
+    return a >= 1 && a <= 89;
   }
 
   _roadAssumption() {
@@ -230,7 +251,7 @@ export class HeightLimitController {
     const info = this._roadInfo();
     const el = $('#hl-road-status');
     if (!info.hasSite) {
-      el.textContent = '敷地を描くと、図面に置けない範囲を重ねられます（フェーズ 3）。上の距離は敷地がなくても出ます。';
+      el.textContent = '敷地を描くと、図面に置けない範囲を赤と黄で重ねます。下の距離は敷地がなくても出ます。';
     } else if (!info.road) {
       el.textContent = '前面道路が未設定です。北側が道路なら、駐車シミュレーターで道路を設定してください（未設定だと北側は隣地として計算し、実際より厳しく出ます）。';
     } else if (info.north) {
@@ -238,6 +259,204 @@ export class HeightLimitController {
     } else {
       el.textContent = '北側の道路: なし（前面道路は北側以外。北側は隣地として計算）。';
     }
+  }
+
+  // ---- 2D 図面への重ね描き -------------------------------------------------------
+
+  /** 描くかどうかと、描くときの材料。描かないときは null */
+  _drawContext() {
+    const plan = this._plan();
+    if (!plan || this.ui.view !== '2d') return null;
+    const s = this.settings();
+    if (!s.enabled || !s.show.contour2d) return null;
+    if (!SITE.isValidSite(plan.site?.boundary)) return null;
+    return { plan, s };
+  }
+
+  /**
+   * 階ごとの塗る範囲と線。敷地・方位・道路・設定・階の並びが変わるまで使い回す
+   * （壁や部屋には左右されないので、壁を動かしても計算し直さない）。
+   */
+  _levelGeometry(plan, s, level) {
+    const key = JSON.stringify([plan.site.boundary, plan.site.azimuth, plan.site.road, s, plan.floors.map((f) => f.level)]);
+    if (this._cache.key !== key) this._cache = { key, byLevel: new Map() };
+    if (this._cache.byLevel.has(level)) return this._cache.byLevel.get(level);
+
+    const ctx = H.makeContext(plan.site, s);
+    const b = plan.site.boundary;
+    const w = Math.max(...b.map((p) => p.x)) - Math.min(...b.map((p) => p.x));
+    const d = Math.max(...b.map((p) => p.z)) - Math.min(...b.map((p) => p.z));
+    const step = Math.max(100, Math.ceil(Math.sqrt((w * d) / MAX_CELLS) / 50) * 50);
+    const clearance = H.floorClearances(plan, s).find((r) => r.level === level);
+    let geo = null;
+    if (clearance) {
+      const { low, standard } = clearance;
+      geo = {
+        step,
+        clearance,
+        red: H.forbiddenRuns(ctx, low.checkMM, step),
+        yellow: H.forbiddenRuns(ctx, standard.checkMM, step),
+        redLine: H.contourSegments(ctx, low.checkMM, step),
+        yellowLine: H.contourSegments(ctx, standard.checkMM, step),
+      };
+    }
+    this._cache.byLevel.set(level, geo);
+    return geo;
+  }
+
+  _currentFloor(plan) {
+    return plan.floors.find((f) => f.id === this.ui.floorId) || plan.floors[0];
+  }
+
+  _runsPath(ctx, runs, { append = false } = {}) {
+    const S = (x, z) => this.editor.worldToScreen(x, z);
+    if (!append) ctx.beginPath();
+    for (const r of runs) {
+      const a = S(r.x0, r.z - r.stepMM / 2);
+      const c = S(r.x1, r.z + r.stepMM / 2);
+      ctx.rect(a.x, a.y, c.x - a.x, c.y - a.y);
+    }
+  }
+
+  _strokeSegments(ctx, segs, color, width, dash) {
+    if (!segs.length) return;
+    ctx.beginPath();
+    for (const [p, q] of segs) {
+      const a = this.editor.worldToScreen(p.x, p.z);
+      const b = this.editor.worldToScreen(q.x, q.z);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.setLineDash(dash);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  /**
+   * 境目の線のラベル。北端からの距離が 0 でも線があるのは、方位が傾いていて東西の隣地側で
+   * 制限がかかる場合なので、そのときは距離を書かず階の名前だけにする（「制限なし」と誤解させない）。
+   */
+  _lineLabel(floorId, kind, fromSiteMM, rules) {
+    if (fromSiteMM <= 0) return `${floorId}${kind}`;
+    return `${floorId}${kind}: ${fmtDistance(fromSiteMM, rules.absMaxMM)}`;
+  }
+
+  /** 線の東端（画面の右端）の点。ラベルを置く場所 */
+  _labelAnchor(segs) {
+    let best = null;
+    for (const seg of segs) for (const p of seg) if (!best || p.x > best.x) best = p;
+    return best ? this.editor.worldToScreen(best.x, best.z) : null;
+  }
+
+  /** 部屋や壁の下: 選択中の階の黄（標準だと超える）と赤（低めでも超える）を塗る */
+  drawUnder(ctx) {
+    const dc = this._drawContext();
+    if (!dc) return;
+    const floor = this._currentFloor(dc.plan);
+    const geo = this._levelGeometry(dc.plan, dc.s, floor.level || 0);
+    if (!geo) return;
+    ctx.save();
+    // 黄は赤の範囲を除いて塗る（赤は必ず黄の内側。evenodd で重なりを抜く）
+    this._runsPath(ctx, geo.yellow);
+    this._runsPath(ctx, geo.red, { append: true });
+    ctx.fillStyle = YELLOW_FILL;
+    ctx.fill('evenodd');
+    if (geo.red.length) {
+      this._runsPath(ctx, geo.red);
+      ctx.fillStyle = RED_FILL;
+      ctx.fill();
+      // 斜線（赤の範囲の中だけ）
+      ctx.save();
+      ctx.clip();
+      const { width, height } = ctx.canvas;
+      ctx.beginPath();
+      for (let x = -height; x < width; x += 10) {
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + height, height);
+      }
+      ctx.strokeStyle = RED_HATCH;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /** 部屋や壁の上: 境目の線とラベル、凡例 */
+  drawOver(ctx) {
+    const dc = this._drawContext();
+    if (!dc) return;
+    const { plan, s } = dc;
+    const current = this._currentFloor(plan);
+    const rules = H.resolveRules(s);
+    const text = (t, x, y, color) => this.editor._drawSiteText(ctx, t, x, y, { color, font: '600 11px system-ui, sans-serif' });
+    ctx.save();
+    // 他の階: 低めの線を階の色の破線で
+    const floors = [...plan.floors].sort((a, b) => (a.level || 0) - (b.level || 0));
+    floors.forEach((f, i) => {
+      if (f.id === current.id) return;
+      const geo = this._levelGeometry(plan, s, f.level || 0);
+      if (!geo || !geo.redLine.length) return;
+      const color = FLOOR_COLORS[i % FLOOR_COLORS.length];
+      this._strokeSegments(ctx, geo.redLine, color, 1.2, [6, 4]);
+      const at = this._labelAnchor(geo.redLine);
+      if (at) text(this._lineLabel(f.id, '', geo.clearance.low.fromSiteMM, rules), at.x - 44, at.y - 9, color);
+    });
+    // 選択中の階: 赤と黄の境目を実線で
+    const geo = this._levelGeometry(plan, s, current.level || 0);
+    if (geo) {
+      this._strokeSegments(ctx, geo.yellowLine, YELLOW_LINE, 1.6, []);
+      this._strokeSegments(ctx, geo.redLine, RED_LINE, 1.8, []);
+      const { low, standard } = geo.clearance;
+      const atY = this._labelAnchor(geo.yellowLine);
+      const atR = this._labelAnchor(geo.redLine);
+      if (atR) text(this._lineLabel(current.id, ' 赤', low.fromSiteMM, rules), atR.x - 70, atR.y + 10, RED_LINE);
+      if (atY) text(this._lineLabel(current.id, ' 黄', standard.fromSiteMM, rules), atY.x - 70, atY.y - 10, YELLOW_LINE);
+    }
+    this._drawLegend(ctx, current, geo);
+    ctx.restore();
+  }
+
+  /** 図面の左上に凡例（色の意味と、選択中の階の結果） */
+  _drawLegend(ctx, floor, geo) {
+    const lines = [
+      { fill: RED_FILL, hatch: true, label: '赤: 低めの高さでも超える（ほぼ置けない）' },
+      { fill: YELLOW_FILL, label: '黄: 標準の高さだと超える（工夫で入る場合あり）' },
+    ];
+    const status = !geo || (!geo.red.length && !geo.yellow.length)
+      ? `${floor.id}: 敷地内に北側斜線の制限なし`
+      : `高さ制限（${floor.id}）・目安`;
+    const x = 12, y = 12, lh = 17, w = 268, h = 10 + lh * (lines.length + 1);
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#1f2733';
+    ctx.fillText(status, x + 8, y + 5 + lh / 2);
+    ctx.font = '11px system-ui, sans-serif';
+    lines.forEach((l, i) => {
+      const cy = y + 5 + lh * (i + 1) + lh / 2;
+      ctx.fillStyle = l.fill;
+      ctx.fillRect(x + 8, cy - 5, 14, 10);
+      if (l.hatch) {
+        ctx.strokeStyle = RED_HATCH;
+        ctx.beginPath();
+        ctx.moveTo(x + 8, cy - 5); ctx.lineTo(x + 18, cy + 5);
+        ctx.moveTo(x + 13, cy - 5); ctx.lineTo(x + 22, cy + 4);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#1f2733';
+      ctx.fillText(l.label, x + 28, cy);
+    });
+    ctx.restore();
   }
 
   /** main.js の refreshPanels から呼ばれる */
