@@ -161,6 +161,45 @@ test('floorClearances: 仮の値・余白 0 で低めと標準の必要距離', 
   near(withMargin[2].standard.minDistanceMM, 3680, 1e-6);
 });
 
+test('floorClearances: 北側道路があれば、敷地の北端からの距離は道路の分を引く', () => {
+  const plan = createEmptyPlan('road');
+  plan.site.boundary = SQUARE;
+  // 幅員 5.9m の北側道路: 3F（標準 3.44m）も含めて敷地の北端から制限なし
+  plan.site.road = { edgeIndex: 0, widthMM: 5900 };
+  let [, , f3] = H.floorClearances(plan, TOKUMARU);
+  near(f3.standard.minDistanceMM, 3440, 1e-6); // 斜線の起点（道路の反対側）からの距離は変わらない
+  assert.equal(f3.standard.fromSiteMM, 0);
+  assert.equal(f3.low.fromSiteMM, 0);
+  // 幅員 2m: 3F は 1.44m / 0.68m
+  plan.site.road = { edgeIndex: 0, widthMM: 2000 };
+  [, , f3] = H.floorClearances(plan, TOKUMARU);
+  near(f3.standard.fromSiteMM, 1440, 1e-6);
+  near(f3.low.fromSiteMM, 680, 1e-6);
+  // 方位 30°: 道路の幅は真北方向に 2000 ÷ cos30° として引く
+  plan.site.azimuth = 30;
+  [, , f3] = H.floorClearances(plan, TOKUMARU);
+  near(f3.standard.fromSiteMM, 3440 - 2000 / Math.cos(Math.PI / 6), 1e-6);
+  // 南側の道路は引かない
+  plan.site.azimuth = 0;
+  plan.site.road = { edgeIndex: 2, widthMM: 5900 };
+  [, , f3] = H.floorClearances(plan, TOKUMARU);
+  near(f3.standard.fromSiteMM, 3440, 1e-6);
+  // 道路がなければ minDistanceMM と同じ
+  plan.site.road = null;
+  [, , f3] = H.floorClearances(plan, TOKUMARU);
+  near(f3.standard.fromSiteMM, f3.standard.minDistanceMM, 1e-9);
+});
+
+test('northRoadOffset: 真北から 60° 以内に向いた道路だけを北側道路とみなす', () => {
+  const site = { boundary: SQUARE, azimuth: 0, road: { edgeIndex: 0, widthMM: 4000 } };
+  near(H.northRoadOffset(site).offsetMM, 4000);
+  near(H.northRoadOffset({ ...site, azimuth: 180, road: { edgeIndex: 2, widthMM: 4000 } }).offsetMM, 4000);
+  near(H.northRoadOffset({ ...site, azimuth: 59 }).offsetMM, 4000 / Math.cos(59 * Math.PI / 180), 1e-6);
+  assert.equal(H.northRoadOffset({ ...site, azimuth: 61 }), null);
+  assert.equal(H.northRoadOffset({ ...site, road: { edgeIndex: 1, widthMM: 4000 } }), null);
+  assert.equal(H.northRoadOffset({ ...site, road: null }), null);
+});
+
 test('forbiddenRuns: 塗る面積が解析解と 1 格子分の誤差で合い、赤は黄の内側', () => {
   const ctx = H.makeContext({ boundary: SQUARE, azimuth: 0 }, TOKUMARU);
   const step = 100;

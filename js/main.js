@@ -10,6 +10,7 @@ import { computeRoofRegions } from './roofModel.js';
 import { ROOM_TYPES, FURNITURE, STAIR_TYPES, OPENING_TYPES, PLUMBING_TYPES, EXTERIOR_TYPES, FLOORING_TYPES, getRoomType, getFurniture, getStairType, stairCanMirror, getOpeningType, getPlumbingFurnitureId, isWallMountedFurniture, isFreeRotateFurniture, flooringForRoom } from './catalog.js';
 import { Editor2D } from './editor2d.js';
 import { ParkingSimController } from './parkingSimMode.js';
+import { HeightLimitController } from './heightLimitMode.js';
 import { Viewer3D } from './viewer3d.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
 import { PlanList } from './planList.js';
@@ -52,10 +53,13 @@ const canvas = $('#canvas2d');
 const viewer3dEl = $('#viewer3d');
 
 let parking = null; // 駐車シミュレーター（editor の後に作る）
+let heightLimit = null; // 高さ制限パネル（editor の後に作る）
 const editor = new Editor2D(canvas, store, ui, refreshPanels);
 const viewer = new Viewer3D(viewer3dEl, store, ui);
 parking = new ParkingSimController({ editor, store, ui, setTool, updateHint });
 editor.parkingSim = parking;
+// 高さ制限（北側斜線）。setFloor は関数宣言なので巻き上げで参照できる
+heightLimit = new HeightLimitController({ store, ui, setFloor });
 
 let planList = null;
 let screen = 'list'; // 'list' | 'editor'
@@ -485,6 +489,7 @@ function refreshPanels() {
   syncBgPanel();
   syncSitePanel();
   parking?.syncPanel();
+  heightLimit?.syncPanel();
   syncRoofPanel();
   if (ui.view === '2d') editor.draw();
   if (ui.view === '3d') viewer.rebuild();

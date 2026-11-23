@@ -255,6 +255,60 @@
         </div>
       </section>
 
+      <!-- 高さ制限（北側斜線・高度地区） -->
+      <section class="pane pane-fold" id="heightlimit-pane" data-fold-id="heightlimit">
+        <button type="button" class="pane-fold-head" aria-expanded="true">
+          <span>高さ制限（北側斜線）</span>
+          <span class="pane-fold-icon" aria-hidden="true"></span>
+        </button>
+        <div class="pane-fold-body">
+          <label class="row check">
+            <input type="checkbox" id="hl-enabled" />
+            <span>高さ制限を表示する</span>
+          </label>
+          <p class="pane-hint">土地選びの目安です。階ごとに、北端から何 m 離せば置けるかを出します。</p>
+          <div id="hl-detail" hidden>
+            <h4 class="parking-sub">用途地域・高度地区</h4>
+            <div class="prop-row"><label for="hl-zone">用途地域</label><select id="hl-zone"></select></div>
+            <div class="prop-row" id="hl-lowrise-row"><label for="hl-lowrise-max">絶対高さ</label><select id="hl-lowrise-max"></select></div>
+            <label class="row check" id="hl-shadow-row" title="日影規制の対象区域では、中高層の北側斜線は適用されません">
+              <input type="checkbox" id="hl-shadow" />
+              <span>日影規制の対象区域</span>
+            </label>
+            <p id="hl-shadow-note" class="pane-hint" hidden>北側斜線は適用除外です。高度地区だけで計算します。</p>
+            <div class="prop-row"><label for="hl-district">高度地区（板橋区）</label><select id="hl-district"></select></div>
+            <div class="prop-row" id="hl-district-max-row"><label for="hl-district-max">絶対高さ</label><select id="hl-district-max"></select></div>
+            <div class="prop-row" id="hl-free-max-row"><label for="hl-free-max">絶対高さ (mm)</label><input type="number" id="hl-free-max" min="3000" max="100000" step="100" placeholder="なし" /></div>
+            <div id="hl-custom" hidden>
+              <div class="prop-row"><label for="hl-custom-base">立ち上がり (mm)</label><input type="number" id="hl-custom-base" min="0" max="50000" step="100" /></div>
+              <div class="prop-row"><label for="hl-custom-slope">傾き</label><input type="number" id="hl-custom-slope" min="0" max="10" step="0.05" /></div>
+              <div class="prop-row"><label for="hl-custom-switch">切替距離 (mm)</label><input type="number" id="hl-custom-switch" min="0" max="100000" step="100" placeholder="なし" /></div>
+              <div class="prop-row" id="hl-custom-slope2-row"><label for="hl-custom-slope2">切替後の傾き</label><input type="number" id="hl-custom-slope2" min="0" max="10" step="0.05" /></div>
+            </div>
+            <p class="pane-hint">土地の資料（重要事項説明書・販売図面）の記載か、区の都市計画情報マップで確認してください。</p>
+
+            <h4 class="parking-sub">各階の高さ (mm)</h4>
+            <table class="hl-table" id="hl-build"></table>
+            <div class="btn-row">
+              <button id="hl-build-reset" class="btn btn-compact" type="button">仮の値に戻す</button>
+            </div>
+            <p class="pane-hint">階高は床から上の階の床まで（最上階は床から軒まで）。初期値はハウスメーカーの資料の値ではない仮の値です。</p>
+            <div class="prop-row"><label for="hl-margin">余白 (mm)</label><input type="number" id="hl-margin" min="0" max="3000" step="50" /></div>
+            <p class="pane-hint">余白を足すと、置けない範囲が広がります（見送りすぎに注意）。</p>
+            <p id="hl-road-status" class="pane-hint"></p>
+            <label class="row check">
+              <input type="checkbox" id="hl-show-2d" />
+              <span>2D 図面に重ねて表示</span>
+            </label>
+
+            <h4 class="parking-sub">北端から必要な距離</h4>
+            <table class="hl-table hl-result" id="hl-result"></table>
+            <p id="hl-assumption" class="pane-hint"></p>
+            <p class="pane-hint">赤 = 低めの高さでも超える（ほぼ確実に置けない）。黄 = 標準の高さだと超える（天井を下げる・北側だけ低くするなどで入る場合あり。ハウスメーカーに聞く価値あり）。プランが入るかはハウスメーカーに確認してください。</p>
+          </div>
+        </div>
+      </section>
+
       <!-- 屋根（表示中の階） -->
       <section class="pane pane-fold" id="roof-pane" data-fold-id="roof">
         <button type="button" class="pane-fold-head" aria-expanded="true">

@@ -340,18 +340,47 @@ export function floorTopMM(buildSet, level) {
   return top;
 }
 
+/** 北側道路とみなす下限: 道路の外向き法線と真北のなす角の余弦（60° 以内） */
+export const NORTH_ROAD_MIN_COS = 0.5;
+
+/**
+ * 前面道路が北側にあるとき、敷地の北端から道路の反対側の境界までの真北方向の距離。
+ * → { widthMM, offsetMM }（offsetMM = 幅員 ÷ 余弦）。北側に道路がなければ null。
+ * 道路が真北から 60° より大きく傾いている（東西向きに近い）ときは北側道路として扱わない。
+ */
+export function northRoadOffset(site) {
+  const boundary = Array.isArray(site?.boundary) ? site.boundary : [];
+  const road = roadForLimit(site?.road, boundary);
+  if (!road) return null;
+  const a = boundary[road.edgeIndex];
+  const b = boundary[(road.edgeIndex + 1) % boundary.length];
+  const len = Math.hypot(b.x - a.x, b.z - a.z);
+  if (len < 1) return null;
+  let out = { x: (b.z - a.z) / len, z: -(b.x - a.x) / len };
+  const probe = { x: (a.x + b.x) / 2 + out.x * 50, z: (a.z + b.z) / 2 + out.z * 50 };
+  if (pointInPolygon(probe, boundary)) out = { x: -out.x, z: -out.z };
+  const n = northDir(site.azimuth);
+  const cos = out.x * n.x + out.z * n.z;
+  if (cos < NORTH_ROAD_MIN_COS) return null;
+  return { widthMM: road.widthMM, offsetMM: road.widthMM / cos };
+}
+
 /**
  * 階ごとに、低め・標準それぞれの壁上端（余白込み）と北端から必要な距離。
- * → [{ level, low: { topMM, checkMM, minDistanceMM }, standard: { ... } }]（level の昇順）
+ * minDistanceMM = 斜線の起点（北側が隣地なら敷地境界、道路なら道路の反対側の境界）からの距離。
+ * fromSiteMM = 敷地の北端からの距離（北側道路があれば道路の分を引く。0 = どこでも置ける）。
+ * → [{ level, low: { topMM, checkMM, minDistanceMM, fromSiteMM }, standard: { ... } }]（level の昇順）
  */
 export function floorClearances(plan, settings) {
   const s = normalizeHeightLimit(settings ?? plan?.site?.heightLimit);
   const rules = resolveRules(s);
+  const roadOffsetMM = northRoadOffset(plan?.site)?.offsetMM || 0;
   const levels = [...new Set((plan?.floors || []).map((f) => f.level || 0))].sort((a, b) => a - b);
   const one = (set, level) => {
     const topMM = floorTopMM(set, level);
     const checkMM = topMM + s.marginMM;
-    return { topMM, checkMM, minDistanceMM: minDistanceForHeightMM(rules, checkMM) };
+    const minDistanceMM = minDistanceForHeightMM(rules, checkMM);
+    return { topMM, checkMM, minDistanceMM, fromSiteMM: Math.max(0, minDistanceMM - roadOffsetMM) };
   };
   return levels.map((level) => ({ level, low: one(s.build.low, level), standard: one(s.build.standard, level) }));
 }
