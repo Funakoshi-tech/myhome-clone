@@ -3,6 +3,7 @@
 // 描画には一切依存しない。editor2d / viewer3d は同じ store の同じデータを読むだけ。
 
 import { normalizeRoofSettings } from './roofSettings.js';
+import { normalizeHeightLimit } from './heightLimit.js';
 
 // 1P = 910mm（1マス）
 export const P_MM = 910;
@@ -992,6 +993,8 @@ export function createEmptyPlan(name = '新しいプラン') {
       boundary: [],
       azimuth: 0,
       backgroundImage: null,
+      // 北側斜線・高度地区の高さ制限（heightLimit.js）。既定は無効
+      heightLimit: normalizeHeightLimit(null),
     },
     floors: [
       defaultFloor('1F', 0),
@@ -1364,6 +1367,8 @@ export function normalizePlan(plan) {
       backgroundImage: plan.site?.backgroundImage
         ? normalizeBackgroundImage(plan.site.backgroundImage)
         : (plan.site?.backgroundImage ?? null),
+      // 旧データ（heightLimit なし）は無効の初期値で読み込む
+      heightLimit: normalizeHeightLimit(plan.site?.heightLimit),
     },
     floors: Array.isArray(plan.floors) && plan.floors.length ? plan.floors : base.floors,
     exterior: Array.isArray(plan.exterior) ? plan.exterior : [],
