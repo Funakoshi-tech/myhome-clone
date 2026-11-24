@@ -581,6 +581,19 @@ export class Editor2D {
   }
 
   // ---- ライフサイクル -------------------------------------------------------
+  /**
+   * 家具アイコンができたときの描き直し。毎回同じ関数を渡すので、待っている間に何度描いても
+   * アイコン1つにつき予約は1件で済む（毎回新しい関数を渡すと、描くたびに予約が増えて連鎖的に描き直していた）。
+   * いくつ同時にできても、描き直しは次のフレームで1回にまとめる
+   */
+  _onFurnitureIconReady = () => {
+    if (this._iconRedrawRaf) return;
+    this._iconRedrawRaf = requestAnimationFrame(() => {
+      this._iconRedrawRaf = 0;
+      this.draw();
+    });
+  };
+
   setActive(on) {
     this.active = on;
     if (on) { this.resize(); this.draw(); }
@@ -4469,7 +4482,7 @@ export class Editor2D {
         ctx.drawImage(icon, -hw, -hd, hw * 2, hd * 2);
         ctx.restore();
       } else if (icon === undefined) {
-        requestFurnitureIcon(modelPath, dims, () => this.draw());
+        requestFurnitureIcon(modelPath, dims, this._onFurnitureIconReady);
         this._drawFurnitureFallbackRect(ctx, f, sc, hw, hd);
       } else {
         this._drawFurnitureFallbackRect(ctx, f, sc, hw, hd);
