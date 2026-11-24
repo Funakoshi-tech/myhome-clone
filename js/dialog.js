@@ -76,7 +76,9 @@ function _wireOnce() {
 }
 
 /**
- * @param {{ title?: string, label?: string, defaultValue?: string, okText?: string, suggestions?: string[] }} opts
+ * choices を渡すと入力欄の上にボタンを並べ、押したボタンの value ですぐ確定する。
+ * @param {{ title?: string, label?: string, defaultValue?: string, okText?: string, suggestions?: string[],
+ *   choices?: { label: string, value: string, active?: boolean }[] }} opts
  * @returns {Promise<string|null>}
  */
 export function showPrompt(opts = {}) {
@@ -98,10 +100,32 @@ export function showPrompt(opts = {}) {
     }));
   }
 
+  const choiceBox = $('app-prompt-choices');
+  const choices = opts.choices || [];
+  if (choiceBox) {
+    choiceBox.hidden = choices.length === 0;
+    choiceBox.replaceChildren(...choices.map((c) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'plan-folder-chip' + (c.active ? ' active' : '');
+      b.textContent = c.label;
+      b.title = c.label;
+      b.addEventListener('click', () => {
+        if (!_promptResolve) return;
+        const resolve = _promptResolve;
+        _promptResolve = null;
+        modal.hidden = true;
+        resolve(c.value);
+      });
+      return b;
+    }));
+  }
+
   return new Promise((resolve) => {
     _promptResolve = resolve;
     modal.hidden = false;
     requestAnimationFrame(() => {
+      if (choices.length) return;
       input.focus();
       input.select();
     });

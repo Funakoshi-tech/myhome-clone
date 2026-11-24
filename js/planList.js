@@ -236,13 +236,19 @@ export class PlanList {
     const plan = this.store.plans[id];
     if (!plan) return;
     const folders = this._allFolders();
+    const current = plan.meta.folder || '';
     const name = await showPrompt({
       title: 'フォルダへ移動',
       label: folders.length
-        ? `フォルダ名（候補: ${folders.join('、')}。新しい名前で新規作成、空欄で未分類）`
-        : 'フォルダ名（新しい名前で新規作成、空欄で未分類）',
-      defaultValue: plan.meta.folder || '',
-      suggestions: folders,
+        ? 'または新しいフォルダ名を入力して「移動」'
+        : '新しいフォルダ名を入力して「移動」（空欄で未分類）',
+      defaultValue: '',
+      choices: folders.length
+        ? [
+          ...folders.map((f) => ({ label: `📁 ${f}`, value: f, active: f === current })),
+          { label: '未分類', value: '', active: current === '' },
+        ]
+        : [],
       okText: '移動',
     });
     if (name === null) return;

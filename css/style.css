@@ -156,6 +156,12 @@ body.plan-list-mode { overflow: auto; }
   background: rgba(0, 0, 0, 0.06);
 }
 .plan-folder-chip.active .plan-folder-chip-count { background: rgba(255, 255, 255, 0.25); }
+.prompt-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 14px;
+}
 .plan-folder-add { border-style: dashed; color: var(--text-dim); }
 .plan-folder-tools { display: inline-flex; gap: 6px; margin-left: auto; }
 .plan-folder-tools .btn { font-size: 12px; padding: 5px 10px; }
