@@ -25,6 +25,11 @@ export const ZONE_PRESETS = [
   // 中高層: 日影規制の対象区域では北側斜線が適用除外になる（shadowRegulated）
   { id: 'chuko1', name: '第一種中高層住居専用地域', lowRise: false, midRise: true, north: [{ fromMM: 0, toMM: null, baseMM: 10000, slope: 1.25 }] },
   { id: 'chuko2', name: '第二種中高層住居専用地域', lowRise: false, midRise: true, north: [{ fromMM: 0, toMM: null, baseMM: 10000, slope: 1.25 }] },
+  // 北側斜線のない用途地域。道路斜線の勾配と適用距離の区分（roadClass）だけが違う
+  { id: 'jukyo', name: '第一種・第二種住居地域、準住居地域', lowRise: false, north: null },
+  { id: 'shogyo', name: '近隣商業地域、商業地域', lowRise: false, north: null, roadClass: 'commercial' },
+  { id: 'kogyo', name: '準工業地域、工業地域', lowRise: false, north: null, roadClass: 'industrial' },
+  // 旧データ用。道路斜線は住居系（1.25）として扱う
   { id: 'other', name: 'その他の用途地域（北側斜線なし）', lowRise: false, north: null },
 ];
 
@@ -164,6 +169,29 @@ function normalizeDistrict(raw) {
   return { city, kind, maxHeightMM, custom };
 }
 
+// ─── 道路斜線の設定 ───────────────────────────────────
+// plan.site.heightLimit.road = { enabled, floorAreaRatio, setbackMode, setbackMM, roadLevelDiffMM, show2d }
+// 道路の辺と幅員は plan.site.road（駐車シミュレーションと共用）を使う。
+
+export const DEFAULT_FLOOR_AREA_RATIO = 200;
+export const DEFAULT_SETBACK_MM = 500;
+export const MAX_SETBACK_MM = 20000;
+export const MAX_ROAD_LEVEL_DIFF_MM = 5000;
+export const SETBACK_MODES = ['auto', 'manual'];
+
+/** 道路斜線の設定を安全な値にする（旧データで undefined のときは「見る」・既定値） */
+export function normalizeRoadSetback(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  return {
+    enabled: src.enabled !== false,
+    floorAreaRatio: Math.round(clampNumber(src.floorAreaRatio, 50, 1300, DEFAULT_FLOOR_AREA_RATIO)),
+    setbackMode: SETBACK_MODES.includes(src.setbackMode) ? src.setbackMode : 'auto',
+    setbackMM: Math.round(clampNumber(src.setbackMM, 0, MAX_SETBACK_MM, DEFAULT_SETBACK_MM)),
+    roadLevelDiffMM: Math.round(clampNumber(src.roadLevelDiffMM, -MAX_ROAD_LEVEL_DIFF_MM, MAX_ROAD_LEVEL_DIFF_MM, 0)),
+    show2d: src.show2d !== false,
+  };
+}
+
 /** 保存値・入力値を安全な設定にする（範囲外は既定値。旧データで undefined のときは無効の初期値） */
 export function normalizeHeightLimit(raw) {
   const src = raw && typeof raw === 'object' ? raw : {};
@@ -183,6 +211,7 @@ export function normalizeHeightLimit(raw) {
     },
     marginMM: Math.round(clampNumber(src.marginMM, 0, MAX_MARGIN_MM, 0)),
     show: { contour2d: src.show?.contour2d !== false },
+    road: normalizeRoadSetback(src.road),
   };
 }
 
@@ -349,6 +378,19 @@ export const NORTH_ROAD_MIN_COS = 0.5;
  * 道路が真北から 60° より大きく傾いている（東西向きに近い）ときは北側道路として扱わない。
  */
 export function northRoadOffset(site) {
+  const frame = roadEdgeFrame(site);
+  if (!frame) return null;
+  const n = northDir(site.azimuth);
+  const cos = frame.out.x * n.x + frame.out.z * n.z;
+  if (cos < NORTH_ROAD_MIN_COS) return null;
+  return { widthMM: frame.widthMM, offsetMM: frame.widthMM / cos };
+}
+
+/**
+ * 前面道路の辺の向き。→ { boundary, edgeIndex, a, b, out（敷地の外 = 道路側の単位法線）, widthMM }。
+ * 道路がない・辺が短すぎるときは null。
+ */
+export function roadEdgeFrame(site) {
   const boundary = Array.isArray(site?.boundary) ? site.boundary : [];
   const road = roadForLimit(site?.road, boundary);
   if (!road) return null;
@@ -359,10 +401,7 @@ export function northRoadOffset(site) {
   let out = { x: (b.z - a.z) / len, z: -(b.x - a.x) / len };
   const probe = { x: (a.x + b.x) / 2 + out.x * 50, z: (a.z + b.z) / 2 + out.z * 50 };
   if (pointInPolygon(probe, boundary)) out = { x: -out.x, z: -out.z };
-  const n = northDir(site.azimuth);
-  const cos = out.x * n.x + out.z * n.z;
-  if (cos < NORTH_ROAD_MIN_COS) return null;
-  return { widthMM: road.widthMM, offsetMM: road.widthMM / cos };
+  return { boundary, edgeIndex: road.edgeIndex, a, b, out, widthMM: road.widthMM };
 }
 
 /**
@@ -471,6 +510,186 @@ export function contourSegments(ctx, hMM, stepMM = 100) {
         else segs.push([pts[0], pts[1]], [pts[2], pts[3]]);
       }
     }
+  }
+  return segs;
+}
+
+// ─── 道路斜線（建築基準法 56 条 1 項 1 号・別表第 3） ──────────────────
+// 上限（道路の中心の高さから）= 勾配 × (W + s + y)。
+// W = 幅員、s = 後退距離（56 条 2 項: 反対側の境界線も s だけ外にあるとみなす）、
+// y = 道路境界から敷地の内側への垂直距離。W + s + y が適用距離を超える所は制限なし。
+// 天空率（56 条 7 項）で外せることが多いので、画面では「置けない」ではなく「天空率しだい」として出す。
+// 角地の 2 方向道路・公園や川の緩和・幅員 12m 以上の特例は扱わない。
+
+/** 別表第 3 の区分ごとの勾配と適用距離（容積率 % の上限 → 適用距離 mm。最後は上限なし） */
+export const ROAD_CLASSES = {
+  residential: {
+    slope: 1.25,
+    distances: [[200, 20000], [300, 25000], [400, 30000], [Infinity, 35000]],
+  },
+  commercial: {
+    slope: 1.5,
+    distances: [[400, 20000], [600, 25000], [800, 30000], [1000, 35000], [1100, 40000], [1200, 45000], [Infinity, 50000]],
+  },
+  industrial: {
+    slope: 1.5,
+    distances: [[200, 20000], [300, 25000], [400, 30000], [Infinity, 35000]],
+  },
+};
+
+/** 用途地域と容積率から { roadClass, slope, applyDistanceMM }。道路斜線を見ない設定なら null */
+export function roadRules(settings) {
+  const s = normalizeHeightLimit(settings);
+  if (!s.road.enabled) return null;
+  const zone = ZONE_PRESETS.find((z) => z.id === s.zoneId);
+  const roadClass = zone.roadClass || 'residential';
+  const c = ROAD_CLASSES[roadClass];
+  const far = s.road.floorAreaRatio;
+  const applyDistanceMM = c.distances.find(([maxFar]) => far <= maxFar)[1];
+  return { roadClass, slope: c.slope, applyDistanceMM };
+}
+
+/**
+ * 敷地が道路より高い分（mm）を、建物の高さに足す量にする（令 135 条の 2）。
+ * 1m を超える分は半分だけ足す。敷地が道路より低い（負）ときはそのまま引く。
+ */
+export function roadLevelAdjustMM(diffMM) {
+  const d = Number(diffMM) || 0;
+  return d <= 1000 ? d : 1000 + (d - 1000) / 2;
+}
+
+/** 点の、道路境界から敷地の内側への垂直距離（mm）。道路側にはみ出していれば負 */
+function inwardDistanceMM(pt, frame) {
+  return -((pt.x - frame.a.x) * frame.out.x + (pt.z - frame.a.z) * frame.out.z);
+}
+
+/**
+ * 1 階（いちばん低い level）の壁の外面から道路境界までの最小距離（mm）。壁がなければ null。
+ * 壁は中心線なので、外面までの厚みの半分（道路の向きの成分）を引く。物置・ポーチなどの除外は扱わない。
+ */
+export function roadSetbackMM(plan, frame = roadEdgeFrame(plan?.site)) {
+  if (!frame) return null;
+  const floors = plan?.floors || [];
+  if (!floors.length) return null;
+  const minLevel = Math.min(...floors.map((f) => f.level || 0));
+  let best = Infinity;
+  for (const f of floors) {
+    if ((f.level || 0) !== minLevel) continue;
+    for (const w of f.walls || []) {
+      if (!w?.start || !w?.end) continue;
+      // 外面は中心線から厚みの半分。道路に平行な壁ほど丸ごと効き、直交する壁は効かない
+      const wl = Math.hypot(w.end.x - w.start.x, w.end.z - w.start.z);
+      const cos = wl > 0 ? Math.abs((w.end.z - w.start.z) * frame.out.x - (w.end.x - w.start.x) * frame.out.z) / wl : 1;
+      const half = ((Number(w.thicknessMM) || 0) / 2) * cos;
+      const d = Math.min(inwardDistanceMM(w.start, frame), inwardDistanceMM(w.end, frame)) - half;
+      best = Math.min(best, d);
+    }
+  }
+  return Number.isFinite(best) ? Math.max(0, best) : null;
+}
+
+/** 使う後退距離。→ { setbackMM, source: 'auto' | 'manual' | 'default' } */
+export function effectiveSetback(plan, settings, frame = roadEdgeFrame(plan?.site)) {
+  const r = normalizeHeightLimit(settings ?? plan?.site?.heightLimit).road;
+  if (r.setbackMode === 'manual') return { setbackMM: r.setbackMM, source: 'manual' };
+  const auto = roadSetbackMM(plan, frame);
+  if (auto === null) return { setbackMM: r.setbackMM, source: 'default' };
+  return { setbackMM: auto, source: 'auto' };
+}
+
+/**
+ * 道路斜線の計算に使う文脈。道路がない・道路斜線を見ない設定なら null。
+ * → { frame, widthMM, setbackMM, setbackSource, slope, applyDistanceMM, roadClass, levelAdjustMM }
+ */
+export function makeRoadContext(plan, settings) {
+  const s = normalizeHeightLimit(settings ?? plan?.site?.heightLimit);
+  const rules = roadRules(s);
+  if (!rules) return null;
+  const frame = roadEdgeFrame(plan?.site);
+  if (!frame) return null;
+  const sb = effectiveSetback(plan, s, frame);
+  return {
+    frame,
+    widthMM: frame.widthMM,
+    setbackMM: sb.setbackMM,
+    setbackSource: sb.source,
+    ...rules,
+    levelAdjustMM: roadLevelAdjustMM(s.road.roadLevelDiffMM),
+  };
+}
+
+/**
+ * 点での道路斜線の上限（地盤面からの mm）。適用距離の外は Infinity、敷地の外は null。
+ * → { limitMM, yMM（道路境界からの距離） }
+ */
+export function roadLimitAtPoint(pt, rctx) {
+  if (!pointInPolygon(pt, rctx.frame.boundary)) return null;
+  const yMM = inwardDistanceMM(pt, rctx.frame);
+  const D = rctx.widthMM + rctx.setbackMM + Math.max(0, yMM);
+  const limitMM = D > rctx.applyDistanceMM ? Infinity : rctx.slope * D - rctx.levelAdjustMM;
+  return { limitMM, yMM };
+}
+
+/**
+ * 高さ h（地盤面から）を置くのに必要な、道路境界からの距離（mm）。
+ * 0 = 道路境界でも置ける。適用距離の外まで行けば必ず置けるので、その距離で頭打ち。
+ */
+export function roadMinDistanceMM(rctx, hMM) {
+  const need = (hMM + rctx.levelAdjustMM) / rctx.slope - rctx.widthMM - rctx.setbackMM;
+  const cap = rctx.applyDistanceMM - rctx.widthMM - rctx.setbackMM;
+  return Math.max(0, Math.min(need, Math.max(0, cap)));
+}
+
+/**
+ * 階ごとに、低め・標準それぞれの道路境界から必要な距離。
+ * fromRoadMM ≤ setbackMM なら、今の後退距離のままで道路斜線にかからない。
+ * → { widthMM, setbackMM, setbackSource, slope, applyDistanceMM, roadClass, levelAdjustMM,
+ *     rows: [{ level, low: { topMM, checkMM, fromRoadMM }, standard: { ... } }] }。道路がなければ null
+ */
+export function roadClearances(plan, settings) {
+  const s = normalizeHeightLimit(settings ?? plan?.site?.heightLimit);
+  const rctx = makeRoadContext(plan, s);
+  if (!rctx) return null;
+  const levels = [...new Set((plan?.floors || []).map((f) => f.level || 0))].sort((a, b) => a - b);
+  const one = (set, level) => {
+    const topMM = floorTopMM(set, level);
+    const checkMM = topMM + s.marginMM;
+    return { topMM, checkMM, fromRoadMM: roadMinDistanceMM(rctx, checkMM) };
+  };
+  const { widthMM, setbackMM, setbackSource, slope, applyDistanceMM, roadClass, levelAdjustMM } = rctx;
+  return { widthMM, setbackMM, setbackSource, slope, applyDistanceMM, roadClass, levelAdjustMM, rows: levels.map((level) => ({ level, low: one(s.build.low, level), standard: one(s.build.standard, level) })) };
+}
+
+/**
+ * 道路斜線の境目の線（道路境界から fromRoadMM の、辺に平行な直線を敷地で切ったもの）。
+ * → [[{x,z},{x,z}], ...]。制限がかからない（距離 0）ときは []
+ */
+export function roadContourSegments(rctx, hMM) {
+  const y = roadMinDistanceMM(rctx, hMM);
+  if (y <= TOLERANCE_MM) return [];
+  const { a, b, out, boundary } = rctx.frame;
+  const len = Math.hypot(b.x - a.x, b.z - a.z);
+  const u = { x: (b.x - a.x) / len, z: (b.z - a.z) / len };
+  const p0 = { x: a.x - out.x * y, z: a.z - out.z * y };
+  // 直線 p0 + t·u と各辺の交点の t を集めて、敷地の内側になる区間を拾う
+  const ts = [];
+  for (let i = 0; i < boundary.length; i++) {
+    const c = boundary[i];
+    const d = boundary[(i + 1) % boundary.length];
+    const ex = d.x - c.x, ez = d.z - c.z;
+    const denom = u.x * ez - u.z * ex;
+    if (Math.abs(denom) < 1e-12) continue;
+    const cx = c.x - p0.x, cz = c.z - p0.z;
+    const t = (cx * ez - cz * ex) / denom;
+    const v = (cx * u.z - cz * u.x) / denom;
+    if (v >= 0 && v < 1) ts.push(t);
+  }
+  ts.sort((m, n) => m - n);
+  const at = (t) => ({ x: p0.x + u.x * t, z: p0.z + u.z * t });
+  const segs = [];
+  for (let i = 0; i + 1 < ts.length; i++) {
+    const mid = at((ts[i] + ts[i + 1]) / 2);
+    if (ts[i + 1] - ts[i] > 1e-6 && pointInPolygon(mid, boundary)) segs.push([at(ts[i]), at(ts[i + 1])]);
   }
   return segs;
 }

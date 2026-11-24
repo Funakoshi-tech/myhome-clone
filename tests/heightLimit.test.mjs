@@ -267,3 +267,129 @@ test('normalizePlan: heightLimit のない旧プランも壊れずに無効で�
   assert.equal(back.site.heightLimit.district.maxHeightMM, 17000);
   assert.equal(back.site.heightLimit.marginMM, 200);
 });
+
+// ─── 道路斜線 ─────────────────────────────────────────
+
+/** 10m 角の敷地、南（辺 2、z = 10000）が前面道路。1 階の壁は外面が道路境界から 0.5m */
+function roadPlan(widthMM = 4000, { walls = true } = {}) {
+  const plan = createEmptyPlan('road-setback');
+  plan.site.boundary = SQUARE;
+  plan.site.road = { edgeIndex: 2, widthMM };
+  if (walls) {
+    const f1 = plan.floors.find((f) => (f.level || 0) === 0);
+    // 中心線 z = 9440、厚み 120 → 道路側の外面 z = 9500
+    f1.walls = [
+      { id: 'w1', start: { x: 1000, z: 9440 }, end: { x: 9000, z: 9440 }, thicknessMM: 120 },
+      { id: 'w2', start: { x: 1000, z: 2000 }, end: { x: 1000, z: 9440 }, thicknessMM: 120 },
+    ];
+  }
+  return plan;
+}
+
+test('道路斜線の手計算: 幅員 4m / 6m、後退 0.5m、住居系 1.25', () => {
+  let r = H.roadClearances(roadPlan(4000), { zoneId: 'chuko1' });
+  near(r.setbackMM, 500); assert.equal(r.setbackSource, 'auto');
+  near(r.slope, 1.25); near(r.applyDistanceMM, 20000);
+  const [f1, f2, f3] = r.rows;
+  near(f3.low.fromRoadMM, 8350 / 1.25 - 4500, 1e-6); // 2.18m
+  near(f3.standard.fromRoadMM, 9300 / 1.25 - 4500, 1e-6); // 2.94m
+  near(f2.standard.fromRoadMM, 620, 1e-6);
+  assert.ok(f2.low.fromRoadMM <= r.setbackMM); // 後退 0.5m のままで制限にかからない
+  assert.equal(f1.low.fromRoadMM, 0);
+  r = H.roadClearances(roadPlan(6000), { zoneId: 'chuko1' });
+  assert.ok(r.rows[2].low.fromRoadMM <= r.setbackMM);
+  near(r.rows[2].standard.fromRoadMM, 940, 1e-6);
+});
+
+test('道路斜線の勾配と適用距離: 用途地域と容積率で決まる', () => {
+  const rr = (zoneId, floorAreaRatio) => H.roadRules({ zoneId, road: { floorAreaRatio } });
+  assert.deepEqual(rr('tei1', 150), { roadClass: 'residential', slope: 1.25, applyDistanceMM: 20000 });
+  assert.equal(rr('jukyo', 300).applyDistanceMM, 25000);
+  assert.equal(rr('jukyo', 400).applyDistanceMM, 30000);
+  assert.equal(rr('jukyo', 500).applyDistanceMM, 35000);
+  assert.equal(rr('other', 200).slope, 1.25); // 旧データは住居系
+  assert.deepEqual(rr('shogyo', 400), { roadClass: 'commercial', slope: 1.5, applyDistanceMM: 20000 });
+  assert.equal(rr('shogyo', 800).applyDistanceMM, 30000);
+  assert.equal(rr('shogyo', 1300).applyDistanceMM, 50000);
+  assert.deepEqual(rr('kogyo', 200), { roadClass: 'industrial', slope: 1.5, applyDistanceMM: 20000 });
+  assert.equal(rr('kogyo', 300).applyDistanceMM, 25000);
+  assert.equal(H.roadRules({ zoneId: 'jukyo', road: { enabled: false } }), null);
+});
+
+test('道路斜線: 適用距離の外は制限なし、必要距離も頭打ち', () => {
+  const plan = roadPlan(4000);
+  const rctx = H.makeRoadContext(plan, { zoneId: 'chuko1' });
+  // y = 1m: 1.25 × (4 + 0.5 + 1) = 6.875m
+  near(H.roadLimitAtPoint({ x: 5000, z: 9000 }, rctx).limitMM, 6875, 1e-6);
+  // 適用距離 20m を短くして確かめる: 4 + 0.5 + y > 6m の所は Infinity
+  const short = { ...rctx, applyDistanceMM: 6000 };
+  assert.equal(H.roadLimitAtPoint({ x: 5000, z: 8000 }, short).limitMM, Infinity);
+  near(H.roadMinDistanceMM(short, 30000), 1500, 1e-6);
+  assert.equal(H.roadLimitAtPoint({ x: 5000, z: 11000 }, rctx), null); // 敷地の外
+});
+
+test('道路斜線の後退距離: 壁から自動、壁がなければ既定値、手入力', () => {
+  const s = { zoneId: 'chuko1' };
+  near(H.effectiveSetback(roadPlan(), s).setbackMM, 500);
+  assert.deepEqual(H.effectiveSetback(roadPlan(4000, { walls: false }), s), { setbackMM: H.DEFAULT_SETBACK_MM, source: 'default' });
+  assert.deepEqual(
+    H.effectiveSetback(roadPlan(), { ...s, road: { setbackMode: 'manual', setbackMM: 1200 } }),
+    { setbackMM: 1200, source: 'manual' },
+  );
+  // 2 階の壁は見ない
+  const plan = roadPlan();
+  plan.floors.find((f) => f.level === 1).walls = [{ id: 'x', start: { x: 0, z: 9990 }, end: { x: 5000, z: 9990 }, thicknessMM: 0 }];
+  near(H.roadSetbackMM(plan), 500);
+  // 後退を 1m にすると 3F 標準は 7.44 − 4 − 1 = 2.44m
+  const r = H.roadClearances(roadPlan(), { ...s, road: { setbackMode: 'manual', setbackMM: 1000 } });
+  near(r.rows[2].standard.fromRoadMM, 2440, 1e-6);
+});
+
+test('道路斜線の高低差: 1m までは全部、超える分は半分を足す', () => {
+  near(H.roadLevelAdjustMM(800), 800);
+  near(H.roadLevelAdjustMM(2000), 1500);
+  near(H.roadLevelAdjustMM(-500), -500);
+  const r = H.roadClearances(roadPlan(), { zoneId: 'chuko1', road: { roadLevelDiffMM: 2000 } });
+  near(r.rows[2].standard.fromRoadMM, (9300 + 1500) / 1.25 - 4500, 1e-6);
+});
+
+test('道路斜線の線: 道路の辺に平行で、斜めの道路・道路なしも扱う', () => {
+  const plan = roadPlan();
+  let rctx = H.makeRoadContext(plan, { zoneId: 'chuko1' });
+  let segs = H.roadContourSegments(rctx, 9300);
+  assert.equal(segs.length, 1);
+  for (const p of segs[0]) near(p.z, 10000 - 2940, 1e-6);
+  near(Math.abs(segs[0][1].x - segs[0][0].x), 10000, 1e-6);
+  assert.deepEqual(H.roadContourSegments(rctx, 3000), []); // 制限なし
+  // 斜めの辺（三角形の斜辺）が道路: 線上の点は辺からちょうど y だけ離れる
+  const tri = createEmptyPlan('tri');
+  tri.site.boundary = [{ x: 0, z: 0 }, { x: 10000, z: 10000 }, { x: 0, z: 10000 }];
+  tri.site.road = { edgeIndex: 0, widthMM: 4000 };
+  rctx = H.makeRoadContext(tri, { zoneId: 'chuko1' });
+  segs = H.roadContourSegments(rctx, 9300);
+  assert.equal(segs.length, 1);
+  const y = H.roadMinDistanceMM(rctx, 9300);
+  for (const p of segs[0]) near(Math.abs(p.x - p.z) / Math.SQRT2, y, 1e-6);
+  // 道路なし・道路斜線を見ない設定 → null
+  tri.site.road = null;
+  assert.equal(H.makeRoadContext(tri, { zoneId: 'chuko1' }), null);
+  assert.equal(H.roadClearances(plan, { zoneId: 'chuko1', road: { enabled: false } }), null);
+});
+
+test('normalizeRoadSetback: 旧データは「見る」と既定値、範囲外は丸める', () => {
+  const d = H.normalizeHeightLimit(undefined).road;
+  assert.deepEqual(d, {
+    enabled: true, floorAreaRatio: 200, setbackMode: 'auto', setbackMM: 500, roadLevelDiffMM: 0, show2d: true,
+  });
+  const n = H.normalizeRoadSetback({ enabled: false, floorAreaRatio: 9999, setbackMode: 'x', setbackMM: -1, roadLevelDiffMM: 99999, show2d: false });
+  assert.deepEqual(n, {
+    enabled: false, floorAreaRatio: 1300, setbackMode: 'auto', setbackMM: 0, roadLevelDiffMM: H.MAX_ROAD_LEVEL_DIFF_MM, show2d: false,
+  });
+  // 保存した値は normalizePlan で保たれる
+  const saved = createEmptyPlan('saved-road');
+  saved.site.heightLimit = { enabled: true, road: { floorAreaRatio: 300, setbackMode: 'manual', setbackMM: 800 } };
+  const back = normalizePlan(JSON.parse(JSON.stringify(saved))).site.heightLimit.road;
+  assert.equal(back.floorAreaRatio, 300);
+  assert.equal(back.setbackMode, 'manual');
+  assert.equal(back.setbackMM, 800);
+});
