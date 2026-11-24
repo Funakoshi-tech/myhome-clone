@@ -4,6 +4,7 @@
 // 土地選びの目安なので、結果は「北端から○m 以上なら置ける」と書き、「入らない」とは言い切らない。
 // 2D 図面には、選択中の階で「低めでも超える範囲（赤）」「標準だと超える範囲（黄）」を塗り、
 // 各階の境目の線とラベルを重ねる（drawUnder / drawOver は editor2d.js から呼ばれる）。
+// 道路斜線は天空率で外せることが多いので塗らず、選択中の階の赤・黄の高さで一点鎖線だけを引く。
 
 import * as H from './heightLimit.js';
 import * as SITE from './sitePolygon.js';
@@ -25,6 +26,8 @@ const RED_HATCH = 'rgba(192, 57, 43, 0.55)';
 const YELLOW_FILL = 'rgba(241, 196, 15, 0.28)';
 const RED_LINE = '#c0392b';
 const YELLOW_LINE = '#b7791f';
+/** 道路斜線の線（一点鎖線。北側の実線と区別する） */
+const ROAD_DASH = [10, 3, 2, 3];
 const FLOOR_COLORS = ['#2c7be5', '#2e9e5b', '#e67e22', '#8e44ad', '#7f8c8d'];
 /** 格子のセル数の上限（大きな敷地では格子を粗くする） */
 const MAX_CELLS = 40000;
@@ -160,6 +163,7 @@ export class HeightLimitController {
     }));
     $('#hl-road-setback').addEventListener('change', (e) => this._update((s) => { s.road.setbackMM = e.target.value; }));
     $('#hl-road-level').addEventListener('change', (e) => this._update((s) => { s.road.roadLevelDiffMM = e.target.value; }));
+    $('#hl-road-show-2d').addEventListener('change', (e) => this._update((s) => { s.road.show2d = e.target.checked; }));
   }
 
   /** 「自分で入力」の 4 つの数値から segments を作る（切替距離が空なら 1 本） */
@@ -283,9 +287,29 @@ export class HeightLimitController {
     const plan = this._plan();
     if (!plan || this.ui.view !== '2d') return null;
     const s = this.settings();
-    if (!s.enabled || !s.show.contour2d) return null;
+    if (!s.enabled) return null;
+    const north = s.show.contour2d;
+    const road = s.road.enabled && s.road.show2d;
+    if (!north && !road) return null;
     if (!SITE.isValidSite(plan.site?.boundary)) return null;
-    return { plan, s };
+    return { plan, s, north, road };
+  }
+
+  /**
+   * 選択中の階の道路斜線の線。今の後退距離のままでかからない（表で「制限なし」）なら出さない。
+   * 後退距離は 1 階の壁で変わるのでキャッシュしない（直線を切るだけで軽い）。
+   * → { red: { segs, fromRoadMM }, yellow: { ... } } または null
+   */
+  _roadGeometry(plan, s, level) {
+    const rctx = H.makeRoadContext(plan, s);
+    if (!rctx) return null;
+    const row = H.roadClearances(plan, s)?.rows.find((r) => r.level === level);
+    if (!row) return null;
+    const one = (x) => {
+      const over = x.fromRoadMM > rctx.setbackMM + H.TOLERANCE_MM;
+      return { segs: over ? H.roadContourSegments(rctx, x.checkMM) : [], fromRoadMM: x.fromRoadMM };
+    };
+    return { red: one(row.low), yellow: one(row.standard) };
   }
 
   /**
@@ -365,10 +389,17 @@ export class HeightLimitController {
     return best ? this.editor.worldToScreen(best.x, best.z) : null;
   }
 
+  /** 線の西端（画面の左端）の点。道路斜線のラベルを置く場所（北側のラベルは東端なので重ならない） */
+  _labelAnchorWest(segs) {
+    let best = null;
+    for (const seg of segs) for (const p of seg) if (!best || p.x < best.x) best = p;
+    return best ? this.editor.worldToScreen(best.x, best.z) : null;
+  }
+
   /** 部屋や壁の下: 選択中の階の黄（標準だと超える）と赤（低めでも超える）を塗る */
   drawUnder(ctx) {
     const dc = this._drawContext();
-    if (!dc) return;
+    if (!dc || !dc.north) return;
     const floor = this._currentFloor(dc.plan);
     const geo = this._levelGeometry(dc.plan, dc.s, floor.level || 0);
     if (!geo) return;
@@ -410,7 +441,7 @@ export class HeightLimitController {
     ctx.save();
     // 他の階: 低めの線を階の色の破線で
     const floors = [...plan.floors].sort((a, b) => (a.level || 0) - (b.level || 0));
-    floors.forEach((f, i) => {
+    if (dc.north) floors.forEach((f, i) => {
       if (f.id === current.id) return;
       const geo = this._levelGeometry(plan, s, f.level || 0);
       if (!geo || !geo.redLine.length) return;
@@ -420,7 +451,7 @@ export class HeightLimitController {
       if (at) text(this._lineLabel(f.id, '', geo.clearance.low.fromSiteMM, rules), at.x - 44, at.y - 9, color);
     });
     // 選択中の階: 赤と黄の境目を実線で
-    const geo = this._levelGeometry(plan, s, current.level || 0);
+    const geo = dc.north ? this._levelGeometry(plan, s, current.level || 0) : null;
     if (geo) {
       this._strokeSegments(ctx, geo.yellowLine, YELLOW_LINE, 1.6, []);
       this._strokeSegments(ctx, geo.redLine, RED_LINE, 1.8, []);
@@ -430,20 +461,46 @@ export class HeightLimitController {
       if (atR) text(this._lineLabel(current.id, ' 赤', low.fromSiteMM, rules), atR.x - 70, atR.y + 10, RED_LINE);
       if (atY) text(this._lineLabel(current.id, ' 黄', standard.fromSiteMM, rules), atY.x - 70, atY.y - 10, YELLOW_LINE);
     }
-    this._drawLegend(ctx, current, geo);
+    // 選択中の階の道路斜線: 赤・黄の色の一点鎖線。ラベルは西端に
+    const road = dc.road ? this._roadGeometry(plan, s, current.level || 0) : null;
+    if (road) {
+      this._strokeSegments(ctx, road.yellow.segs, YELLOW_LINE, 1.6, ROAD_DASH);
+      this._strokeSegments(ctx, road.red.segs, RED_LINE, 1.8, ROAD_DASH);
+      const label = (kind, x) => `${current.id} 道路斜線 ${kind}: 道路から ${fmtM(Math.ceil(x.fromRoadMM / 10) * 10)} 以上（天空率しだい）`;
+      // 文字は中央揃えで描かれるので、左端が線の西端に来るよう半分ずらす（敷地の内側に収める）
+      ctx.font = '600 11px system-ui, sans-serif';
+      const put = (t, at, color) => text(t, at.x + 6 + ctx.measureText(t).width / 2, at.y - 9, color);
+      const atR = this._labelAnchorWest(road.red.segs);
+      const atY = this._labelAnchorWest(road.yellow.segs);
+      if (atR) put(label('赤', road.red), atR, RED_LINE);
+      if (atY) put(label('黄', road.yellow), atY, YELLOW_LINE);
+    }
+    this._drawLegend(ctx, current, geo, dc, road);
     ctx.restore();
   }
 
   /** 図面の左上に凡例（色の意味と、選択中の階の結果） */
-  _drawLegend(ctx, floor, geo) {
-    const lines = [
-      { fill: RED_FILL, hatch: true, label: '赤: 低めの高さでも超える（ほぼ置けない）' },
-      { fill: YELLOW_FILL, label: '黄: 標準の高さだと超える（工夫で入る場合あり）' },
-    ];
-    const status = !geo || (!geo.red.length && !geo.yellow.length)
-      ? `${floor.id}: 敷地内に北側斜線の制限なし`
-      : `高さ制限（${floor.id}）・目安`;
-    const x = 12, y = 12, lh = 17, w = 268, h = 10 + lh * (lines.length + 1);
+  _drawLegend(ctx, floor, geo, dc, road) {
+    const lines = [];
+    if (dc.north) {
+      lines.push(
+        { fill: RED_FILL, hatch: true, label: '赤: 低めの高さでも超える（ほぼ置けない）' },
+        { fill: YELLOW_FILL, label: '黄: 標準の高さだと超える（工夫で入る場合あり）' },
+      );
+    }
+    if (dc.road) {
+      lines.push({
+        dash: true,
+        label: road
+          ? (road.red.segs.length || road.yellow.segs.length
+            ? '一点鎖線: 道路斜線（より道路側は天空率しだい）'
+            : `${floor.id}: 今の後退距離で道路斜線の制限なし`)
+          : '道路斜線: 前面道路が未設定',
+      });
+    }
+    let status = `高さ制限（${floor.id}）・目安`;
+    if (dc.north && (!geo || (!geo.red.length && !geo.yellow.length))) status = `${floor.id}: 敷地内に北側斜線の制限なし`;
+    const x = 12, y = 12, lh = 17, w = 288, h = 10 + lh * (lines.length + 1);
     ctx.save();
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
     ctx.strokeStyle = 'rgba(0,0,0,0.12)';
@@ -459,6 +516,19 @@ export class HeightLimitController {
     ctx.font = '11px system-ui, sans-serif';
     lines.forEach((l, i) => {
       const cy = y + 5 + lh * (i + 1) + lh / 2;
+      if (l.dash) {
+        ctx.strokeStyle = RED_LINE;
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([6, 2, 1.5, 2]);
+        ctx.beginPath();
+        ctx.moveTo(x + 6, cy); ctx.lineTo(x + 24, cy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineWidth = 1;
+        ctx.fillStyle = '#1f2733';
+        ctx.fillText(l.label, x + 28, cy);
+        return;
+      }
       ctx.fillStyle = l.fill;
       ctx.fillRect(x + 8, cy - 5, 14, 10);
       if (l.hatch) {
@@ -532,6 +602,7 @@ export class HeightLimitController {
     $('#hl-road-setback-row').hidden = r.setbackMode !== 'manual';
     this._setValue($('#hl-road-setback'), r.setbackMM);
     this._setValue($('#hl-road-level'), r.roadLevelDiffMM);
+    $('#hl-road-show-2d').checked = r.show2d;
 
     const status = $('#hl-road-status2');
     const table = $('#hl-road-result');
