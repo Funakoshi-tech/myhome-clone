@@ -141,10 +141,25 @@ export class HeightLimitController {
     });
 
     // 結果の行をクリックするとその階へ
-    $('#hl-result').addEventListener('click', (e) => {
-      const tr = e.target.closest('tr[data-floor]');
-      if (tr) this.setFloor(tr.dataset.floor);
-    });
+    for (const id of ['#hl-result', '#hl-road-result']) {
+      $(id).addEventListener('click', (e) => {
+        const tr = e.target.closest('tr[data-floor]');
+        if (tr) this.setFloor(tr.dataset.floor);
+      });
+    }
+
+    // 道路斜線
+    $('#hl-road-enabled').addEventListener('change', (e) => this._update((s) => { s.road.enabled = e.target.checked; }));
+    $('#hl-road-far').addEventListener('change', (e) => this._update((s) => { s.road.floorAreaRatio = e.target.value; }));
+    $('#hl-road-setback-mode').addEventListener('change', (e) => this._update((s) => {
+      // 手入力に切り替えたときは、今使っている値から始める
+      if (e.target.value === 'manual' && s.road.setbackMode !== 'manual') {
+        s.road.setbackMM = Math.round(H.effectiveSetback(this._plan(), s).setbackMM / 10) * 10;
+      }
+      s.road.setbackMode = e.target.value;
+    }));
+    $('#hl-road-setback').addEventListener('change', (e) => this._update((s) => { s.road.setbackMM = e.target.value; }));
+    $('#hl-road-level').addEventListener('change', (e) => this._update((s) => { s.road.roadLevelDiffMM = e.target.value; }));
   }
 
   /** 「自分で入力」の 4 つの数値から segments を作る（切替距離が空なら 1 本） */
@@ -503,5 +518,53 @@ export class HeightLimitController {
     $('#hl-show-2d').checked = s.show.contour2d;
     this._syncRoadStatus();
     this._syncResult(s, floors);
+    this._syncRoadSetback(s, floors);
+  }
+
+  /** 道路斜線の入力欄と結果の表 */
+  _syncRoadSetback(s, floors) {
+    const r = s.road;
+    $('#hl-road-enabled').checked = r.enabled;
+    $('#hl-road-detail').hidden = !r.enabled;
+    if (!r.enabled) return;
+    this._setValue($('#hl-road-far'), r.floorAreaRatio);
+    $('#hl-road-setback-mode').value = r.setbackMode;
+    $('#hl-road-setback-row').hidden = r.setbackMode !== 'manual';
+    this._setValue($('#hl-road-setback'), r.setbackMM);
+    this._setValue($('#hl-road-level'), r.roadLevelDiffMM);
+
+    const status = $('#hl-road-status2');
+    const table = $('#hl-road-result');
+    const res = H.roadClearances(this._plan(), s);
+    if (!res) {
+      const hasSite = SITE.isValidSite(this._plan()?.site?.boundary);
+      status.textContent = hasSite
+        ? '前面道路が未設定です。駐車シミュレーターで前面道路の辺と幅員を選んでください。'
+        : '敷地を描いて、駐車シミュレーターで前面道路を選ぶと計算します。';
+      table.innerHTML = '';
+      return;
+    }
+    const cls = { residential: '住居系', commercial: '商業系', industrial: '工業系' }[res.roadClass];
+    const sbText = {
+      auto: `1階の壁から ${fmtM(res.setbackMM)}`,
+      manual: `手入力 ${fmtM(res.setbackMM)}`,
+      default: `1階の壁がないため仮に ${fmtM(res.setbackMM)}`,
+    }[res.setbackSource];
+    const level = res.levelAdjustMM ? `、道路からの高さで +${fmtHeight(res.levelAdjustMM)}` : '';
+    status.textContent = `前面道路 幅員 ${fmtM(res.widthMM)}、${cls}・勾配 ${res.slope}、適用距離 ${res.applyDistanceMM / 1000}m。`
+      + `後退距離: ${sbText}${level}。距離は道路境界から垂直に測ります。`;
+
+    // 後退距離より手前なら今の配置のままで制限にかからない
+    const fmt = (mm) => (mm <= res.setbackMM + H.TOLERANCE_MM ? '制限なし' : `${fmtM(Math.ceil(mm / 10) * 10)} 以上`);
+    const byLevel = new Map(res.rows.map((x) => [x.level, x]));
+    const rows = ['<tr><th>階</th><th class="hl-low">赤</th><th class="hl-std">黄</th></tr>'];
+    for (const f of [...floors].reverse()) {
+      const x = byLevel.get(f.level || 0);
+      if (!x) continue;
+      const cur = f.id === this.ui.floorId ? ' class="current"' : '';
+      rows.push(`<tr data-floor="${f.id}"${cur} title="クリックでこの階を表示"><td>${f.id}</td>`
+        + `<td class="hl-low">${fmt(x.low.fromRoadMM)}</td><td class="hl-std">${fmt(x.standard.fromRoadMM)}</td></tr>`);
+    }
+    table.innerHTML = rows.join('');
   }
 }

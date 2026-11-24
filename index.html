@@ -258,7 +258,7 @@
       <!-- 高さ制限（北側斜線・高度地区） -->
       <section class="pane pane-fold" id="heightlimit-pane" data-fold-id="heightlimit">
         <button type="button" class="pane-fold-head" aria-expanded="true">
-          <span>高さ制限（北側斜線）</span>
+          <span>高さ制限（北側斜線・道路斜線）</span>
           <span class="pane-fold-icon" aria-hidden="true"></span>
         </button>
         <div class="pane-fold-body">
@@ -305,6 +305,25 @@
             <table class="hl-table hl-result" id="hl-result"></table>
             <p id="hl-assumption" class="pane-hint"></p>
             <p class="pane-hint">赤 = 低めの高さでも超える（ほぼ確実に置けない）。黄 = 標準の高さだと超える（天井を下げる・北側だけ低くするなどで入る場合あり。ハウスメーカーに聞く価値あり）。プランが入るかはハウスメーカーに確認してください。</p>
+
+            <h4 class="parking-sub">道路斜線</h4>
+            <label class="row check">
+              <input type="checkbox" id="hl-road-enabled" />
+              <span>道路斜線も見る</span>
+            </label>
+            <div id="hl-road-detail">
+              <div class="prop-row"><label for="hl-road-far">容積率 (%)</label><input type="number" id="hl-road-far" min="50" max="1300" step="10" /></div>
+              <div class="prop-row"><label for="hl-road-setback-mode">後退距離</label><select id="hl-road-setback-mode">
+                <option value="auto">1階の壁から自動</option>
+                <option value="manual">手で入力</option>
+              </select></div>
+              <div class="prop-row" id="hl-road-setback-row"><label for="hl-road-setback">後退距離 (mm)</label><input type="number" id="hl-road-setback" min="0" max="20000" step="50" /></div>
+              <div class="prop-row"><label for="hl-road-level">道路からの高さ (mm)</label><input type="number" id="hl-road-level" min="-5000" max="5000" step="50" /></div>
+              <p class="pane-hint">道路からの高さ = 敷地が前面道路より高い分（低ければ負）。1m を超える分は半分だけ効きます。</p>
+              <p id="hl-road-status2" class="pane-hint"></p>
+              <table class="hl-table hl-result" id="hl-road-result"></table>
+              <p class="pane-hint">道路斜線は天空率を使うと外せることが多いので、超えても「置けない」とは限りません（天空率しだい。ハウスメーカーに相談）。見送るかどうかは、北側の赤で判断してください。</p>
+            </div>
           </div>
         </div>
       </section>
