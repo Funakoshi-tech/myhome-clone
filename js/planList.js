@@ -18,25 +18,11 @@ function formatRelativeTime(ts) {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-const FOLDER_KEY = 'myhome-clone:list-folder';
-
-/** 前回開いていたフォルダ（null = すべて, '' = 未分類） */
-function loadFolderFilter() {
-  try {
-    const v = localStorage.getItem(FOLDER_KEY);
-    return v === null ? null : JSON.parse(v);
-  } catch {
-    return null;
-  }
-}
-
-function saveFolderFilter(v) {
-  try {
-    if (v === null) localStorage.removeItem(FOLDER_KEY);
-    else localStorage.setItem(FOLDER_KEY, JSON.stringify(v));
-  } catch {
-    // 保存できなくても表示には影響しない
-  }
+/** 以前は前回開いていたフォルダをここに保存していた。起動時は常に未分類にしたので、残っていれば消す */
+try {
+  localStorage.removeItem('myhome-clone:list-folder');
+} catch {
+  // 消せなくても表示には影響しない
 }
 
 function formatDateTime(ts) {
@@ -57,8 +43,8 @@ export class PlanList {
     this.searchQuery = '';
     this.sortKey = 'updated-desc';
     this._drag = null;
-    /** 表示中のフォルダ。null = すべて, '' = 未分類, 文字列 = そのフォルダ */
-    this.folderFilter = loadFolderFilter();
+    /** 表示中のフォルダ。null = すべて, '' = 未分類, 文字列 = そのフォルダ。起動時は未分類 */
+    this.folderFilter = '';
     /** 作ったばかりでまだプランが入っていないフォルダ（保存はしない） */
     this._emptyFolders = new Set();
 
@@ -132,7 +118,6 @@ export class PlanList {
 
   _setFolderFilter(folder) {
     this.folderFilter = folder;
-    saveFolderFilter(folder);
     this.render();
   }
 
@@ -143,7 +128,6 @@ export class PlanList {
     const folders = this._allFolders();
     if (this.folderFilter && !folders.includes(this.folderFilter)) {
       this.folderFilter = null;
-      saveFolderFilter(null);
     }
     const count = (f) => this.store.order.filter((id) => this.store.plans[id] && this._inFolder(id, f)).length;
     const chip = (label, folder, n) => {
@@ -210,7 +194,6 @@ export class PlanList {
     if (!trimmed || trimmed === oldName) return;
     if (this._emptyFolders.delete(oldName)) this._emptyFolders.add(trimmed);
     this.folderFilter = trimmed;
-    saveFolderFilter(trimmed);
     this.store.renameFolder(oldName, trimmed);
     this.render();
   }
@@ -227,7 +210,6 @@ export class PlanList {
     }
     this._emptyFolders.delete(name);
     this.folderFilter = null;
-    saveFolderFilter(null);
     this.store.renameFolder(name, '');
     this.render();
   }
