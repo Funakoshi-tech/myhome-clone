@@ -5,6 +5,16 @@ let _confirmResolve = null;
 let _alertResolve = null;
 let _wired = false;
 
+/**
+ * 日本語入力の変換中のキー操作か。変換を確定する Enter や、変換を取り消す Escape で
+ * 入力欄の確定・取り消しが走らないようにする。Safari は確定の Enter で isComposing が
+ * false になることがあるので、keyCode 229 も見る。
+ * @param {KeyboardEvent} e
+ */
+export function isImeComposing(e) {
+  return e.isComposing || e.keyCode === 229;
+}
+
 function $(id) {
   return document.getElementById(id);
 }
@@ -31,6 +41,7 @@ function _wireOnce() {
   });
   promptCancel?.addEventListener('click', () => finishPrompt(null));
   promptInput?.addEventListener('keydown', (e) => {
+    if (isImeComposing(e)) return;
     if (e.key === 'Enter') {
       e.preventDefault();
       finishPrompt(promptInput.value);

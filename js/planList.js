@@ -2,7 +2,7 @@
 
 import * as M from './model.js';
 import { renderPlanThumbnail, renderPlanFloorThumbnails } from './planThumbnail.js';
-import { showPrompt, showConfirm } from './dialog.js';
+import { showPrompt, showConfirm, isImeComposing } from './dialog.js';
 
 function formatRelativeTime(ts) {
   if (!ts) return '—';
@@ -640,6 +640,7 @@ export class PlanList {
       const fit = () => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight}px`; };
       ta.addEventListener('input', fit);
       ta.addEventListener('keydown', (e) => {
+        if (isImeComposing(e)) return;
         if (e.key === 'Escape') { ta.value = memo; ta.blur(); }
       });
       ta.addEventListener('blur', () => {
