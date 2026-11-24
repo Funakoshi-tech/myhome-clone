@@ -18,6 +18,27 @@ function formatRelativeTime(ts) {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+const FOLDER_KEY = 'myhome-clone:list-folder';
+
+/** 前回開いていたフォルダ（null = すべて, '' = 未分類） */
+function loadFolderFilter() {
+  try {
+    const v = localStorage.getItem(FOLDER_KEY);
+    return v === null ? null : JSON.parse(v);
+  } catch {
+    return null;
+  }
+}
+
+function saveFolderFilter(v) {
+  try {
+    if (v === null) localStorage.removeItem(FOLDER_KEY);
+    else localStorage.setItem(FOLDER_KEY, JSON.stringify(v));
+  } catch {
+    // 保存できなくても表示には影響しない
+  }
+}
+
 function formatDateTime(ts) {
   if (!ts) return '—';
   const d = new Date(ts);
@@ -36,6 +57,10 @@ export class PlanList {
     this.searchQuery = '';
     this.sortKey = 'updated-desc';
     this._drag = null;
+    /** 表示中のフォルダ。null = すべて, '' = 未分類, 文字列 = そのフォルダ */
+    this.folderFilter = loadFolderFilter();
+    /** 作ったばかりでまだプランが入っていないフォルダ（保存はしない） */
+    this._emptyFolders = new Set();
 
     this.root = document.getElementById('plan-list-screen');
     this.grid = document.getElementById('plan-list-grid');
@@ -43,6 +68,7 @@ export class PlanList {
     this.searchInput = document.getElementById('plan-list-search');
     this.sortSelect = document.getElementById('plan-list-sort');
     this.newBtn = document.getElementById('plan-list-new');
+    this.foldersEl = document.getElementById('plan-list-folders');
     this.expandedFloorIds = new Set();
     this.expandedMemoIds = new Set();
     /** プラン id → { card, sig }。表示内容が前回と同じカードは作り直さずに使い回す */
@@ -92,8 +118,139 @@ export class PlanList {
     });
   }
 
+  /** プランの入ったフォルダと、作ったばかりの空のフォルダ */
+  _allFolders() {
+    const used = this.store.folders();
+    for (const f of used) this._emptyFolders.delete(f);
+    return [...used, ...this._emptyFolders].sort((a, b) => a.localeCompare(b, 'ja'));
+  }
+
+  _inFolder(id, folder) {
+    if (folder === null) return true;
+    return (this.store.plans[id]?.meta?.folder || '') === folder;
+  }
+
+  _setFolderFilter(folder) {
+    this.folderFilter = folder;
+    saveFolderFilter(folder);
+    this.render();
+  }
+
+  /** フォルダの切り替えボタン（すべて / 未分類 / 各フォルダ / + フォルダ）と、選択中フォルダの操作 */
+  _renderFolders() {
+    const el = this.foldersEl;
+    if (!el) return;
+    const folders = this._allFolders();
+    if (this.folderFilter && !folders.includes(this.folderFilter)) {
+      this.folderFilter = null;
+      saveFolderFilter(null);
+    }
+    const count = (f) => this.store.order.filter((id) => this.store.plans[id] && this._inFolder(id, f)).length;
+    const chip = (label, folder, n) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'plan-folder-chip';
+      b.setAttribute('role', 'tab');
+      const active = this.folderFilter === folder;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (folder) b.prepend('📁 ');
+      b.append(label);
+      const c = document.createElement('span');
+      c.className = 'plan-folder-chip-count';
+      c.textContent = String(n);
+      b.appendChild(c);
+      b.addEventListener('click', () => this._setFolderFilter(folder));
+      return b;
+    };
+    const items = [chip('すべて', null, count(null))];
+    const unsorted = count('');
+    if (folders.length || unsorted !== this.store.order.length) items.push(chip('未分類', '', unsorted));
+    for (const f of folders) items.push(chip(f, f, count(f)));
+
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'plan-folder-add';
+    add.textContent = '+ フォルダ';
+    add.title = '新しいフォルダを作る（同じ土地のプランをまとめる）';
+    add.addEventListener('click', () => this._createFolder());
+    items.push(add);
+
+    if (this.folderFilter) {
+      const tools = document.createElement('span');
+      tools.className = 'plan-folder-tools';
+      const rename = document.createElement('button');
+      rename.type = 'button';
+      rename.className = 'btn';
+      rename.textContent = 'フォルダ名を変更';
+      rename.addEventListener('click', () => this._renameFolder(this.folderFilter));
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn';
+      remove.textContent = 'フォルダを解除';
+      remove.title = 'フォルダをなくし、中のプランを未分類に戻す（プランは消えません）';
+      remove.addEventListener('click', () => this._removeFolder(this.folderFilter));
+      tools.append(rename, remove);
+      items.push(tools);
+    }
+    el.replaceChildren(...items);
+  }
+
+  async _createFolder() {
+    const name = await showPrompt({ title: '新しいフォルダ', label: 'フォルダ名（例: 赤塚の土地）', defaultValue: '' });
+    const trimmed = name?.trim();
+    if (!trimmed) return;
+    if (!this.store.folders().includes(trimmed)) this._emptyFolders.add(trimmed);
+    this._setFolderFilter(trimmed);
+  }
+
+  async _renameFolder(oldName) {
+    const name = await showPrompt({ title: 'フォルダ名を変更', label: 'フォルダ名', defaultValue: oldName });
+    const trimmed = name?.trim();
+    if (!trimmed || trimmed === oldName) return;
+    if (this._emptyFolders.delete(oldName)) this._emptyFolders.add(trimmed);
+    this.folderFilter = trimmed;
+    saveFolderFilter(trimmed);
+    this.store.renameFolder(oldName, trimmed);
+    this.render();
+  }
+
+  async _removeFolder(name) {
+    const n = this.store.order.filter((id) => this._inFolder(id, name)).length;
+    if (n) {
+      const ok = await showConfirm({
+        title: 'フォルダを解除',
+        message: `「${name}」を解除し、中の ${n} 件のプランを未分類に戻しますか？（プランは削除されません）`,
+        okText: '解除',
+      });
+      if (!ok) return;
+    }
+    this._emptyFolders.delete(name);
+    this.folderFilter = null;
+    saveFolderFilter(null);
+    this.store.renameFolder(name, '');
+    this.render();
+  }
+
+  async _moveToFolder(id) {
+    const plan = this.store.plans[id];
+    if (!plan) return;
+    const folders = this._allFolders();
+    const name = await showPrompt({
+      title: 'フォルダへ移動',
+      label: folders.length
+        ? `フォルダ名（候補: ${folders.join('、')}。新しい名前で新規作成、空欄で未分類）`
+        : 'フォルダ名（新しい名前で新規作成、空欄で未分類）',
+      defaultValue: plan.meta.folder || '',
+      suggestions: folders,
+      okText: '移動',
+    });
+    if (name === null) return;
+    this.store.setPlansFolder([id], name);
+  }
+
   _sortedIds() {
-    const ids = this.store.order.slice();
+    const ids = this.store.order.filter((id) => this._inFolder(id, this.folderFilter));
     const q = this.searchQuery.toLowerCase();
     const filtered = q
       ? ids.filter((id) => {
@@ -122,6 +279,7 @@ export class PlanList {
 
   render() {
     if (!this.grid) return;
+    this._renderFolders();
     const ids = this._sortedIds();
     const prevCards = this._cards;
     const prevThumbs = this._thumbCanvases;
@@ -129,7 +287,7 @@ export class PlanList {
     this._thumbCanvases = new Map();
 
     if (this.countEl) {
-      const total = this.store.order.length;
+      const total = this.store.order.filter((id) => this._inFolder(id, this.folderFilter)).length;
       this.countEl.textContent = ids.length === total
         ? `全 ${total} 件`
         : `${ids.length} 件 / 全 ${total} 件`;
@@ -140,7 +298,9 @@ export class PlanList {
       empty.className = 'plan-list-empty';
       empty.innerHTML = this.searchQuery
         ? '<p>該当するプランがありません</p>'
-        : '<p>プランがありません</p><p class="plan-list-empty-hint">「+ プラン新規作成」から始めましょう</p>';
+        : this.folderFilter
+          ? '<p>このフォルダにはまだプランがありません</p><p class="plan-list-empty-hint">「+ プラン新規作成」でこのフォルダに作るか、他のプランのメニュー「フォルダへ移動」で入れてください</p>'
+          : '<p>プランがありません</p><p class="plan-list-empty-hint">「+ プラン新規作成」から始めましょう</p>';
       this.grid.replaceChildren(empty);
       this._dropUnusedThumbs(prevThumbs);
       return;
@@ -183,6 +343,7 @@ export class PlanList {
       formatRelativeTime(plan.meta?.updatedAt), // 「〇分前」の表示も変わったら作り直す
       this._canReorder(),
       this.expandedMemoIds.has(id),
+      this.folderFilter === null ? plan.meta?.folder || '' : '',
     ].join('\n');
   }
 
@@ -321,6 +482,15 @@ export class PlanList {
     });
     head.appendChild(menuBtn);
     card.appendChild(head);
+    if (this.folderFilter === null && plan.meta.folder) {
+      const badge = document.createElement('button');
+      badge.type = 'button';
+      badge.className = 'plan-card-folder';
+      badge.textContent = `📁 ${plan.meta.folder}`;
+      badge.title = 'このフォルダを開く';
+      badge.addEventListener('click', () => this._setFolderFilter(plan.meta.folder));
+      card.appendChild(badge);
+    }
     card.appendChild(this._buildNotes(id, plan));
 
     const thumbWrap = document.createElement('button');
@@ -400,6 +570,7 @@ export class PlanList {
       <button type="button" data-act="open">編集</button>
       <button type="button" data-act="rename">名前変更</button>
       <button type="button" data-act="copy">コピー</button>
+      <button type="button" data-act="folder">フォルダへ移動</button>
       <button type="button" data-act="delete" data-danger>削除</button>
     `;
     actions.addEventListener('click', (e) => {
@@ -697,7 +868,7 @@ export class PlanList {
       defaultValue: `マイプラン${this.store.order.length + 1}`,
     });
     if (name === null) return;
-    const id = this.store.newPlan(name.trim() || '無題');
+    const id = this.store.newPlan(name.trim() || '無題', { folder: this.folderFilter || '' });
     this.onOpen(id);
   }
 
@@ -717,6 +888,10 @@ export class PlanList {
       if (name === null) return;
       const trimmed = name.trim();
       if (trimmed) this.store.renamePlan(trimmed, id);
+      return;
+    }
+    if (act === 'folder') {
+      this._moveToFolder(id);
       return;
     }
     if (act === 'copy') {

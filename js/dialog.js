@@ -76,7 +76,7 @@ function _wireOnce() {
 }
 
 /**
- * @param {{ title?: string, label?: string, defaultValue?: string, okText?: string }} opts
+ * @param {{ title?: string, label?: string, defaultValue?: string, okText?: string, suggestions?: string[] }} opts
  * @returns {Promise<string|null>}
  */
 export function showPrompt(opts = {}) {
@@ -89,6 +89,14 @@ export function showPrompt(opts = {}) {
   $('app-prompt-label').textContent = opts.label || '';
   $('app-prompt-ok').textContent = opts.okText || 'OK';
   input.value = opts.defaultValue ?? '';
+  const list = $('app-prompt-suggestions');
+  if (list) {
+    list.replaceChildren(...(opts.suggestions || []).map((v) => {
+      const o = document.createElement('option');
+      o.value = v;
+      return o;
+    }));
+  }
 
   return new Promise((resolve) => {
     _promptResolve = resolve;

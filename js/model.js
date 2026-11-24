@@ -983,6 +983,8 @@ export function createEmptyPlan(name = '新しいプラン') {
       constructionMethod: 'two_by_six',
       // プラン一覧のメモ（周辺環境・土地の感想など自由記述）
       memo: '',
+      // プラン一覧のフォルダ名（'' は未分類）。同じ土地の派生プランをまとめる用
+      folder: '',
       // 敷地面積（㎡）の手入力。未入力は null（敷地を描いていればその面積を使う）
       siteAreaM2: null,
       // 建蔽率・容積率の上限（%）。未入力は null

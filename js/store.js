@@ -534,9 +534,10 @@ export class Store {
   }
 
   // ---- プラン操作 -----------------------------------------------------------
-  newPlan(name = `マイプラン${this.order.length + 1}`) {
+  newPlan(name = `マイプラン${this.order.length + 1}`, { folder = '' } = {}) {
     const id = uid('plan');
     this.plans[id] = createEmptyPlan(name);
+    this.plans[id].meta.folder = folder;
     this.order.unshift(id); // 新しいプランは一覧の先頭に
     this.currentId = id;
     this._persist({ touched: [id] });
@@ -598,6 +599,35 @@ export class Store {
       this._persist({ touched: [id] });
       this.notify();
     }
+  }
+
+  /** 使われているフォルダ名（meta.folder）の一覧。名前順 */
+  folders() {
+    const names = new Set();
+    for (const id of this.order) {
+      const f = this.plans[id]?.meta?.folder;
+      if (f) names.add(f);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, 'ja'));
+  }
+
+  /** 複数のプランをまとめてフォルダへ移す（'' で未分類に戻す） */
+  setPlansFolder(ids, folder) {
+    const name = (folder || '').trim();
+    const touched = ids.filter((id) => this.plans[id] && (this.plans[id].meta.folder || '') !== name);
+    if (!touched.length) return;
+    for (const id of touched) {
+      this.plans[id].meta.folder = name;
+      this._touchUpdated(this.plans[id]);
+    }
+    this._persist({ touched });
+    this.notify();
+  }
+
+  /** フォルダ名を変える（同じ名前のフォルダがあれば合流する） */
+  renameFolder(oldName, newName) {
+    const ids = this.order.filter((id) => this.plans[id]?.meta?.folder === oldName);
+    this.setPlansFolder(ids, newName);
   }
 
   /** プラン一覧の表示順を更新（id の配列） */

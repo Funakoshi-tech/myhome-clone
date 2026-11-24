@@ -117,6 +117,65 @@ body.plan-list-mode { overflow: auto; }
   color: var(--text);
 }
 
+.plan-list-folders {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -8px 0 20px;
+}
+.plan-folder-chip,
+.plan-folder-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plan-folder-chip:hover,
+.plan-folder-add:hover { border-color: var(--accent); color: var(--accent); }
+.plan-folder-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.plan-folder-chip-count {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+}
+.plan-folder-chip.active .plan-folder-chip-count { background: rgba(255, 255, 255, 0.25); }
+.plan-folder-add { border-style: dashed; color: var(--text-dim); }
+.plan-folder-tools { display: inline-flex; gap: 6px; margin-left: auto; }
+.plan-folder-tools .btn { font-size: 12px; padding: 5px 10px; }
+.plan-card-folder {
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--panel-2, #eef1f5);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-card-folder:hover { color: var(--accent); }
+
 .plan-list-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

@@ -278,3 +278,21 @@ test('バックアップの間引き: 最新10件と直近14日の各日の最�
   assert.ok(kept.every((t) => t >= now - 14 * 24 * hour || times.indexOf(t) < 10));
   assert.ok(kept.length >= 14 && kept.length <= 25);
 });
+
+test('フォルダ: 移動・名前変更・解除、コピーは同じフォルダに入る', () => {
+  reset();
+  const a = open();
+  const p1 = a.order[0];
+  const p2 = a.newPlan('P2', { folder: '土地A' });
+  assert.deepEqual(a.folders(), ['土地A']);
+  a.setPlansFolder([p1], ' 土地A ');
+  assert.equal(a.plans[p1].meta.folder, '土地A');
+  const copy = a.duplicatePlanAt(p2);
+  assert.equal(a.plans[copy].meta.folder, '土地A');
+  a.renameFolder('土地A', '土地B');
+  assert.deepEqual(a.folders(), ['土地B']);
+  const reopened = open();
+  assert.equal(reopened.plans[p2].meta.folder, '土地B');
+  a.renameFolder('土地B', '');
+  assert.deepEqual(a.folders(), []);
+});
