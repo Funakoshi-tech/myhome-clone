@@ -2998,7 +2998,8 @@ export class Editor2D {
 
   // ---- 描画 -----------------------------------------------------------------
   draw() {
-    if (!this.ctx) return;
+    // 一覧画面や 3D 表示の間は描かない（家具アイコン用の 3D モデル読み込みが起動時に走って重くなるため）
+    if (!this.ctx || !this.active) return;
     // 1 回の描画の間だけ wallsToRender の結果を使い回す（部屋の辺ごとに計算し直すと重い）
     this._renderWallsCache = new Map();
     try {

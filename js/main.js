@@ -150,8 +150,10 @@ function setView(view) {
   canvas.hidden = is3d;
   viewer3dEl.hidden = !is3d;
   $('#sun-panel').hidden = !is3d;
-  editor.setActive(!is3d);
-  viewer.setActive(is3d);
+  // 一覧画面にいる間は 2D/3D とも動かさない（編集画面を開いたときに scheduleEditorLayout から呼び直される）
+  const onEditor = screen === 'editor';
+  editor.setActive(onEditor && !is3d);
+  viewer.setActive(onEditor && is3d);
   parking?.onViewChange(view);
   document.querySelectorAll('#view-toggle .seg-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.view === view));
@@ -161,7 +163,7 @@ function setView(view) {
     syncInteriorUIButton();
   } else {
     stopSunAnimation();
-    editor.resize(); editor.draw();
+    if (onEditor) { editor.resize(); editor.draw(); }
   }
   syncView3dAllFloorsButton();
   syncInteriorUIButton();
