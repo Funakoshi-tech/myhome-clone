@@ -1737,7 +1737,11 @@ function wireSunPanel() {
 // ---- イベント配線 -----------------------------------------------------------
 function wireEvents() {
   document.querySelectorAll('#view-toggle .seg-btn').forEach((b) =>
-    b.addEventListener('click', () => setView(b.dataset.view)));
+    b.addEventListener('click', () => {
+      // 2D から 3D に切り替えたときは、見ていた階にかかわらず、まず全階表示から始める
+      if (b.dataset.view === '3d' && ui.view !== '3d') ui.view3dAllFloors = true;
+      setView(b.dataset.view);
+    }));
   document.querySelectorAll('#floor-tabs .seg-btn').forEach((b) =>
     b.addEventListener('click', () => setFloor(b.dataset.floor)));
   $('#view3d-all-floors').addEventListener('click', () => {
