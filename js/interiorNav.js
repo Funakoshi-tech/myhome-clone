@@ -272,11 +272,14 @@ function edgeOutwardNormal(a, b, polygon) {
   return { nx: nx1, nz: nz1 };
 }
 
-function yawToward(from, to) {
+/**
+ * from から to を向く yaw。内観のカメラ・移動・ミニマップは yaw のとき (-sin yaw, -cos yaw) の向きを前とする。
+ */
+export function yawToward(from, to) {
   const dx = to.x - from.x;
   const dz = to.z - from.z;
   if (Math.hypot(dx, dz) < 1) return 0;
-  return Math.atan2(dx, -dz);
+  return Math.atan2(-dx, -dz);
 }
 
 function hasDoorLikeOpening(floor, wall) {

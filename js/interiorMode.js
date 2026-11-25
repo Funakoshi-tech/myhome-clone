@@ -81,7 +81,7 @@ export class InteriorMode {
       const genkan = (floor.rooms || []).find((r) => r.type === 'genkan' && r.polygon?.length >= 3);
       if (genkan) {
         const c = M.polygonCentroid(genkan.polygon);
-        this.yaw = Math.atan2(c.x - this.pos.x, -(c.z - this.pos.z));
+        this.yaw = NAV.yawToward(this.pos, c);
       }
     }
 
