@@ -290,6 +290,17 @@ function hasDoorLikeOpening(floor, wall) {
 }
 
 /** 内観モードの初期位置・向き（玄関前の外側から家側を見る） */
+/**
+ * 家に入る階（全階表示から内観に入るときに使う）。玄関のある階、なければポーチのある階、
+ * どちらもなければいちばん下の階。
+ * @returns {string|null} 階の id
+ */
+export function findEntranceFloorId(plan) {
+  const floors = plan?.floors || [];
+  const has = (type) => floors.find((f) => (f.rooms || []).some((r) => r.type === type && r.polygon?.length >= 3));
+  return (has('genkan') || has('porch') || floors[0])?.id ?? null;
+}
+
 export function findInteriorSpawn(floor, plan) {
   const STAND_OFF_MM = 1500;
   const genkan = (floor.rooms || []).find(

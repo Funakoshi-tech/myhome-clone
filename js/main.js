@@ -12,6 +12,7 @@ import { Editor2D } from './editor2d.js';
 import { ParkingSimController } from './parkingSimMode.js';
 import { HeightLimitController } from './heightLimitMode.js';
 import { Viewer3D } from './viewer3d.js';
+import { findEntranceFloorId } from './interiorNav.js';
 import { getSunPosition, dateFromDayOfYear, formatMonthDay, SEASON_MARKERS } from './sun.js';
 import { PlanList } from './planList.js';
 import { showAlert, showConfirm } from './dialog.js';
@@ -143,6 +144,7 @@ function returnToPlanList() {
 function setView(view) {
   if (view !== '3d' && ui.interiorMode) {
     ui.interiorMode = false;
+    interiorFromAllFloors = false;
     viewer.setInteriorMode(false);
   }
   ui.view = view;
@@ -178,7 +180,7 @@ function syncInteriorUIButton() {
   const sunPanel = $('#sun-panel');
   if (!btn) return;
   const is3d = ui.view === '3d';
-  const canInterior = is3d && !ui.view3dAllFloors;
+  const canInterior = is3d;
   btn.hidden = !canInterior;
   if (zoomBtn) zoomBtn.hidden = is3d && ui.interiorMode;
   if (sunPanel && is3d) sunPanel.hidden = ui.interiorMode;
@@ -189,16 +191,34 @@ function syncInteriorUIButton() {
   syncView3dAllFloorsButton();
 }
 
+/** 全階表示から内観に入ったか。内観を終えたら全階表示に戻す */
+let interiorFromAllFloors = false;
+
 function setInteriorMode(on) {
   if (ui.view !== '3d') return;
+  if (on) interiorFromAllFloors = false;
   if (on && ui.view3dAllFloors) {
+    // 全階表示からは、玄関のある階に切り替えて、玄関前から家に入る
+    interiorFromAllFloors = true;
     ui.view3dAllFloors = false;
+    const entryId = findEntranceFloorId(store.current());
+    if (entryId) {
+      ui.floorId = entryId;
+      ui.selection = null;
+      document.querySelectorAll('#floor-tabs .seg-btn').forEach((b) =>
+        b.classList.toggle('active', b.dataset.floor === entryId));
+      refreshPanels();
+    }
     viewer.rebuild({ fitCamera: true });
   }
   ui.interiorMode = !!on;
   viewer.setInteriorMode(ui.interiorMode);
   if (on) {
     requestAnimationFrame(() => viewer.interior?.focusView?.());
+  } else if (interiorFromAllFloors) {
+    interiorFromAllFloors = false;
+    ui.view3dAllFloors = true;
+    viewer.rebuild({ fitCamera: true });
   }
   syncView3dAllFloorsButton();
   syncInteriorUIButton();
@@ -1589,7 +1609,7 @@ function updateHint() {
     hint.textContent = ui.interiorMode
       ? '内観: 左ドラッグで視点 · W S・↑↓で前後 · A Dで横歩き · ← →で向きを変える · 右上間取りクリックでワープ · 左下で階切替'
       : ui.view3dAllFloors
-        ? '全階表示中。フロア切替または全階表示ボタンで現在階のみに戻せます。ドラッグで回転 / ホイールでズーム'
+        ? '全階表示中。フロア切替または全階表示ボタンで現在階のみに戻せます。内観モードで玄関前から家に入れます。ドラッグで回転 / ホイールでズーム'
         : `${ui.floorId} のみ表示中。全階表示ボタンですべての階を積み上げ表示。内観モードで室内を歩けます。ドラッグで回転 / ホイールでズーム`;
     return;
   }
