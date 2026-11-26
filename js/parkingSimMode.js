@@ -88,6 +88,8 @@ export class ParkingSimController {
     const segs = [];
     for (const w of floor.walls || []) {
       if (!ext.get(w.id)) continue;
+      // 2D で削除した壁（ガレージの前面など）は通り抜けられる
+      if (M.isWallEdgeRemoved(floor, w)) continue;
       const room = floor.rooms?.find((r) => r.id === M.inferWallRoomId(w));
       if (room && (M.isOutdoorRoom(room) || M.isFloorOnlyRoom(room))) continue;
       segs.push({ a: w.start, b: w.end });
